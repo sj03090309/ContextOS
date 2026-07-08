@@ -1,0 +1,15 @@
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# ContextOS index output
+.contextos/
+
+# Xcode
+*.xcodeproj/
+DerivedData/
+xcuserdata/
+
+# macOS
+.DS_Store

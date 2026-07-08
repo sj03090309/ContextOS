@@ -1,0 +1,127 @@
+import Foundation
+
+/// A pragmatic, regex/line-based symbol extractor.
+///
+/// It is deliberately *not* a real parser: no scopes, no accuracy guarantees.
+/// The goal for M1 is a useful index that demonstrates the pipeline end-to-end.
+/// A Tree-sitter backed `LanguageParser` will replace it for precise ASTs.
+public struct HeuristicParser: LanguageParser {
+
+    public init() {}
+
+    public func supports(_ language: Language) -> Bool {
+        switch language {
+        case .swift, .python, .javascript, .typescript, .go, .rust, .java, .kotlin:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public func parse(source: String, language: Language) -> ParsedFile {
+        let rules = Self.rules(for: language)
+        guard !rules.isEmpty else { return .empty }
+
+        var symbols: [Symbol] = []
+        var imports: [ImportEdge] = []
+
+        var lineNumber = 0
+        source.enumerateLines { line, _ in
+            lineNumber += 1
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { return }
+
+            for rule in rules {
+                guard let name = rule.pattern.firstCaptured(in: line) else { continue }
+                switch rule.result {
+                case .symbol(let kind):
+                    symbols.append(Symbol(name: name, kind: kind, line: lineNumber))
+                case .importEdge:
+                    imports.append(ImportEdge(module: name, line: lineNumber))
+                }
+                break // one declaration per line is enough for M1
+            }
+        }
+
+        return ParsedFile(symbols: symbols, imports: imports)
+    }
+
+    // MARK: - Rule definitions
+
+    private enum RuleResult {
+        case symbol(SymbolKind)
+        case importEdge
+    }
+
+    private struct Rule {
+        let pattern: CompiledRegex
+        let result: RuleResult
+    }
+
+    private static func rules(for language: Language) -> [Rule] {
+        switch language {
+        case .swift:
+            return [
+                Rule(pattern: rx(#"^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)"#), result: .importEdge),
+                Rule(pattern: rx(#"\b(?:class|struct|enum|protocol|actor|extension)\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"\bfunc\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function))
+            ]
+        case .python:
+            return [
+                Rule(pattern: rx(#"^\s*(?:import|from)\s+([A-Za-z_][A-Za-z0-9_.]*)"#), result: .importEdge),
+                Rule(pattern: rx(#"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function))
+            ]
+        case .javascript, .typescript:
+            return [
+                Rule(pattern: rx(#"^\s*import\b.*?from\s+['""]([^'""]+)['""]"#), result: .importEdge),
+                Rule(pattern: rx(#"\brequire\(\s*['""]([^'""]+)['""]\s*\)"#), result: .importEdge),
+                Rule(pattern: rx(#"\b(?:class|interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)"#), result: .symbol(.function))
+            ]
+        case .go:
+            return [
+                Rule(pattern: rx(#"^\s*import\s+(?:\w+\s+)?['""]([^'""]+)['""]"#), result: .importEdge),
+                Rule(pattern: rx(#"\btype\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"\bfunc\s+(?:\([^)]*\)\s+)?([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function))
+            ]
+        case .rust:
+            return [
+                Rule(pattern: rx(#"^\s*use\s+([A-Za-z_][A-Za-z0-9_:]*)"#), result: .importEdge),
+                Rule(pattern: rx(#"\b(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function))
+            ]
+        case .java, .kotlin:
+            return [
+                Rule(pattern: rx(#"^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)"#), result: .importEdge),
+                Rule(pattern: rx(#"\b(?:class|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"\bfun\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function))
+            ]
+        default:
+            return []
+        }
+    }
+
+    private static func rx(_ pattern: String) -> CompiledRegex {
+        CompiledRegex(pattern)
+    }
+}
+
+/// Thin wrapper around `NSRegularExpression` that returns the first capture group.
+struct CompiledRegex: @unchecked Sendable {
+    private let regex: NSRegularExpression?
+
+    init(_ pattern: String) {
+        self.regex = try? NSRegularExpression(pattern: pattern)
+    }
+
+    func firstCaptured(in line: String) -> String? {
+        guard let regex else { return nil }
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.firstMatch(in: line, range: range),
+              match.numberOfRanges > 1,
+              let captured = Range(match.range(at: 1), in: line)
+        else { return nil }
+        return String(line[captured])
+    }
+}

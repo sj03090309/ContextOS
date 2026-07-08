@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "contextos": {
+      "command": "REPLACE_WITH_ABSOLUTE_PATH/.build/release/contextos-mcp",
+      "args": []
+    }
+  }
+}
