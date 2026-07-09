@@ -27,10 +27,12 @@ struct MenuBarLabel: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            // Bolt while MCP is actively optimizing; stack icon otherwise.
-            Image(systemName: model.flashing ? "bolt.fill" : "square.stack.3d.up.fill")
+            // Bolt while MCP is actively optimizing; sparkles otherwise. Rendered
+            // monochrome (template) so it adapts to the light/dark menu bar.
+            Image(systemName: model.flashing ? "bolt.fill" : "sparkles")
             if model.todaySaved > 0 {
                 Text(TokenEstimator.korean(model.todaySaved))
+                    .font(.system(size: 12, weight: .medium))
             }
         }
     }

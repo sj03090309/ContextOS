@@ -22,7 +22,7 @@ struct DashboardView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "square.stack.3d.up.fill").foregroundStyle(Theme.blue)
+            Image(systemName: "sparkles").foregroundStyle(Theme.blue)
             Text("ContextOS").font(.system(size: 14, weight: .semibold))
             Spacer()
             HStack(spacing: 4) {
