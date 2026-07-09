@@ -207,6 +207,21 @@ public final class IndexStore {
         return out
     }
 
+    /// Distinct symbol names, most-referenced-looking first (by frequency), for
+    /// query autocomplete.
+    public func symbolNames(limit: Int = 2000) throws -> [String] {
+        let stmt = try prepare("""
+        SELECT name, COUNT(*) AS n FROM symbols
+        GROUP BY name ORDER BY n DESC, name LIMIT \(limit);
+        """)
+        defer { sqlite3_finalize(stmt) }
+        var out: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out.append(columnText(stmt, 0))
+        }
+        return out
+    }
+
     // MARK: - Low-level helpers
 
     private func columnText(_ stmt: OpaquePointer?, _ index: Int32) -> String {

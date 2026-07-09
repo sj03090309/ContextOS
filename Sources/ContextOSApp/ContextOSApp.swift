@@ -6,13 +6,14 @@ struct ContextOSApp: App {
     @StateObject private var model = DashboardModel()
 
     init() {
-        // Menu-bar-only: no Dock icon, no main window.
+        // Menu-bar agent: no Dock icon, no standalone window. Clicking the
+        // menu-bar icon drops the full dashboard down as a panel.
         NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     var body: some Scene {
         MenuBarExtra {
-            DashboardView().environmentObject(model)
+            DashboardWindow().environmentObject(model)
         } label: {
             Image(systemName: "square.stack.3d.up.fill")
         }

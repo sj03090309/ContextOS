@@ -38,11 +38,18 @@ public struct TokenEstimator: Sendable {
         return Int((Double(characterCount) / divisor(for: language)).rounded(.up))
     }
 
-    /// Human display, e.g. `~11.2K`. Always prefixed with `~` to signal estimate.
+    /// Abbreviated count with K/M/B suffixes, e.g. `97.6M`.
+    public static func abbrev(_ tokens: Int) -> String {
+        let t = Double(tokens)
+        if t >= 1_000_000_000 { return String(format: "%.1fB", t / 1_000_000_000) }
+        if t >= 1_000_000 { return String(format: "%.1fM", t / 1_000_000) }
+        if t >= 1_000 { return String(format: "%.1fK", t / 1_000) }
+        return "\(tokens)"
+    }
+
+    /// Human display for an **estimate**, e.g. `~11.2K`. The `~` signals it is
+    /// approximate (used for ContextOS's own token estimates).
     public static func humanReadable(_ tokens: Int) -> String {
-        if tokens >= 1000 {
-            return String(format: "~%.1fK", Double(tokens) / 1000)
-        }
-        return "~\(tokens)"
+        "~" + abbrev(tokens)
     }
 }

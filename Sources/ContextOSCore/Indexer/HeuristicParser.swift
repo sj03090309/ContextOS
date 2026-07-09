@@ -22,28 +22,84 @@ public struct HeuristicParser: LanguageParser {
         let rules = Self.rules(for: language)
         guard !rules.isEmpty else { return .empty }
 
+        // Work on a line array so we can look ahead to compute block ends.
+        let lines = source.components(separatedBy: "\n")
         var symbols: [Symbol] = []
         var imports: [ImportEdge] = []
 
-        var lineNumber = 0
-        source.enumerateLines { line, _ in
-            lineNumber += 1
+        for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty { return }
+            if trimmed.isEmpty { continue }
+            let lineNumber = index + 1
 
             for rule in rules {
                 guard let name = rule.pattern.firstCaptured(in: line) else { continue }
                 switch rule.result {
                 case .symbol(let kind):
-                    symbols.append(Symbol(name: name, kind: kind, line: lineNumber))
+                    let end = Self.blockEnd(lines: lines, startIndex: index, language: language)
+                    symbols.append(Symbol(name: name, kind: kind, line: lineNumber, endLine: end))
                 case .importEdge:
                     imports.append(ImportEdge(module: name, line: lineNumber))
                 }
-                break // one declaration per line is enough for M1
+                break // one declaration per line is enough
             }
         }
 
         return ParsedFile(symbols: symbols, imports: imports)
+    }
+
+    // MARK: - Block range detection
+
+    /// The 1-based (inclusive) end line of the declaration starting at `startIndex`.
+    /// Brace-matching for C-family/Swift; indentation for Python.
+    static func blockEnd(lines: [String], startIndex: Int, language: Language) -> Int {
+        switch language {
+        case .python:
+            return pythonBlockEnd(lines: lines, startIndex: startIndex)
+        default:
+            return braceBlockEnd(lines: lines, startIndex: startIndex)
+        }
+    }
+
+    private static func braceBlockEnd(lines: [String], startIndex: Int) -> Int {
+        var depth = 0
+        var sawBrace = false
+        let limit = min(lines.count, startIndex + 4000)
+        for i in startIndex..<limit {
+            for ch in lines[i] {
+                if ch == "{" { depth += 1; sawBrace = true }
+                else if ch == "}" { depth -= 1 }
+            }
+            if sawBrace && depth <= 0 { return i + 1 }
+            // Declaration with no body brace within a few lines (e.g. a protocol
+            // requirement or an interface method): treat as a single line.
+            if !sawBrace && i >= startIndex + 3 { break }
+        }
+        return startIndex + 1
+    }
+
+    private static func pythonBlockEnd(lines: [String], startIndex: Int) -> Int {
+        let baseIndent = leadingSpaces(lines[startIndex])
+        var end = startIndex
+        var i = startIndex + 1
+        while i < lines.count {
+            let line = lines[i]
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { i += 1; continue }
+            if leadingSpaces(line) <= baseIndent { break }
+            end = i
+            i += 1
+        }
+        return end + 1
+    }
+
+    private static func leadingSpaces(_ line: String) -> Int {
+        var count = 0
+        for ch in line {
+            if ch == " " { count += 1 }
+            else if ch == "\t" { count += 4 }
+            else { break }
+        }
+        return count
     }
 
     // MARK: - Rule definitions

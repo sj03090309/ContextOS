@@ -7,10 +7,99 @@ struct ContextOS: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "contextos",
         abstract: "Local, AI-free context manager for Claude Code.",
-        version: "1.0.0",
-        subcommands: [Index.self, Stats.self, Context.self, Lint.self, Git.self, Rules.self, Deps.self, Usage.self, Snapshot.self],
+        version: "1.2.0",
+        subcommands: [Index.self, Stats.self, Context.self, Lint.self, Git.self, Rules.self, Deps.self, Usage.self, Snapshot.self, Setup.self, Watch.self],
         defaultSubcommand: Index.self
     )
+}
+
+// MARK: - contextos watch
+
+struct Watch: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Watch a project and re-index automatically when files change."
+    )
+
+    @Argument(help: "Project root to watch. Defaults to the current directory.")
+    var path: String = "."
+
+    func run() throws {
+        setvbuf(stdout, nil, _IONBF, 0) // unbuffered so a long-running watcher prints live
+        let root = URL(fileURLWithPath: path).standardizedFileURL
+        let service = ContextService()
+        _ = try service.ensureIndexed(projectRoot: root)
+        print("👀 감시 중: \(root.path)  (Ctrl+C로 종료)")
+
+        let watcher = FileWatcher(paths: [root.path]) {
+            if let stats = try? service.reindex(projectRoot: root) {
+                let ts = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+                print("♻️  [\(ts)] 재인덱싱: 파일 \(stats.filesIndexed)개, 심볼 \(stats.symbolsIndexed)개")
+            }
+        }
+        watcher.start()
+        RunLoop.main.run() // keep the process alive
+    }
+}
+
+// MARK: - contextos setup
+
+struct Setup: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Auto-discover your local projects, index them, and detect AI agents."
+    )
+
+    @Option(name: [.long], help: "Extra folder to scan (repeatable).")
+    var scan: [String] = []
+
+    @Flag(name: [.long], help: "Only discover; don't index (faster).")
+    var noIndex = false
+
+    func run() throws {
+        print("🔍 프로젝트를 탐색합니다…")
+        var roots = ProjectRegistry.defaultScanRoots()
+        roots.append(contentsOf: scan.map { URL(fileURLWithPath: $0) })
+        let discovered = ProjectRegistry.discover(roots: roots)
+
+        var registered = ProjectRegistry.list()
+        for path in discovered where !registered.contains(path) { registered.append(path) }
+        ProjectRegistry.save(registered)
+
+        print("✓ 프로젝트 \(discovered.count)개 발견, 총 \(registered.count)개 등록됨")
+        for path in discovered { print("  • \(URL(fileURLWithPath: path).lastPathComponent)  (\(path))") }
+
+        if !noIndex {
+            print("\n📚 인덱싱 중…")
+            let service = ContextService()
+            for path in registered {
+                let root = URL(fileURLWithPath: path)
+                if let stats = try? service.reindex(projectRoot: root) {
+                    print("  ✓ \(root.lastPathComponent): 파일 \(stats.filesIndexed)개, 심볼 \(stats.symbolsIndexed)개")
+                }
+            }
+        }
+
+        let agents = AgentDetector.detect()
+        print("\n🤖 감지된 AI 에이전트 (\(agents.count)개):")
+        if agents.isEmpty {
+            print("  (감지된 에이전트 없음)")
+        } else {
+            for a in agents {
+                print("  • \(a.name)\(a.detail.map { " — \($0)" } ?? "")")
+            }
+        }
+
+        // Real AI token usage per project (Claude Code local logs).
+        let used = registered.compactMap { ClaudeUsageReader.usage(forProjectPath: $0) }
+            .sorted { $0.totalTokens > $1.totalTokens }
+        if !used.isEmpty {
+            print("\n💰 AI 토큰 사용 이력이 있는 프로젝트:")
+            for u in used {
+                print("  • \(URL(fileURLWithPath: u.projectPath).lastPathComponent): \(TokenEstimator.abbrev(u.totalTokens)) 토큰 (세션 \(u.sessions)개)")
+            }
+        }
+
+        print("\n완료! ContextOS 메뉴바 앱을 열면 AI 사용 프로젝트 카드가 보입니다.")
+    }
 }
 
 // MARK: - contextos snapshot
@@ -233,6 +322,9 @@ struct Context: ParsableCommand {
         }
 
         print("쿼리:     \(query)")
+        if let r = selection.refinement, r.changed {
+            print("이해:     \(r.explanation)")
+        }
         print("검색어:   \(selection.terms.joined(separator: ", "))")
         print("예산:     \(TokenEstimator.humanReadable(selection.tokenBudget))")
         print("컨텍스트 점수: \(selection.contextScore)/100")

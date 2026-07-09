@@ -7,7 +7,7 @@ import Foundation
 ///   2. Import-graph expansion: strong hits pull in their neighbours, with decay
 ///      (this is how "login" reaches auth → jwt → database).
 ///   3. Greedy selection within a token budget, surfacing what didn't fit.
-public struct ContextOptimizer {
+public struct ContextOptimizer: Sendable {
 
     public var estimator: TokenEstimator
     /// How many import-graph hops to expand from a matched file.
@@ -39,9 +39,11 @@ public struct ContextOptimizer {
         query: String,
         from store: IndexStore,
         tokenBudget: Int,
-        signals: GitSignals = .empty
+        signals: GitSignals = .empty,
+        overrideTerms: [String]? = nil
     ) throws -> ContextSelection {
-        let terms = TextTokens.queryTerms(query)
+        // Use actively-refined terms when provided, else derive from the query.
+        let terms = overrideTerms ?? TextTokens.queryTerms(query)
         let files = try store.allFiles()
         let symbolsByFile = try store.symbolsByFile()
         let importsByFile = try store.importsByFile()

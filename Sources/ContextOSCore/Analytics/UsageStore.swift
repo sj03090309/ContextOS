@@ -39,6 +39,17 @@ public struct UsageSummary: Sendable {
     public var avgSelectedTokens: Int
     public var avgContextScore: Int
     public var perProject: [(project: String, saved: Int, count: Int)]
+
+    public init(
+        queryCount: Int, totalSaved: Int, avgSelectedTokens: Int,
+        avgContextScore: Int, perProject: [(project: String, saved: Int, count: Int)]
+    ) {
+        self.queryCount = queryCount
+        self.totalSaved = totalSaved
+        self.avgSelectedTokens = avgSelectedTokens
+        self.avgContextScore = avgContextScore
+        self.perProject = perProject
+    }
 }
 
 /// Local, cross-project analytics DB. Short-lived: open, use, discard.
@@ -141,6 +152,58 @@ public final class UsageStore {
             avgSelectedTokens: avgSelected, avgContextScore: avgScore,
             perProject: perProject
         )
+    }
+
+    /// Most recent events, newest first.
+    public func recentEvents(limit: Int = 8) -> [UsageEvent] {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, """
+        SELECT ts, project, query, selected, full, score, files
+        FROM usage ORDER BY ts DESC LIMIT \(limit);
+        """, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var events: [UsageEvent] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            events.append(UsageEvent(
+                timestamp: sqlite3_column_double(stmt, 0),
+                project: String(cString: sqlite3_column_text(stmt, 1)),
+                query: String(cString: sqlite3_column_text(stmt, 2)),
+                selectedTokens: Int(sqlite3_column_int64(stmt, 3)),
+                fullTokens: Int(sqlite3_column_int64(stmt, 4)),
+                contextScore: Int(sqlite3_column_int64(stmt, 5)),
+                fileCount: Int(sqlite3_column_int64(stmt, 6))
+            ))
+        }
+        return events
+    }
+
+    /// Tokens saved per local day for the last `days`, oldest first. Days with
+    /// no activity are filled with 0 so charts have a continuous series.
+    /// Pass `project` to scope the series to a single project.
+    public func dailySaved(project: String? = nil, days: Int = 7) -> [(day: String, saved: Int)] {
+        var byDay: [String: Int] = [:]
+        var stmt: OpaquePointer?
+        let sql = """
+        SELECT strftime('%Y-%m-%d', ts, 'unixepoch', 'localtime') AS d,
+               COALESCE(SUM(MAX(full - selected, 0)), 0)
+        FROM usage \(project != nil ? "WHERE project = ?" : "") GROUP BY d;
+        """
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            if let project { bindText(stmt, 1, project) }
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                byDay[String(cString: sqlite3_column_text(stmt, 0))] = Int(sqlite3_column_int64(stmt, 1))
+            }
+        }
+        sqlite3_finalize(stmt)
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let cal = Calendar.current
+        return (0..<days).reversed().map { offset in
+            let date = cal.date(byAdding: .day, value: -offset, to: Date()) ?? Date()
+            let key = fmt.string(from: date)
+            return (key, byDay[key] ?? 0)
+        }
     }
 
     // MARK: - Helpers

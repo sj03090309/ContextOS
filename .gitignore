@@ -6,6 +6,9 @@ Package.resolved
 # ContextOS index output
 .contextos/
 
+# Packaged app bundle
+dist/
+
 # Xcode
 *.xcodeproj/
 DerivedData/

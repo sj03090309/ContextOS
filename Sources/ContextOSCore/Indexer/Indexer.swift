@@ -6,7 +6,7 @@ import CryptoKit
 /// This is the entry point the CLI (and later the MCP server) calls. It owns the
 /// pipeline wiring but delegates each concern to a focused type, so pieces can be
 /// swapped independently (e.g. `HeuristicParser` → a Tree-sitter parser).
-public struct Indexer {
+public struct Indexer: Sendable {
 
     public let scanner: ProjectScanner
     public let parser: LanguageParser

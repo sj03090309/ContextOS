@@ -5,24 +5,44 @@ import Foundation
 /// This is the single seam that both the CLI and the MCP server call, so those
 /// stay thin adapters. It handles the "user configures nothing" philosophy:
 /// queries auto-index the project on first use.
-public struct ContextService {
+public struct ContextService: Sendable {
 
     public let indexer: Indexer
     public let optimizer: ContextOptimizer
     public let git: GitAnalyzer
+    public let slicer: CodeSlicer
+    public let refiner: QueryRefiner
     /// When true, queries fold in Git recency signals automatically.
     public var useGitSignals: Bool
+    /// When true, `optimizedBundle` slices files to only the relevant symbols.
+    public var useSlicing: Bool
+    /// When true, queries are actively refined (dictionary/typo/index) first.
+    public var useRefiner: Bool
 
     public init(
         indexer: Indexer = Indexer(),
         optimizer: ContextOptimizer = ContextOptimizer(),
         git: GitAnalyzer = GitAnalyzer(),
-        useGitSignals: Bool = true
+        slicer: CodeSlicer = CodeSlicer(),
+        refiner: QueryRefiner = QueryRefiner(),
+        useGitSignals: Bool = true,
+        useSlicing: Bool = true,
+        useRefiner: Bool = true
     ) {
         self.indexer = indexer
         self.optimizer = optimizer
         self.git = git
+        self.slicer = slicer
+        self.refiner = refiner
         self.useGitSignals = useGitSignals
+        self.useSlicing = useSlicing
+        self.useRefiner = useRefiner
+    }
+
+    /// Actively refine a raw query against a project's symbol vocabulary.
+    public func refineQuery(_ query: String, projectRoot: URL) -> RefinedQuery {
+        let vocab = (try? Indexer.openStore(forProjectRoot: projectRoot).symbolNames()) ?? []
+        return refiner.refine(query, vocabulary: vocab)
     }
 
     /// A lightweight snapshot of an index, for stats display.
@@ -62,9 +82,14 @@ public struct ContextService {
         try ensureIndexed(projectRoot: projectRoot)
         let store = try Indexer.openStore(forProjectRoot: projectRoot)
         let signals = useGitSignals ? git.signals(projectRoot) : .empty
-        return try optimizer.selectContext(
-            query: query, from: store, tokenBudget: tokenBudget, signals: signals
+
+        let refined = useRefiner ? refiner.refine(query, vocabulary: (try? store.symbolNames()) ?? []) : nil
+        var selection = try optimizer.selectContext(
+            query: query, from: store, tokenBudget: tokenBudget,
+            signals: signals, overrideTerms: refined?.terms
         )
+        selection.refinement = refined
+        return selection
     }
 
     /// The selection plus a ready-to-send bundle of the included files' contents.
@@ -79,16 +104,49 @@ public struct ContextService {
         let selection = try relevantContext(
             query: query, projectRoot: projectRoot, tokenBudget: tokenBudget
         )
+        return (selection, assembleBundle(selection, projectRoot: projectRoot))
+    }
+
+    /// Proactively build context from the files you're **currently editing**
+    /// (uncommitted Git changes) — no query needed. Returns nil if the working
+    /// tree is clean. This powers the "we prepared context for you" experience.
+    public func proactiveContext(
+        projectRoot: URL,
+        tokenBudget: Int = 8000
+    ) throws -> (selection: ContextSelection, bundle: String)? {
+        let signals = git.signals(projectRoot)
+        guard !signals.changedPaths.isEmpty else { return nil }
+        try ensureIndexed(projectRoot: projectRoot)
+        let store = try Indexer.openStore(forProjectRoot: projectRoot)
+        let selection = try optimizer.selectContext(
+            query: "", from: store, tokenBudget: tokenBudget, signals: signals
+        )
+        guard !selection.included.isEmpty else { return nil }
+        return (selection, assembleBundle(selection, projectRoot: projectRoot))
+    }
+
+    /// Concatenate the included files (sliced when a query narrowed them).
+    private func assembleBundle(_ selection: ContextSelection, projectRoot: URL) -> String {
         var bundle = ""
         for file in selection.included {
-            let url = projectRoot.appendingPathComponent(file.relativePathForRead)
+            let url = projectRoot.appendingPathComponent(file.path)
             guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            bundle += "// ===== FILE: \(file.path) =====\n"
-            bundle += content
-            if !content.hasSuffix("\n") { bundle += "\n" }
+
+            var body = content
+            var note = ""
+            if useSlicing, !selection.terms.isEmpty {
+                let result = slicer.slice(source: content, language: file.language, terms: selection.terms)
+                if result.sliced {
+                    body = result.content
+                    note = "  (\(result.totalLines)줄 중 \(result.keptLines)줄, 관련 심볼만)"
+                }
+            }
+            bundle += "// ===== FILE: \(file.path)\(note) =====\n"
+            bundle += body
+            if !body.hasSuffix("\n") { bundle += "\n" }
             bundle += "\n"
         }
-        return (selection, bundle)
+        return bundle
     }
 
     /// Record a completed query to the local usage analytics DB. Opt-in: call

@@ -78,8 +78,19 @@ Remaining polish: swap the heuristic parser for Tree-sitter (already behind the
 ## Run the dashboard
 
 ```sh
-swift run ContextOSApp   # menu-bar app (no Dock icon)
+swift run ContextOSApp        # dev run
 ```
+
+Or build a **double-clickable app** (no terminal needed):
+
+```sh
+./scripts/build_app.sh        # → dist/ContextOS.app (+ copies you can drag to /Applications)
+open dist/ContextOS.app
+```
+
+The dashboard shows every tracked project as a card (savings, query count,
+7-day trend). Add projects with the **＋ 프로젝트 추가** button; first-run
+onboarding walks through adding a project and connecting Claude Code.
 
 ## Connect to Claude Code
 

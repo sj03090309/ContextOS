@@ -31,6 +31,8 @@ public struct ContextSelection: Sendable {
     public var estimatedTokens: Int
     /// 0–100 quality score for the resulting context.
     public var contextScore: Int
+    /// How the raw query was actively refined (dictionary/typo/index), if at all.
+    public var refinement: RefinedQuery? = nil
 
     public var isEmpty: Bool { included.isEmpty && excluded.isEmpty }
 }

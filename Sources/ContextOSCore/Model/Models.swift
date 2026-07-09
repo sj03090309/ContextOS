@@ -47,11 +47,21 @@ public struct Symbol: Sendable, Equatable {
     public var kind: SymbolKind
     /// 1-based line where the declaration starts.
     public var line: Int
+    /// 1-based line where the declaration's block ends (inclusive). Defaults to
+    /// `line` for single-line/unknown-range symbols. Used for symbol slicing.
+    public var endLine: Int
 
-    public init(name: String, kind: SymbolKind, line: Int) {
+    public init(name: String, kind: SymbolKind, line: Int, endLine: Int? = nil) {
         self.name = name
         self.kind = kind
         self.line = line
+        self.endLine = endLine ?? line
+    }
+
+    /// Identity ignores `endLine` (which is derived metadata), so ranking and
+    /// tests compare on name/kind/line.
+    public static func == (lhs: Symbol, rhs: Symbol) -> Bool {
+        lhs.name == rhs.name && lhs.kind == rhs.kind && lhs.line == rhs.line
     }
 }
 
