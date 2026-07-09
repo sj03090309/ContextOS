@@ -19,6 +19,8 @@ cp "$BIN_DIR/ContextOSApp" "$APP/Contents/MacOS/ContextOSApp"
 # Bundle the CLI + MCP server so the app can point Claude Code at them.
 cp "$BIN_DIR/contextos" "$APP/Contents/Resources/contextos"
 cp "$BIN_DIR/contextos-mcp" "$APP/Contents/Resources/contextos-mcp"
+# App icon (regenerate with: swift scripts/make_icon.swift)
+[ -f AppIcon.icns ] && cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -29,6 +31,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDisplayName</key>     <string>ContextOS</string>
     <key>CFBundleIdentifier</key>      <string>com.contextos.app</string>
     <key>CFBundleExecutable</key>      <string>ContextOSApp</string>
+    <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleShortVersionString</key> <string>1.0</string>
     <key>CFBundleVersion</key>         <string>1</string>
