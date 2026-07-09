@@ -1,4 +1,12 @@
-# ContextOS
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="ContextOS 아이콘">
+</p>
+
+<h1 align="center">ContextOS</h1>
+
+<p align="center">Claude Code를 위한 로컬 컨텍스트 최적화 도구 · AI 없이 전부 내 컴퓨터에서</p>
+
+---
 
 **Claude Code를 위한 로컬 컨텍스트 최적화 도구.** AI를 쓰지 않고, 전부 내 컴퓨터에서만 동작합니다.
 
