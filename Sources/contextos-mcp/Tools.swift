@@ -58,45 +58,6 @@ enum Tools {
                 ],
                 required: []
             )
-        ],
-        [
-            "name": "get_project_rules",
-            "description": """
-            Return the project's persistent conventions (language, framework, \
-            style, notes) that should hold across sessions. Read this at the start \
-            of a task so your changes follow the project's rules.
-            """,
-            "inputSchema": object(
-                properties: [
-                    "path": string("Project root. Defaults to the server's working directory.")
-                ],
-                required: []
-            )
-        ],
-        [
-            "name": "dependency_map",
-            "description": "Show the project's import/dependency graph as an indented tree, optionally rooted at a file.",
-            "inputSchema": object(
-                properties: [
-                    "path": string("Project root. Defaults to the server's working directory."),
-                    "root": string("File path to root the tree at (optional).")
-                ],
-                required: []
-            )
-        ],
-        [
-            "name": "restore_session",
-            "description": """
-            Get oriented on this project fast: current branch, recent commits, \
-            uncommitted changes, and project rules. Call this at the start of a \
-            new session to pick up where the last one left off.
-            """,
-            "inputSchema": object(
-                properties: [
-                    "path": string("Project root. Defaults to the server's working directory.")
-                ],
-                required: []
-            )
         ]
         ]
     }

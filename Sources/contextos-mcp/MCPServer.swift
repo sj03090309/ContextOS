@@ -83,12 +83,6 @@ struct MCPServer {
                 text = try toolReadOptimized(args)
             case "project_stats":
                 text = try toolProjectStats(args)
-            case "get_project_rules":
-                text = try toolGetProjectRules(args)
-            case "dependency_map":
-                text = try toolDependencyMap(args)
-            case "restore_session":
-                text = try toolRestoreSession(args)
             default:
                 reply(id: id, result: toolResult("Unknown tool: \(name)", isError: true))
                 return
@@ -122,7 +116,6 @@ struct MCPServer {
         let root = projectRoot(from: args)
         let budget = integer(args, "token_budget") ?? 8000
         let selection = try service.relevantContext(query: query, projectRoot: root, tokenBudget: budget)
-        service.recordUsage(for: selection, query: query, projectRoot: root)
 
         guard !selection.isEmpty else {
             return "No relevant files found for “\(query)”. Terms: \(selection.terms.joined(separator: ", "))"
@@ -143,16 +136,6 @@ struct MCPServer {
             out += "\n\nRelevant but over budget (not included): \(names)"
         }
         out += "\n\nTip: fetch these with `read_optimized` to get their contents inside the budget."
-
-        let fullTokens = try? service.summary(projectRoot: root).estimatedTotalTokens
-        let advisories = ContextAdvisor().advise(
-            selection: selection,
-            fullProjectTokens: fullTokens,
-            promptFindings: PromptLinter().lint(query)
-        )
-        for advisory in advisories {
-            out += "\n\(advisory.severity == .warning ? "⚠" : "ℹ") \(advisory.message)"
-        }
         return out
     }
 
@@ -168,40 +151,8 @@ struct MCPServer {
         guard !selection.included.isEmpty else {
             return "No relevant files found for “\(query)”."
         }
-        var header = "// ContextOS: \(selection.included.count) files, \(TokenEstimator.humanReadable(selection.estimatedTokens)) (budget \(TokenEstimator.humanReadable(budget))), score \(selection.contextScore)/100\n"
-        let rules = ProjectRulesStore.effective(projectRoot: root)
-        if !rules.isEmpty {
-            header += "//\n// Project rules:\n"
-            header += rules.rendered().split(separator: "\n").map { "//   \($0)" }.joined(separator: "\n")
-            header += "\n"
-        }
-        header += "\n"
+        let header = "// ContextOS: \(selection.included.count) files, \(TokenEstimator.humanReadable(selection.estimatedTokens)) (budget \(TokenEstimator.humanReadable(budget))), score \(selection.contextScore)/100\n\n"
         return header + bundle
-    }
-
-    private func toolGetProjectRules(_ args: [String: Any]) throws -> String {
-        let root = projectRoot(from: args)
-        try service.ensureIndexed(projectRoot: root)
-        return "Project rules for \(root.lastPathComponent):\n" + ProjectRulesStore.effective(projectRoot: root).rendered()
-    }
-
-    private func toolRestoreSession(_ args: [String: Any]) throws -> String {
-        let root = projectRoot(from: args)
-        // Prefer a saved snapshot; otherwise capture live state so a fresh
-        // session is oriented instantly.
-        let snapshot = SessionSnapshotStore.load(projectRoot: root)
-            ?? SessionSnapshotStore.capture(projectRoot: root)
-        return snapshot.rendered()
-    }
-
-    private func toolDependencyMap(_ args: [String: Any]) throws -> String {
-        let root = projectRoot(from: args)
-        try service.ensureIndexed(projectRoot: root)
-        let store = try Indexer.openStore(forProjectRoot: root)
-        let graph = try DependencyGraph.build(from: store)
-        let rootFile = string(args, "root")
-        return "Dependency graph (\(graph.nodes.count) nodes, \(graph.edgeCount) edges):\n"
-            + graph.textTree(root: rootFile)
     }
 
     private func toolProjectStats(_ args: [String: Any]) throws -> String {

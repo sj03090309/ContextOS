@@ -71,7 +71,7 @@ struct DashboardWindow: View {
                     Spacer()
                 }
                 HStack(spacing: 10) {
-                    heroMetric("AI 토큰", TokenEstimator.abbrev(model.totalAITokens), Theme.purple)
+                    heroMetric("AI 토큰", TokenDisplay.koreanCount(model.totalAITokens), Theme.purple)
                     heroMetric("오늘 절약", TokenEstimator.humanReadable(model.todaySaved), Theme.green)
                     heroMetric("누적 절약", TokenEstimator.humanReadable(model.usage?.totalSaved ?? 0), Theme.green)
                     heroMetric("평균 점수", "\(model.usage?.avgContextScore ?? 0)", Theme.blue)

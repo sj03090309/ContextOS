@@ -14,10 +14,15 @@ public enum ProjectRegistry {
             .appendingPathComponent("projects.json")
     }
 
+    public static func hiddenFileURL() -> URL {
+        fileURL().deletingLastPathComponent().appendingPathComponent("hidden-projects.json")
+    }
+
     public static func list() -> [String] {
         guard let data = try? Data(contentsOf: fileURL()),
               let paths = try? JSONDecoder().decode([String].self, from: data) else { return [] }
-        return paths
+        let hidden = Set(hiddenList())
+        return paths.filter { !hidden.contains($0) }
     }
 
     public static func save(_ paths: [String]) {
@@ -29,10 +34,26 @@ public enum ProjectRegistry {
         try? encoder.encode(paths).write(to: url)
     }
 
+    public static func hiddenList() -> [String] {
+        guard let data = try? Data(contentsOf: hiddenFileURL()),
+              let paths = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return paths
+    }
+
+    public static func saveHidden(_ paths: [String]) {
+        let url = hiddenFileURL()
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted]
+        try? encoder.encode(paths).write(to: url)
+    }
+
     @discardableResult
     public static func add(_ path: String) -> [String] {
         var paths = list()
         if !paths.contains(path) { paths.append(path) }
+        saveHidden(hiddenList().filter { $0 != path })
         save(paths)
         return paths
     }
@@ -40,6 +61,9 @@ public enum ProjectRegistry {
     @discardableResult
     public static func remove(_ path: String) -> [String] {
         let paths = list().filter { $0 != path }
+        var hidden = hiddenList()
+        if !hidden.contains(path) { hidden.append(path) }
+        saveHidden(hidden)
         save(paths)
         return paths
     }

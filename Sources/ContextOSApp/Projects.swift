@@ -16,7 +16,7 @@ struct ProjectCard: View {
 
     private var subtitle: String {
         if project.hasAgentHistory {
-            return "세션 \(project.aiSessions)개 · ContextOS 절약 \(TokenEstimator.humanReadable(project.savedTokens))"
+            return "로컬 기록 기준 · ContextOS 절약 \(TokenEstimator.humanReadable(project.savedTokens))"
         }
         return project.isIndexed
             ? "쿼리 \(project.queryCount)회 · 파일 \(project.files)개"
@@ -43,11 +43,12 @@ struct ProjectCard: View {
 
             if project.hasAgentHistory {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(TokenEstimator.abbrev(project.aiTokens))
+                    Text(TokenDisplay.koreanCount(project.aiTokens))
                         .font(.system(size: 24, weight: .bold).monospacedDigit())
                         .foregroundStyle(tint)
-                    Text("AI 토큰").font(.caption2).foregroundStyle(Theme.textSecondary)
+                    Text("토큰").font(.caption2).foregroundStyle(Theme.textSecondary)
                 }
+                agentBreakdown
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(TokenEstimator.humanReadable(project.savedTokens))
@@ -55,9 +56,8 @@ struct ProjectCard: View {
                         .foregroundStyle(project.savedTokens > 0 ? Theme.green : Theme.textTertiary)
                     Text("절약").font(.caption2).foregroundStyle(Theme.textSecondary)
                 }
+                sparkline
             }
-
-            sparkline
 
             Text(subtitle).font(.caption2).foregroundStyle(Theme.textTertiary).lineLimit(1)
         }
@@ -67,6 +67,38 @@ struct ProjectCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12)
             .stroke(isActive ? tint.opacity(0.7) : Theme.stroke, lineWidth: isActive ? 1.5 : 1))
         .contentShape(Rectangle())
+    }
+
+    private var agentBreakdown: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    ForEach(project.agentUsages.prefix(4)) { usage in
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Theme.agentColor(usage.provider))
+                            .frame(width: max(3, geo.size.width * CGFloat(usage.tokens) / CGFloat(max(project.aiTokens, 1))))
+                    }
+                }
+            }
+            .frame(height: 5)
+
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(project.agentUsages.prefix(3)) { usage in
+                    HStack(spacing: 5) {
+                        Circle().fill(Theme.agentColor(usage.provider)).frame(width: 5, height: 5)
+                        Text(usage.displayName)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(TokenDisplay.koreanCount(usage.tokens))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+        }
     }
 
     @ViewBuilder

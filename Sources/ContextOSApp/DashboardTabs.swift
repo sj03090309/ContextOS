@@ -425,7 +425,7 @@ struct AgentsTab: View {
                             Image(systemName: "chart.bar.fill").foregroundStyle(Theme.purple).font(.caption)
                             Text("프로젝트별 AI 토큰 사용량").font(.system(size: 12, weight: .semibold))
                             Spacer()
-                            Text("총 \(TokenEstimator.abbrev(model.totalAITokens))")
+                            Text("총 \(TokenDisplay.koreanCount(model.totalAITokens))")
                                 .font(.caption.monospaced()).foregroundStyle(Theme.purple)
                         }
                         let maxTok = model.aiProjects.map(\.aiTokens).max() ?? 1
@@ -434,7 +434,7 @@ struct AgentsTab: View {
                                 HStack {
                                     Text(p.name).font(.system(size: 12))
                                     Spacer()
-                                    Text("\(TokenEstimator.abbrev(p.aiTokens)) · 세션 \(p.aiSessions)개")
+                                    Text("\(TokenDisplay.koreanCount(p.aiTokens)) · 세션 \(p.aiSessions)개")
                                         .font(.caption2.monospaced()).foregroundStyle(Theme.textSecondary)
                                 }
                                 GeometryReader { geo in

@@ -59,6 +59,22 @@ public struct ContextOptimizer: Sendable {
         var byID: [Int64: IndexedFile] = [:]
         for f in files { if let id = f.id { byID[id] = f } }
 
+        // Inverse document frequency: a term that matches a *distinctive* symbol
+        // (appears in few files) is a much stronger signal than one that matches
+        // a ubiquitous name. Rare matches get boosted, common ones stay ~1.
+        let fileCount = files.count
+        var symbolWordDF: [String: Int] = [:]
+        for (_, syms) in symbolsByFile {
+            var wordsInFile = Set<String>()
+            for s in syms { for w in TextTokens.subwords(of: s.name) { wordsInFile.insert(w) } }
+            for w in wordsInFile { symbolWordDF[w, default: 0] += 1 }
+        }
+        func idf(_ term: String) -> Double {
+            let df = symbolWordDF[term] ?? 0
+            let raw = 1.0 + log2(Double(fileCount + 1) / Double(df + 1)) * 0.35
+            return min(2.5, max(0.7, raw))
+        }
+
         // 1. Base lexical scoring.
         var scores: [Int64: Double] = [:]
         var reasons: [Int64: [String]] = [:]
@@ -110,7 +126,7 @@ public struct ContextOptimizer: Sendable {
                 }
 
                 if best > 0 {
-                    fileScore += best
+                    fileScore += best * idf(term)
                     if let reason { fileReasons.append("‘\(term)’ → \(reason)") }
                 }
             }

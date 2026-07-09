@@ -19,6 +19,16 @@ enum Theme {
     static let red = Color(red: 0.94, green: 0.38, blue: 0.38)
     static let purple = Color(red: 0.64, green: 0.52, blue: 0.96)
 
+    static func agentColor(_ provider: String) -> Color {
+        switch provider.lowercased() {
+        case "claude": return orange
+        case "codex": return blue
+        case "copilot": return green
+        case "gemini": return purple
+        default: return textSecondary
+        }
+    }
+
     static func scoreColor(_ score: Int) -> Color {
         switch score {
         case 80...: return green
@@ -39,5 +49,18 @@ struct Card<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.stroke, lineWidth: 1))
+    }
+}
+
+enum TokenDisplay {
+    static func koreanCount(_ tokens: Int) -> String {
+        let value = Double(max(0, tokens))
+        if value >= 100_000_000 {
+            return String(format: "%.1f억", value / 100_000_000)
+        }
+        if value >= 10_000 {
+            return String(format: "%.1f만", value / 10_000)
+        }
+        return NumberFormatter.localizedString(from: NSNumber(value: tokens), number: .decimal)
     }
 }

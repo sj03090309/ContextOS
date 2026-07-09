@@ -167,7 +167,12 @@ final class DashboardModel: ObservableObject {
 
     func removeProject(_ path: String) {
         let remaining = ProjectRegistry.remove(path)
-        if projectPath == path { projectPath = remaining.first ?? "" }
+        if projectPath == path {
+            projectPath = remaining.first ?? ""
+            UserDefaults.standard.set(projectPath, forKey: defaultsKey)
+            selection = nil
+            startWatching()
+        }
         refreshAll()
     }
 
@@ -360,13 +365,22 @@ final class DashboardModel: ObservableObject {
     private nonisolated static func loadProjects(paths: [String]) async -> [ProjectInfo] {
         let usage = try? UsageStore(path: UsageStore.defaultURL().path)
         let perProject = usage?.summary().perProject ?? []
+        let agentUsageByPath = await AgentCatUsageReader.projectUsage()
+        let hiddenProjects = Set(ProjectRegistry.hiddenList())
         var savedByPath: [String: Int] = [:]
         var countByPath: [String: Int] = [:]
         for p in perProject { savedByPath[p.project] = p.saved; countByPath[p.project] = p.count }
 
         // Union of explicitly-added projects and any that have usage history.
-        var allPaths = paths
-        for p in perProject where !allPaths.contains(p.project) { allPaths.append(p.project) }
+        var seenPaths = Set<String>()
+        var allPaths: [String] = []
+        func appendPath(_ path: String) {
+            guard !hiddenProjects.contains(path), seenPaths.insert(path).inserted else { return }
+            allPaths.append(path)
+        }
+        paths.forEach(appendPath)
+        perProject.map(\.project).forEach(appendPath)
+        agentUsageByPath.keys.forEach(appendPath)
 
         var infos: [ProjectInfo] = []
         for path in allPaths {
@@ -383,12 +397,20 @@ final class DashboardModel: ObservableObject {
                 }
             }
             let daily = (usage?.dailySaved(project: path, days: 7) ?? []).map { DayPoint(day: $0.day, saved: $0.saved) }
-            let ai = ClaudeUsageReader.usage(forProjectPath: path)
+            var agentUsages = (agentUsageByPath[path] ?? []).map {
+                AgentUsage(provider: $0.provider, displayName: $0.displayName, tokens: $0.tokens)
+            }
+            let ai = agentUsages.isEmpty ? ClaudeUsageReader.usage(forProjectPath: path) : nil
+            if let ai {
+                agentUsages = [AgentUsage(provider: "claude", displayName: "Claude", tokens: ai.totalTokens)]
+            }
             infos.append(ProjectInfo(
                 path: path, files: files, symbols: symbols, totalTokens: total,
                 savedTokens: savedByPath[path] ?? 0, queryCount: countByPath[path] ?? 0,
                 daily: daily, isIndexed: indexed,
-                aiTokens: ai?.totalTokens ?? 0, aiSessions: ai?.sessions ?? 0
+                aiTokens: agentUsages.reduce(0) { $0 + $1.tokens },
+                aiSessions: ai?.sessions ?? 0,
+                agentUsages: agentUsages
             ))
         }
         // AI-used projects first, by real token usage.
@@ -445,8 +467,16 @@ struct ProjectInfo: Identifiable, Sendable {
     // Real AI-agent (Claude Code) token usage read from local session logs.
     var aiTokens: Int
     var aiSessions: Int
+    var agentUsages: [AgentUsage]
     var id: String { path }
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
     /// Whether an AI agent has actually been used on this project.
-    var hasAgentHistory: Bool { aiSessions > 0 }
+    var hasAgentHistory: Bool { aiTokens > 0 }
+}
+
+struct AgentUsage: Identifiable, Sendable {
+    var provider: String
+    var displayName: String
+    var tokens: Int
+    var id: String { provider }
 }
