@@ -27,8 +27,10 @@ public struct Indexer: Sendable {
 
     /// Build (or rebuild) the index for `projectRoot`.
     ///
-    /// M1 always does a full rebuild. Incremental indexing (via `contentHash`)
-    /// is a later optimization; the schema already stores what it needs.
+    /// Incremental: files whose size + mtime are unchanged are left as-is; only
+    /// new or modified files are re-read/parsed, and files removed from disk are
+    /// dropped. The `contentHash` guards against mtime-only touches. This makes
+    /// the watcher's per-save re-index cheap on large projects.
     @discardableResult
     public func index(projectRoot: URL) throws -> IndexStats {
         let start = Date()
@@ -40,40 +42,58 @@ public struct Indexer: Sendable {
         )
 
         let store = try IndexStore(path: dbURL.path)
-        try store.reset()
+
+        // Snapshot of what's already indexed, keyed by path.
+        var existing: [String: IndexedFile] = [:]
+        for f in try store.allFiles() { existing[f.relativePath] = f }
 
         let files = try scanner.scan(root: projectRoot)
+        var seenPaths = Set<String>()
 
         var stats = IndexStats()
         try store.beginTransaction()
 
         for scanned in files {
-            guard let data = try? Data(contentsOf: scanned.absoluteURL),
-                  let source = String(data: data, encoding: .utf8)
-            else {
-                // Unreadable or non-UTF8 (binary that slipped past the filter).
-                stats.filesSkipped += 1
+            seenPaths.insert(scanned.relativePath)
+            stats.byLanguage[scanned.language, default: 0] += 1
+            stats.filesIndexed += 1
+
+            // Fast path: unchanged size + mtime → skip entirely (no read/parse).
+            if let prior = existing[scanned.relativePath],
+               prior.byteSize == scanned.byteSize,
+               prior.modifiedAt == scanned.modifiedAt {
                 continue
             }
 
-            let hash = SHA256.hash(data: data)
-                .map { String(format: "%02x", $0) }
-                .joined()
-            let lineCount = source.reduce(into: 1) { count, ch in
-                if ch == "\n" { count += 1 }
+            guard let data = try? Data(contentsOf: scanned.absoluteURL),
+                  let source = String(data: data, encoding: .utf8)
+            else {
+                stats.filesSkipped += 1
+                stats.filesIndexed -= 1
+                if let prior = existing[scanned.relativePath], let id = prior.id {
+                    try store.deleteFile(id: id) // became unreadable/binary
+                }
+                continue
             }
 
-            let file = IndexedFile(
-                relativePath: scanned.relativePath,
-                language: scanned.language,
-                byteSize: scanned.byteSize,
-                lineCount: lineCount,
-                contentHash: hash,
-                modifiedAt: scanned.modifiedAt
-            )
-            let fileID = try store.insertFile(file)
-            stats.filesIndexed += 1
-            stats.byLanguage[scanned.language, default: 0] += 1
+            let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+
+            // Content identical (mtime-only touch): just refresh metadata.
+            if let prior = existing[scanned.relativePath], prior.contentHash == hash, let id = prior.id {
+                try store.updateFileMeta(id: id, byteSize: scanned.byteSize, modifiedAt: scanned.modifiedAt)
+                continue
+            }
+
+            // New or genuinely changed: replace the file's row + symbols.
+            if let prior = existing[scanned.relativePath], let id = prior.id {
+                try store.deleteFile(id: id)
+            }
+
+            let lineCount = source.reduce(into: 1) { count, ch in if ch == "\n" { count += 1 } }
+            let fileID = try store.insertFile(IndexedFile(
+                relativePath: scanned.relativePath, language: scanned.language,
+                byteSize: scanned.byteSize, lineCount: lineCount,
+                contentHash: hash, modifiedAt: scanned.modifiedAt))
 
             guard parser.supports(scanned.language) else { continue }
             let parsed = parser.parse(source: source, language: scanned.language)
@@ -85,6 +105,11 @@ public struct Indexer: Sendable {
                 try store.insertImport(edge, fileID: fileID)
                 stats.importsIndexed += 1
             }
+        }
+
+        // Files that vanished from disk.
+        for (path, prior) in existing where !seenPaths.contains(path) {
+            if let id = prior.id { try store.deleteFile(id: id) }
         }
 
         try store.commit()

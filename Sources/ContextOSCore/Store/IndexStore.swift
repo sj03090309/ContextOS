@@ -131,6 +131,25 @@ public final class IndexStore {
         try step(stmt)
     }
 
+    /// Delete a file and its symbols/imports (via ON DELETE CASCADE).
+    public func deleteFile(id: Int64) throws {
+        let stmt = try prepare("DELETE FROM files WHERE id = ?;")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, id)
+        try step(stmt)
+    }
+
+    /// Update a file's metadata without touching its symbols (used when content
+    /// is unchanged but the file was touched).
+    public func updateFileMeta(id: Int64, byteSize: Int, modifiedAt: Double) throws {
+        let stmt = try prepare("UPDATE files SET byte_size = ?, modified_at = ? WHERE id = ?;")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(byteSize))
+        sqlite3_bind_double(stmt, 2, modifiedAt)
+        sqlite3_bind_int64(stmt, 3, id)
+        try step(stmt)
+    }
+
     // MARK: - Reads
 
     public func fileCount() throws -> Int { try scalarCount("SELECT COUNT(*) FROM files;") }
