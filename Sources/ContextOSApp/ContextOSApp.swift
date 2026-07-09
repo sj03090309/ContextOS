@@ -13,7 +13,7 @@ struct ContextOSApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            DashboardWindow().environmentObject(model)
+            DashboardView().environmentObject(model)
         } label: {
             Image(systemName: "square.stack.3d.up.fill")
         }
