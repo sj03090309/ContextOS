@@ -18,6 +18,7 @@ struct DashboardView: View {
             header
             hero
             segments
+            files
             agents
             footer
         }
@@ -78,6 +79,58 @@ struct DashboardView: View {
             Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // Per-file token usage: how many tokens each file cost by being loaded into
+    // context, and which AI loaded it.
+    private var files: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("파일별 토큰 사용량")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            if model.fileUsage.isEmpty {
+                Text("아직 파일 사용 기록이 없어요.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                let maxTokens = max(1, model.fileUsage.map(\.tokens).max() ?? 1)
+                ForEach(model.fileUsage) { f in
+                    fileRow(f, fraction: CGFloat(f.tokens) / CGFloat(maxTokens))
+                }
+            }
+        }
+    }
+
+    private func fileRow(_ f: FileTokenUsage, fraction: CGFloat) -> some View {
+        let color = Self.agentColor(f.agent)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(f.shortLabel)
+                    .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 6)
+                HStack(spacing: 3) {
+                    Circle().fill(color).frame(width: 5, height: 5)
+                    Text(f.agent).font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Text(TokenEstimator.korean(f.tokens))
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary)
+                    Capsule().fill(color).frame(width: max(2, geo.size.width * fraction))
+                }
+            }
+            .frame(height: 4)
+        }
+    }
+
+    private static func agentColor(_ agent: String) -> Color {
+        switch agent {
+        case "Claude Code": return .orange
+        case "Codex":       return .blue
+        case "Copilot":     return .green
+        case "Gemini":      return .purple
+        default:            return .secondary
+        }
     }
 
     // Detected AI tools, one compact row each.
