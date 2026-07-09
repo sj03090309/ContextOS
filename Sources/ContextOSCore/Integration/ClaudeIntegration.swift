@@ -18,6 +18,13 @@ public enum ClaudeIntegration {
         projectRoot.appendingPathComponent("CLAUDE.md")
     }
 
+    /// Whether the global auto-use instruction is installed (i.e. Claude Code is
+    /// wired to use ContextOS automatically).
+    public static func isGloballyInstalled() -> Bool {
+        guard let content = try? String(contentsOf: globalMemoryURL(), encoding: .utf8) else { return false }
+        return content.contains(beginMarker)
+    }
+
     /// The instruction Claude Code follows. Kept concise and directive so the
     /// model reliably prefers ContextOS over broad file exploration.
     public static func instructionBody() -> String {

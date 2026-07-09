@@ -149,6 +149,22 @@ public struct ContextService: Sendable {
         return bundle
     }
 
+    /// Record a completed optimization to the local savings DB, so the menu-bar
+    /// dashboard can show how many tokens were saved. Called by the MCP server
+    /// each time Claude Code asks for context.
+    public func recordUsage(for selection: ContextSelection, query: String, projectRoot: URL) {
+        let full = (try? summary(projectRoot: projectRoot))?.estimatedTotalTokens
+            ?? selection.estimatedTokens
+        UsageStore.record(UsageEvent(
+            project: projectRoot.path,
+            query: query,
+            selectedTokens: selection.estimatedTokens,
+            fullTokens: full,
+            contextScore: selection.contextScore,
+            fileCount: selection.included.count
+        ))
+    }
+
     /// Summary stats for an already-indexed project.
     public func summary(projectRoot: URL) throws -> ProjectSummary {
         let store = try Indexer.openStore(forProjectRoot: projectRoot)

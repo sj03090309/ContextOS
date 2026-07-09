@@ -116,6 +116,7 @@ struct MCPServer {
         let root = projectRoot(from: args)
         let budget = integer(args, "token_budget") ?? 8000
         let selection = try service.relevantContext(query: query, projectRoot: root, tokenBudget: budget)
+        service.recordUsage(for: selection, query: query, projectRoot: root)
 
         guard !selection.isEmpty else {
             return "No relevant files found for “\(query)”. Terms: \(selection.terms.joined(separator: ", "))"
