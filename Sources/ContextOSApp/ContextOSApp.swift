@@ -4,48 +4,68 @@ import ContextOSCore
 
 @main
 struct ContextOSApp: App {
-    @StateObject private var model = DashboardModel()
-    @StateObject private var mascot = MascotRenderer()
-
-    init() {
-        // Menu-bar agent: no Dock icon, no standalone window.
-        NSApplication.shared.setActivationPolicy(.accessory)
-    }
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            DashboardView().environmentObject(model)
-        } label: {
-            MenuBarLabel(model: model, mascot: mascot)
-        }
-        .menuBarExtraStyle(.window)
+        // Menu-bar-only agent: the UI lives entirely in the status item + popover
+        // managed by AppDelegate. This empty Settings scene keeps SwiftUI happy
+        // without opening a window.
+        Settings { EmptyView() }
     }
 }
 
-/// The live menu-bar label: the ContextOS mascot + today's saved tokens.
-///
-/// Note: a raw custom `Shape`/`Canvas` view does not render inside a
-/// `MenuBarExtra` label's status-item hosting — only `Image`-backed content
-/// (SF Symbols, or a rendered bitmap) does. So the mascot is drawn to an
-/// `NSImage` every frame (see `MascotRenderer`) and shown via `Image(nsImage:)`.
-struct MenuBarLabel: View {
-    @ObservedObject var model: DashboardModel
-    @ObservedObject var mascot: MascotRenderer
+/// Owns the status-bar item and the popover. Using AppKit's `NSStatusItem` +
+/// `NSPopover` (instead of SwiftUI's `MenuBarExtra`) gives us the popover
+/// **arrow anchored to the mascot** — the window visibly points back to the
+/// menu-bar icon, the way native status-bar apps do.
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
+    private var statusItem: NSStatusItem!
+    private let popover = NSPopover()
+    private let model = DashboardModel()
+    private let mascot = MascotRenderer()
+    private var uiTimer: Timer?
 
-    var body: some View {
-        HStack(spacing: 3) {
-            Image(nsImage: mascot.image)
-            if model.todaySaved > 0 {
-                Text(TokenEstimator.korean(model.todaySaved))
-                    .font(.system(size: 12, weight: .medium))
-            }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // No Dock icon, no standalone window.
+        NSApp.setActivationPolicy(.accessory)
+
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if let button = statusItem.button {
+            button.image = mascot.image
+            button.imagePosition = .imageLeading
+            button.action = #selector(togglePopover)
+            button.target = self
         }
-        .onAppear {
-            mascot.setActive(model.flashing)
-            mascot.start()
+
+        popover.behavior = .transient        // closes when you click away
+        popover.animates = true
+        let host = NSHostingController(rootView: DashboardView().environmentObject(model))
+        host.sizingOptions = [.preferredContentSize]   // auto-fit the SwiftUI content
+        popover.contentViewController = host
+
+        mascot.start()
+        // Push the freshly-rendered mascot frame (and today's savings) onto the
+        // status button, and keep the mascot's idle/active state in sync.
+        uiTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.syncButton() }
         }
-        .onChange(of: model.flashing) { _, newValue in
-            mascot.setActive(newValue)
+    }
+
+    private func syncButton() {
+        mascot.setActive(model.flashing)
+        guard let button = statusItem.button else { return }
+        button.image = mascot.image
+        button.title = model.todaySaved > 0 ? " " + TokenEstimator.korean(model.todaySaved) : ""
+    }
+
+    @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            NSApp.activate(ignoringOtherApps: true)
         }
     }
 }

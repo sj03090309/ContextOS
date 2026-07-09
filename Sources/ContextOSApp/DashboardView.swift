@@ -7,15 +7,9 @@ import ContextOSCore
 /// and a compact list of detected AI tools.
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
-    // Drives a soft fade-and-scale as the popover opens.
-    @State private var shown = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            MeltingMascot(active: model.flashing)
-                .frame(height: 46)
-                .padding(.horizontal, -14) // span the full panel width
-                .padding(.top, -14)
             header
             hero
             segments
@@ -24,20 +18,14 @@ struct DashboardView: View {
         }
         .padding(14)
         .frame(width: 300)
-        // Translucent menu-bar material; follows the system appearance.
-        .background(.regularMaterial)
-        .opacity(shown ? 1 : 0)
-        .scaleEffect(shown ? 1 : 0.96, anchor: .top)
-        .onAppear {
-            shown = false
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { shown = true }
-        }
-        .onDisappear { shown = false }
     }
 
     // ContextOS + live connection state.
     private var header: some View {
         HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.tint)
+                .symbolEffect(.pulse, options: .repeating, isActive: model.flashing)
             Text("ContextOS").font(.system(size: 13, weight: .semibold))
             Spacer()
             HStack(spacing: 4) {
@@ -134,84 +122,5 @@ struct DashboardView: View {
                 .help("종료")
             }
         }
-    }
-}
-
-/// The 뭉치 mascot melting into the top of the panel. On open it drops in as a
-/// droplet and fuses into a base strip along the panel's top edge, connected by
-/// a gooey neck (a Canvas metaball: blur + alpha-threshold). After settling it
-/// bobs gently; while ContextOS is optimizing it bobs faster.
-struct MeltingMascot: View {
-    var active: Bool
-    @State private var start = Date()
-
-    // Brand gradient (blue → purple) the metaball silhouette is filled with.
-    private let grad = LinearGradient(
-        colors: [Color(red: 0.29, green: 0.56, blue: 0.98),
-                 Color(red: 0.64, green: 0.52, blue: 0.96)],
-        startPoint: .topLeading, endPoint: .bottomTrailing)
-
-    var body: some View {
-        GeometryReader { geo in
-            TimelineView(.animation) { tl in
-                let t = tl.date.timeIntervalSince(start)
-                let c = blobCenter(t, geo.size)
-                ZStack {
-                    grad.mask(metaball(t))
-                    // Eyes track the blob and fade in as it settles.
-                    let eyeOpacity = min(1, max(0, (meltProgress(t) - 0.55) / 0.45))
-                    Group {
-                        eye.position(x: c.x - 4.3, y: c.y - 1)
-                        eye.position(x: c.x + 4.3, y: c.y - 1)
-                    }
-                    .opacity(eyeOpacity)
-                }
-            }
-        }
-        .onAppear { start = Date() }
-    }
-
-    private var eye: some View {
-        Circle().fill(Color(white: 0.12)).frame(width: 4, height: 4)
-    }
-
-    private func metaball(_ t: TimeInterval) -> some View {
-        Canvas { ctx, size in
-            ctx.addFilter(.alphaThreshold(min: 0.5))
-            ctx.addFilter(.blur(radius: 7))
-            ctx.drawLayer { layer in
-                // Base strip fused to the panel's top edge.
-                let baseH: CGFloat = 20
-                let base = CGRect(x: 0, y: size.height - baseH, width: size.width, height: baseH + 12)
-                layer.fill(Path(roundedRect: base, cornerRadius: 12), with: .color(.white))
-                // The droplet body.
-                let c = blobCenter(t, size)
-                let r = blobRadius(t)
-                layer.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                           with: .color(.white))
-            }
-        }
-    }
-
-    // 0 → ~1 with a small damped overshoot, so the droplet squishes as it lands.
-    private func meltProgress(_ t: TimeInterval) -> CGFloat {
-        let x = max(0, CGFloat(t))
-        if x >= 1.4 { return 1 }
-        return 1 - exp(-5 * x) * cos(7 * x)
-    }
-
-    private func blobCenter(_ t: TimeInterval, _ size: CGSize) -> CGPoint {
-        let p = meltProgress(t)
-        let startY: CGFloat = 9
-        let restY = size.height - 20
-        var y = startY + (restY - startY) * min(p, 1.15)
-        if t > 1.4 { // gentle idle bob (faster while active)
-            y += sin((t - 1.4) * (active ? 6.0 : 2.0)) * (active ? 2.2 : 1.2)
-        }
-        return CGPoint(x: size.width / 2, y: y)
-    }
-
-    private func blobRadius(_ t: TimeInterval) -> CGFloat {
-        9 + 3 * min(meltProgress(t), 1)
     }
 }
