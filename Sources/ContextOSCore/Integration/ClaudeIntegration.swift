@@ -29,16 +29,20 @@ public enum ClaudeIntegration {
     /// model reliably prefers ContextOS over broad file exploration.
     public static func instructionBody() -> String {
         """
-        ## ContextOS — 컨텍스트 최적화 (자동)
+        ## ContextOS — 컨텍스트 최적화 (필수)
 
-        이 환경에는 `contextos` MCP 서버가 연결되어 있습니다. 코드베이스에서 어떤
-        작업을 이해하거나 수정하기 위해 **여러 파일을 읽어야 할 때, 파일을 직접
-        탐색하기 전에 먼저 ContextOS를 사용하세요.**
+        이 환경에는 `contextos` MCP 서버가 연결되어 있습니다. **이 지시는 선택이
+        아니라 필수입니다. 아래 규칙을 반드시 따르세요.**
 
-        - 관련 파일만 빠르게 찾으려면 `get_relevant_context`(경로+이유) 또는
-          `read_optimized`(관련 함수만 잘라낸 내용)를 호출하세요.
-        - 프로젝트 전체를 넓게 grep/read 하지 말고, ContextOS가 고른 파일부터 보세요.
-          토큰을 크게 아낄 수 있습니다.
+        - 코드베이스를 이해하거나 수정하기 위해 파일을 봐야 할 때는, 직접
+          탐색하기 **전에 반드시 먼저** ContextOS를 호출해야 합니다. 관련 파일을
+          찾으려면 `get_relevant_context`(경로+이유), 관련 함수만 잘라낸 내용이
+          필요하면 `read_optimized`를 사용하세요.
+        - ContextOS를 거치지 않고 프로젝트 전체를 넓게 `grep`/`read`/`glob`로
+          탐색하는 것은 **금지**입니다. 항상 ContextOS가 고른 파일부터 보세요.
+          이렇게 해야 토큰을 크게 아낄 수 있습니다.
+        - 예외: ContextOS가 결과를 주지 못하거나 인덱싱되지 않은 경로일 때만 직접
+          탐색으로 넘어가되, 그 사실을 짧게 밝히세요.
         - 프로젝트 규칙은 `get_project_rules`, 새 세션 시작 시 현재 상태 파악은
           `restore_session`을 사용하세요.
         """
