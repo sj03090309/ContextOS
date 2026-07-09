@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ContextOSCore
 
 /// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
@@ -11,7 +12,7 @@ struct DashboardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             MeltingMascot(active: model.flashing)
-                .frame(height: 46)
+                .frame(height: 62)
                 .padding(.horizontal, -14) // span the full panel width
                 .padding(.top, -14)
             header
@@ -22,6 +23,9 @@ struct DashboardView: View {
         }
         .padding(14)
         .frame(width: 300)
+        // Pin the background to a single, constant vibrancy so its color doesn't
+        // deepen when the popover becomes key (e.g. after a click).
+        .background(VisualEffectBackground())
     }
 
     // ContextOS + live connection state.
@@ -126,6 +130,22 @@ struct DashboardView: View {
     }
 }
 
+/// A translucent panel background pinned to the `.active` state, so its color
+/// stays constant instead of deepening when the popover window gains/loses key
+/// focus (which is what made a click "darken" the dashboard).
+private struct VisualEffectBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.state = .active
+    }
+}
+
 /// The 뭉치 mascot melting into the top of the panel. On open it drops in as a
 /// droplet and fuses into a base strip along the panel's top edge, connected by
 /// a gooey neck (a Canvas metaball: blur + alpha-threshold). After settling it
@@ -140,6 +160,13 @@ struct MeltingMascot: View {
                  Color(red: 0.64, green: 0.52, blue: 0.96)],
         startPoint: .topLeading, endPoint: .bottomTrailing)
 
+    // Damped-bounce constants. The droplet first touches down at `impactTime`,
+    // then jiggles with a decaying wobble.
+    private let decay: CGFloat = 2.6
+    private let omega: CGFloat = 4.2
+    private var impactTime: CGFloat { .pi / (2 * omega) }   // when cos() first hits 0
+    private let settleTime: CGFloat = 2.6
+
     var body: some View {
         GeometryReader { geo in
             TimelineView(.animation) { tl in
@@ -148,59 +175,76 @@ struct MeltingMascot: View {
                 ZStack {
                     grad.mask(metaball(t))
                     // Eyes track the blob and fade in as it settles.
-                    let eyeOpacity = min(1, max(0, (meltProgress(t) - 0.55) / 0.45))
+                    let eyeOpacity = min(1, max(0, (meltProgress(t) - 0.6) / 0.4))
                     Group {
-                        eye.position(x: c.x - 4.3, y: c.y - 1)
-                        eye.position(x: c.x + 4.3, y: c.y - 1)
+                        eye.position(x: c.x - 5.2, y: c.y - 1.5)
+                        eye.position(x: c.x + 5.2, y: c.y - 1.5)
                     }
                     .opacity(eyeOpacity)
                 }
             }
         }
         .onAppear { start = Date() }
+        // Replay the melt-in each time the popover is opened (the hosted view is
+        // reused, so onAppear alone won't fire again).
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
+            start = Date()
+        }
     }
 
     private var eye: some View {
-        Circle().fill(Color(white: 0.12)).frame(width: 4, height: 4)
+        Circle().fill(Color(white: 0.12)).frame(width: 4.5, height: 4.5)
     }
 
     private func metaball(_ t: TimeInterval) -> some View {
         Canvas { ctx, size in
             ctx.addFilter(.alphaThreshold(min: 0.5))
-            ctx.addFilter(.blur(radius: 7))
+            // A larger blur stretches the gooey neck over a longer gap, so the
+            // "soaking in" reads clearly.
+            ctx.addFilter(.blur(radius: 10))
             ctx.drawLayer { layer in
-                // Base strip fused to the panel's top edge.
-                let baseH: CGFloat = 20
-                let base = CGRect(x: 0, y: size.height - baseH, width: size.width, height: baseH + 12)
-                layer.fill(Path(roundedRect: base, cornerRadius: 12), with: .color(.white))
-                // The droplet body.
+                // The surface the droplet soaks into, fused to the panel top.
+                let baseH: CGFloat = 22
+                let base = CGRect(x: 0, y: size.height - baseH, width: size.width, height: baseH + 14)
+                layer.fill(Path(roundedRect: base, cornerRadius: 13), with: .color(.white))
+                // The droplet body — an ellipse so it can stretch while falling
+                // and squash-wobble on impact.
                 let c = blobCenter(t, size)
-                let r = blobRadius(t)
-                layer.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
+                let (rx, ry) = blobRadii(t)
+                layer.fill(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - ry, width: rx * 2, height: ry * 2)),
                            with: .color(.white))
             }
         }
     }
 
-    // 0 → ~1 with a small damped overshoot, so the droplet squishes as it lands.
+    // 0 → ~1 with a slow, visible damped bounce (two settling hops).
     private func meltProgress(_ t: TimeInterval) -> CGFloat {
         let x = max(0, CGFloat(t))
-        if x >= 1.4 { return 1 }
-        return 1 - exp(-5 * x) * cos(7 * x)
+        if x >= settleTime { return 1 }
+        return 1 - exp(-decay * x) * cos(omega * x)
     }
 
     private func blobCenter(_ t: TimeInterval, _ size: CGSize) -> CGPoint {
         let p = meltProgress(t)
-        let startY: CGFloat = 9
-        let restY = size.height - 20
-        var y = startY + (restY - startY) * min(p, 1.15)
-        if t > 1.4 { // gentle idle bob (faster while active)
-            y += sin((t - 1.4) * (active ? 6.0 : 2.0)) * (active ? 2.2 : 1.2)
+        let startY: CGFloat = 3          // starts high, right under the arrow
+        let restY = size.height - 26
+        var y = startY + (restY - startY) * min(p, 1.18)
+        if t >= Double(settleTime) {     // gentle idle bob (livelier while active)
+            y += sin((t - Double(settleTime)) * (active ? 6.0 : 2.0)) * (active ? 2.6 : 1.4)
         }
         return CGPoint(x: size.width / 2, y: y)
     }
 
-    private func blobRadius(_ t: TimeInterval) -> CGFloat {
-        9 + 3 * min(meltProgress(t), 1)
+    // Bigger droplet that elongates as it falls and jelly-wobbles on impact.
+    private func blobRadii(_ t: TimeInterval) -> (CGFloat, CGFloat) {
+        let r = 11 + 4 * min(meltProgress(t), 1)      // grows 11 → 15
+        let x = CGFloat(max(0, t))
+        if x < impactTime {
+            let f = x / impactTime                    // 0 → 1 during the fall
+            return (r * (1 - 0.16 * f), r * (1 + 0.36 * f))   // teardrop stretch
+        }
+        let dt = x - impactTime
+        let wobble = exp(-3.2 * dt) * sin(2 * .pi * 2.4 * dt)  // decaying jelly
+        return (r * (1 + 0.36 * wobble), r * (1 - 0.36 * wobble))
     }
 }

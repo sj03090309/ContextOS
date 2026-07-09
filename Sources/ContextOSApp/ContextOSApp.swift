@@ -66,8 +66,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
+            // NSPopover reuses its hosted view, so onAppear only fires once. Signal
+            // the dashboard to replay the droplet melt-in on every open.
+            NotificationCenter.default.post(name: .contextOSPopoverOpened, object: nil)
         }
     }
+}
+
+extension Notification.Name {
+    static let contextOSPopoverOpened = Notification.Name("contextOSPopoverOpened")
 }
 
 /// Renders "뭉치" — the ContextOS blob mascot — to a bitmap on every animation
