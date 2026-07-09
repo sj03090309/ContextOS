@@ -1,113 +1,137 @@
 import SwiftUI
 import ContextOSCore
 
-/// The menu-bar monitor: shows what ContextOS is saving automatically.
+/// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
+/// a translucent surface that adapts to the system light/dark appearance,
+/// with one hero number (cumulative savings) up top, a segmented summary,
+/// and a compact list of detected AI tools.
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
+    // Drives a soft fade-and-scale as the popover opens.
+    @State private var shown = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            savingsCard
-            usageCard
-            agentsCard
+            hero
+            segments
+            agents
             footer
         }
         .padding(14)
-        .frame(width: 320)
-        .background(Theme.background)
-        .foregroundStyle(Theme.textPrimary)
-        .preferredColorScheme(.dark)
+        .frame(width: 300)
+        // Translucent menu-bar material; follows the system appearance.
+        .background(.regularMaterial)
+        .opacity(shown ? 1 : 0)
+        .scaleEffect(shown ? 1 : 0.96, anchor: .top)
+        .onAppear {
+            shown = false
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { shown = true }
+        }
+        .onDisappear { shown = false }
     }
 
+    // ContextOS + live connection state.
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkles").foregroundStyle(Theme.blue)
-            Text("ContextOS").font(.system(size: 14, weight: .semibold))
+        HStack(spacing: 6) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.tint)
+                .symbolEffect(.pulse, options: .repeating, isActive: model.flashing)
+            Text("ContextOS").font(.system(size: 13, weight: .semibold))
             Spacer()
             HStack(spacing: 4) {
-                Circle().fill(model.connected ? Theme.green : Theme.textTertiary).frame(width: 6, height: 6)
-                Text(model.connected ? "Claude Code 연결됨" : "연결 안 됨")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                Circle()
+                    .fill(model.connected ? Color.green : Color.secondary)
+                    .frame(width: 6, height: 6)
+                Text(model.connected ? "연결됨" : "연결 안 됨")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
     }
 
-    // 토큰 얼마나 줄였는지
-    private var savingsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("아낀 토큰").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-            HStack(spacing: 16) {
-                stat("오늘", TokenEstimator.korean(model.todaySaved), Theme.green)
-                stat("누적", TokenEstimator.korean(model.totalSaved), Theme.green)
-                stat("최적화 횟수", "\(model.queryCount)", Theme.textPrimary)
-            }
-            if model.totalSaved == 0 {
-                Text("Claude Code에서 작업하면 자동으로 쌓입니다.")
-                    .font(.caption2).foregroundStyle(Theme.textTertiary)
-            }
+    // The one number that matters at a glance: cumulative tokens saved.
+    private var hero: some View {
+        VStack(spacing: 2) {
+            Text(TokenEstimator.korean(model.totalSaved))
+                .font(.system(size: 30, weight: .semibold).monospacedDigit())
+                .contentTransition(.numericText())
+                .animation(.default, value: model.totalSaved)
+            Text("누적 아낀 토큰")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .padding(12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
     }
 
-    // AI 토큰 사용량
-    private var usageCard: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("AI 토큰 사용량").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                Text("Claude Code · \(model.aiProjects)개 프로젝트").font(.caption2).foregroundStyle(Theme.textTertiary)
-            }
-            Spacer()
-            Text(TokenEstimator.korean(model.aiTokens))
-                .font(.system(size: 22, weight: .bold).monospacedDigit()).foregroundStyle(Theme.purple)
+    // A macOS-style segmented summary strip.
+    private var segments: some View {
+        HStack(spacing: 0) {
+            segment("오늘", TokenEstimator.korean(model.todaySaved))
+            Divider().frame(height: 26)
+            segment("최적화", "\(model.queryCount)")
+            Divider().frame(height: 26)
+            segment("AI 사용", TokenEstimator.korean(model.aiTokens))
         }
-        .padding(12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 8)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
     }
 
-    // 어떤 AI 도구가 연결/설치되어 있는지
-    private var agentsCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("내 컴퓨터의 AI 도구").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+    private func segment(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 1) {
+            Text(value)
+                .font(.system(size: 15, weight: .medium).monospacedDigit())
+                .contentTransition(.numericText())
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // Detected AI tools, one compact row each.
+    private var agents: some View {
+        VStack(alignment: .leading, spacing: 6) {
             if model.agents.isEmpty {
-                Text("찾은 AI 도구가 없어요.").font(.caption).foregroundStyle(Theme.textTertiary)
+                Text("찾은 AI 도구가 없어요.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
                 ForEach(model.agents) { agent in
                     HStack(spacing: 8) {
-                        Circle().fill(Theme.green).frame(width: 6, height: 6)
+                        Circle().fill(Color.green).frame(width: 6, height: 6)
                         Text(agent.name).font(.system(size: 12))
                         if let d = agent.detail {
-                            Text(d).font(.caption2).foregroundStyle(Theme.textTertiary)
+                            Text(d).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                         Spacer()
                         if agent.name == "Claude Code" {
-                            Text(model.connected ? "ContextOS 연결됨" : "미연결")
-                                .font(.caption2)
-                                .foregroundStyle(model.connected ? Theme.green : Theme.textTertiary)
+                            Text(model.connected ? "연결됨" : "미연결")
+                                .font(.system(size: 11))
+                                .foregroundStyle(model.connected ? Color.green : Color.secondary)
                         }
                     }
                 }
             }
         }
-        .padding(12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func stat(_ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
-            Text(value).font(.system(size: 18, weight: .bold).monospacedDigit()).foregroundStyle(tint)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var footer: some View {
-        HStack {
-            Text("최적화는 Claude Code에서 자동 실행").font(.caption2).foregroundStyle(Theme.textTertiary)
-            Spacer()
-            Button(action: model.refresh) { Image(systemName: "arrow.clockwise") }.controlSize(.small)
-            Button("종료") { NSApplication.shared.terminate(nil) }.controlSize(.small)
+        VStack(spacing: 8) {
+            Divider()
+            HStack {
+                Text("자동 최적화 실행 중")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer()
+                Button(action: model.refresh) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("새로고침")
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    Image(systemName: "power")
+                }
+                .buttonStyle(.borderless)
+                .help("종료")
+            }
         }
     }
 }

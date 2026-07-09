@@ -22,6 +22,7 @@ final class DashboardModel: ObservableObject {
     private var lastQueryCount = -1
     private var timer: Timer?
     private var tick = 0
+    private var flashTask: Task<Void, Never>?
 
     init() {
         refreshFast()
@@ -66,9 +67,16 @@ final class DashboardModel: ObservableObject {
         }
     }
 
+    // Show the bolt while ContextOS is actively working. Each new optimization
+    // keeps it lit; it reverts to sparkles ~6s after the last activity, so during
+    // a busy Claude Code session the bolt stays on.
     private func flash() {
         flashing = true
-        Task { try? await Task.sleep(nanoseconds: 800_000_000); flashing = false }
+        flashTask?.cancel()
+        flashTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if !Task.isCancelled { self?.flashing = false }
+        }
     }
 
     struct Savings: Sendable { var todaySaved = 0, totalSaved = 0, queryCount = 0, avgScore = 0 }
