@@ -97,19 +97,23 @@ final class MascotRenderer: ObservableObject {
         let bob: CGFloat        // vertical offset
         let scaleY: CGFloat     // squash & stretch
         let scaleX: CGFloat
-        // Pure sinusoids (no abs/cusp) keep the bounce buttery smooth. The squash
-        // is a quarter-phase behind the bob so it stretches at the top of the hop
-        // and squashes at the bottom.
+        let tilt: CGFloat       // left/right wiggle, in degrees
         if active {
-            let phase = t * 6.0     // lively but smooth
-            bob = sin(phase) * 3.4
-            scaleY = 1 + 0.11 * cos(phase)
-            scaleX = 1 - 0.11 * cos(phase)
+            // Working → unmistakably lively: quick energetic hops, a strong
+            // squash on landing / stretch at the top, and a side-to-side jiggle.
+            let phase = t * 9.0
+            let b = abs(sin(phase))          // 1 at the top of the hop, 0 grounded
+            bob = -b * 3.2
+            scaleY = 0.82 + 0.30 * b
+            scaleX = 1.20 - 0.30 * b
+            tilt = sin(t * 13.0) * 9
         } else {
-            let phase = t * 2.0     // gentle idle breathing
+            // Idle → a calm, smooth breathing bob (pure sinusoids, no cusp).
+            let phase = t * 2.0
             bob = sin(phase) * 1.6
             scaleY = 1 + 0.05 * cos(phase)
             scaleX = 1 - 0.05 * cos(phase)
+            tilt = 0
         }
 
         // Solid black on transparent + isTemplate: macOS then auto-adapts the
@@ -117,10 +121,11 @@ final class MascotRenderer: ObservableObject {
         // Eyes are punched as holes via an even-odd fill so the bar shows through.
         let glyph = BlobShape()
             .fill(Color.black, style: FillStyle(eoFill: true))
-            .frame(width: 19, height: 19)
+            .frame(width: 18, height: 18)
             .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
+            .rotationEffect(.degrees(tilt), anchor: .bottom)
             .offset(y: bob)
-            .frame(width: 22, height: 22) // pad so the bounce isn't clipped
+            .frame(width: 24, height: 24) // pad so the bounce/wiggle isn't clipped
 
         let renderer = ImageRenderer(content: glyph)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
