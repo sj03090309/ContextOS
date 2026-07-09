@@ -128,8 +128,11 @@ public struct ContextService: Sendable {
     /// Concatenate the included files (sliced when a query narrowed them).
     private func assembleBundle(_ selection: ContextSelection, projectRoot: URL) -> String {
         var bundle = ""
+        let rootPath = projectRoot.standardizedFileURL.path
         for file in selection.included {
-            let url = projectRoot.appendingPathComponent(file.path)
+            let url = projectRoot.appendingPathComponent(file.path).standardizedFileURL
+            // Defense in depth: never read outside the project root.
+            guard url.path == rootPath || url.path.hasPrefix(rootPath + "/") else { continue }
             guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
 
             var body = content

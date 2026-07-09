@@ -47,13 +47,42 @@ public enum ClaudeUsageReader {
 
     private static func usage(inDir dir: URL, label: String) -> ClaudeProjectUsage? {
         guard let files = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil) else { return nil }
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]) else { return nil }
         let sessions = files.filter { $0.pathExtension == "jsonl" }
         guard !sessions.isEmpty else { return nil }
 
         var input = 0, output = 0
         for file in sessions {
-            guard let content = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let t = tokens(for: file)
+            input += t.input; output += t.output
+        }
+        return ClaudeProjectUsage(projectPath: label, sessions: sessions.count, inputTokens: input, outputTokens: output)
+    }
+
+    // MARK: - Per-file cache
+
+    // Session transcripts are large and mostly append-only; re-parsing every one
+    // on each dashboard refresh is expensive. Cache per file, keyed by mtime+size,
+    // so only files that actually changed are re-parsed.
+    private struct Cached { var mtime: TimeInterval; var size: Int; var input: Int; var output: Int }
+    nonisolated(unsafe) private static var cache: [String: Cached] = [:]
+    private static let cacheLock = NSLock()
+
+    private static func tokens(for file: URL) -> (input: Int, output: Int) {
+        let vals = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        let mtime = vals?.contentModificationDate?.timeIntervalSince1970 ?? 0
+        let size = vals?.fileSize ?? 0
+        let key = file.path
+
+        cacheLock.lock()
+        let hit = cache[key]
+        cacheLock.unlock()
+        if let hit, hit.mtime == mtime, hit.size == size {
+            return (hit.input, hit.output)
+        }
+
+        var input = 0, output = 0
+        if let content = try? String(contentsOf: file, encoding: .utf8) {
             content.enumerateLines { line, _ in
                 guard line.contains("\"usage\"") else { return }
                 guard let data = line.data(using: .utf8),
@@ -66,7 +95,11 @@ public enum ClaudeUsageReader {
                 output += intVal(u, "output_tokens")
             }
         }
-        return ClaudeProjectUsage(projectPath: label, sessions: sessions.count, inputTokens: input, outputTokens: output)
+
+        cacheLock.lock()
+        cache[key] = Cached(mtime: mtime, size: size, input: input, output: output)
+        cacheLock.unlock()
+        return (input, output)
     }
 
     private static func intVal(_ dict: [String: Any], _ key: String) -> Int {

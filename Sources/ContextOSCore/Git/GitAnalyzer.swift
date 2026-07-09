@@ -98,11 +98,21 @@ public struct GitAnalyzer: Sendable {
 
     // MARK: - Process runner
 
+    /// Standard git location, resolved once. Prefer the absolute path over a
+    /// PATH lookup so a malicious `git` earlier in PATH can't be invoked.
+    private static let gitExecutable: URL = {
+        for candidate in ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+        where FileManager.default.isExecutableFile(atPath: candidate) {
+            return URL(fileURLWithPath: candidate)
+        }
+        return URL(fileURLWithPath: "/usr/bin/git")
+    }()
+
     /// Run `git <args>` in `root`, returning stdout, or nil on failure.
     private func run(_ args: [String], in root: URL) -> String? {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["git"] + args
+        process.executableURL = Self.gitExecutable
+        process.arguments = args
         process.currentDirectoryURL = root
 
         let stdout = Pipe()

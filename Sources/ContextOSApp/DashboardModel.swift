@@ -21,30 +21,48 @@ final class DashboardModel: ObservableObject {
 
     private var lastQueryCount = -1
     private var timer: Timer?
+    private var tick = 0
 
     init() {
-        refresh()
-        // Poll the shared usage DB so the menu bar reflects MCP activity live.
+        refreshFast()
+        refreshSlow()
+        // The savings counter (cheap SQLite) polls every 4s; the heavier AI-usage
+        // + agent scan runs every ~32s.
         timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in self?.onTick() }
         }
     }
 
-    func refresh() {
-        Task {
-            let m = await Self.load()
-            todaySaved = m.todaySaved
-            totalSaved = m.totalSaved
-            avgScore = m.avgScore
-            aiTokens = m.aiTokens
-            aiProjects = m.aiProjects
-            agents = m.agents
-            connected = m.connected
+    /// Manual refresh (e.g. from the ↻ button): do everything now.
+    func refresh() { refreshFast(); refreshSlow() }
 
-            // New optimization since last check → flash the icon.
-            if lastQueryCount >= 0, m.queryCount > lastQueryCount { flash() }
-            lastQueryCount = m.queryCount
-            queryCount = m.queryCount
+    private func onTick() {
+        tick += 1
+        refreshFast()
+        if tick % 8 == 0 { refreshSlow() }
+    }
+
+    // Cheap: savings counters from the local usage DB.
+    private func refreshFast() {
+        Task {
+            let s = await Self.loadSavings()
+            todaySaved = s.todaySaved
+            totalSaved = s.totalSaved
+            avgScore = s.avgScore
+            if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
+            lastQueryCount = s.queryCount
+            queryCount = s.queryCount
+        }
+    }
+
+    // Heavier: AI token usage (parses session logs) + agent detection.
+    private func refreshSlow() {
+        Task {
+            let a = await Self.loadAgentsAndUsage()
+            aiTokens = a.aiTokens
+            aiProjects = a.aiProjects
+            agents = a.agents
+            connected = a.connected
         }
     }
 
@@ -53,27 +71,24 @@ final class DashboardModel: ObservableObject {
         Task { try? await Task.sleep(nanoseconds: 800_000_000); flashing = false }
     }
 
-    struct Metrics: Sendable {
-        var todaySaved = 0, totalSaved = 0, queryCount = 0, avgScore = 0
+    struct Savings: Sendable { var todaySaved = 0, totalSaved = 0, queryCount = 0, avgScore = 0 }
+    struct AgentsUsage: Sendable {
         var aiTokens = 0, aiProjects = 0
         var agents: [DetectedAgent] = []
         var connected = false
     }
 
-    private nonisolated static func load() async -> Metrics {
-        var m = Metrics()
-        if let store = try? UsageStore(path: UsageStore.defaultURL().path) {
-            let s = store.summary()
-            m.todaySaved = store.todaySaved()
-            m.totalSaved = s.totalSaved
-            m.queryCount = s.queryCount
-            m.avgScore = s.avgContextScore
-        }
+    private nonisolated static func loadSavings() async -> Savings {
+        guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
+        let s = store.summary()
+        return Savings(todaySaved: store.todaySaved(), totalSaved: s.totalSaved,
+                       queryCount: s.queryCount, avgScore: s.avgContextScore)
+    }
+
+    private nonisolated static func loadAgentsAndUsage() async -> AgentsUsage {
         let ai = ClaudeUsageReader.totalUsageAllProjects()
-        m.aiTokens = ai.tokens
-        m.aiProjects = ai.projects
-        m.agents = AgentDetector.detect()
-        m.connected = ClaudeIntegration.isGloballyInstalled()
-        return m
+        return AgentsUsage(aiTokens: ai.tokens, aiProjects: ai.projects,
+                           agents: AgentDetector.detect(),
+                           connected: ClaudeIntegration.isGloballyInstalled())
     }
 }
