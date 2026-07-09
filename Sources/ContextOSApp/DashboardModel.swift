@@ -16,21 +16,41 @@ final class DashboardModel: ObservableObject {
     @Published var aiProjects = 0
     @Published var agents: [DetectedAgent] = []
     @Published var connected = false
+    /// Brief highlight when MCP just handled an optimization.
+    @Published var flashing = false
 
-    init() { refresh() }
+    private var lastQueryCount = -1
+    private var timer: Timer?
+
+    init() {
+        refresh()
+        // Poll the shared usage DB so the menu bar reflects MCP activity live.
+        timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
 
     func refresh() {
         Task {
             let m = await Self.load()
             todaySaved = m.todaySaved
             totalSaved = m.totalSaved
-            queryCount = m.queryCount
             avgScore = m.avgScore
             aiTokens = m.aiTokens
             aiProjects = m.aiProjects
             agents = m.agents
             connected = m.connected
+
+            // New optimization since last check → flash the icon.
+            if lastQueryCount >= 0, m.queryCount > lastQueryCount { flash() }
+            lastQueryCount = m.queryCount
+            queryCount = m.queryCount
         }
+    }
+
+    private func flash() {
+        flashing = true
+        Task { try? await Task.sleep(nanoseconds: 800_000_000); flashing = false }
     }
 
     struct Metrics: Sendable {

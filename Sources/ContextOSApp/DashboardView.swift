@@ -38,8 +38,8 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("아낀 토큰").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             HStack(spacing: 16) {
-                stat("오늘", TokenEstimator.abbrev(model.todaySaved), Theme.green)
-                stat("누적", TokenEstimator.abbrev(model.totalSaved), Theme.green)
+                stat("오늘", TokenEstimator.korean(model.todaySaved), Theme.green)
+                stat("누적", TokenEstimator.korean(model.totalSaved), Theme.green)
                 stat("최적화 횟수", "\(model.queryCount)", Theme.textPrimary)
             }
             if model.totalSaved == 0 {
@@ -59,7 +59,7 @@ struct DashboardView: View {
                 Text("Claude Code · \(model.aiProjects)개 프로젝트").font(.caption2).foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            Text(TokenEstimator.abbrev(model.aiTokens))
+            Text(TokenEstimator.korean(model.aiTokens))
                 .font(.system(size: 22, weight: .bold).monospacedDigit()).foregroundStyle(Theme.purple)
         }
         .padding(12)

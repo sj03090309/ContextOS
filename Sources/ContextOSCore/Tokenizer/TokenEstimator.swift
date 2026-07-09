@@ -52,4 +52,18 @@ public struct TokenEstimator: Sendable {
     public static func humanReadable(_ tokens: Int) -> String {
         "~" + abbrev(tokens)
     }
+
+    /// Korean-style count using 만/억 units, e.g. `1.2억`, `3.4만`, `8500`.
+    public static func korean(_ tokens: Int) -> String {
+        func unit(_ v: Double, _ suffix: String) -> String {
+            let r = (v * 10).rounded() / 10
+            let s = r.truncatingRemainder(dividingBy: 1) == 0
+                ? String(format: "%.0f", r) : String(format: "%.1f", r)
+            return s + suffix
+        }
+        let n = Double(tokens)
+        if n >= 100_000_000 { return unit(n / 100_000_000, "억") }
+        if n >= 10_000 { return unit(n / 10_000, "만") }
+        return "\(tokens)"
+    }
 }
