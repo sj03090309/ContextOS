@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
 import ContextOSCore
 
 /// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
@@ -329,8 +330,7 @@ struct DashboardView: View {
         VStack(spacing: 8) {
             Divider()
             HStack {
-                Text("자동 최적화 실행 중")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                LaunchAtLoginToggle()
                 Spacer()
                 Button(action: model.refresh) {
                     Image(systemName: "arrow.clockwise")
@@ -346,6 +346,29 @@ struct DashboardView: View {
                 .help("종료")
             }
         }
+    }
+}
+
+/// "로그인 시 시작" — registers the app as a login item via SMAppService.
+/// Registration only works from a real .app bundle; a `swift run` build fails
+/// silently and the toggle snaps back to the actual state.
+private struct LaunchAtLoginToggle: View {
+    @State private var enabled = SMAppService.mainApp.status == .enabled
+
+    var body: some View {
+        Toggle("로그인 시 시작", isOn: $enabled)
+            .toggleStyle(.checkbox)
+            .controlSize(.mini)
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .onChange(of: enabled) { _, on in
+                do {
+                    if on { try SMAppService.mainApp.register() }
+                    else { try SMAppService.mainApp.unregister() }
+                } catch {
+                    enabled = SMAppService.mainApp.status == .enabled
+                }
+            }
     }
 }
 
