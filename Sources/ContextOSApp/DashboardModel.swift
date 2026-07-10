@@ -16,8 +16,8 @@ final class DashboardModel: ObservableObject {
     @Published var aiProjects = 0
     @Published var agents: [DetectedAgent] = []
     @Published var connected = false
-    /// Top files by tokens loaded into context, per AI agent.
-    @Published var fileUsage: [FileTokenUsage] = []
+    /// Token usage grouped by project, broken down per AI agent.
+    @Published var projectUsage: [ProjectAIUsage] = []
     /// Brief highlight when MCP just handled an optimization.
     @Published var flashing = false
 
@@ -67,7 +67,7 @@ final class DashboardModel: ObservableObject {
             aiProjects = a.aiProjects
             agents = a.agents
             connected = a.connected
-            fileUsage = a.fileUsage
+            projectUsage = a.projectUsage
         }
     }
 
@@ -88,7 +88,7 @@ final class DashboardModel: ObservableObject {
         var aiTokens = 0, aiProjects = 0
         var agents: [DetectedAgent] = []
         var connected = false
-        var fileUsage: [FileTokenUsage] = []
+        var projectUsage: [ProjectAIUsage] = []
     }
 
     private nonisolated static func loadSavings() async -> Savings {
@@ -103,6 +103,6 @@ final class DashboardModel: ObservableObject {
         return AgentsUsage(aiTokens: ai.tokens, aiProjects: ai.projects,
                            agents: AgentDetector.detect(),
                            connected: ClaudeIntegration.isGloballyInstalled(),
-                           fileUsage: FileTokenUsageReader.topFiles(limit: 6))
+                           projectUsage: ProjectAITokenReader.topProjects())
     }
 }

@@ -31,6 +31,24 @@ public enum ClaudeUsageReader {
         return usage(inDir: dir, label: path)
     }
 
+    /// Exact total Claude tokens per project, keyed by the project's real path.
+    public static func perProjectTotals() -> [(path: String, tokens: Int)] {
+        guard let dirs = try? FileManager.default.contentsOfDirectory(
+            at: projectsDir, includingPropertiesForKeys: nil) else { return [] }
+        return dirs.compactMap { dir in
+            guard let u = usage(inDir: dir, label: dir.lastPathComponent) else { return nil }
+            return (decodePath(dir.lastPathComponent), u.totalTokens)
+        }
+    }
+
+    /// Reverse of `encode`: turn a project directory name back into a path
+    /// (best-effort; folder names containing "-" can't be told apart).
+    public static func decodePath(_ dirName: String) -> String {
+        dirName.hasPrefix("-")
+            ? "/" + dirName.dropFirst().replacingOccurrences(of: "-", with: "/")
+            : dirName.replacingOccurrences(of: "-", with: "/")
+    }
+
     /// Total Claude Code token usage across **all** projects on this machine —
     /// for the dashboard's "AI 토큰 사용량" figure.
     public static func totalUsageAllProjects() -> (tokens: Int, projects: Int) {

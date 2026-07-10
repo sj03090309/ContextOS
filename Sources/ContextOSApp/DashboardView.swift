@@ -9,6 +9,12 @@ import ContextOSCore
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
 
+    // Which "screen" the segmented control shows — keeps the panel short by
+    // showing one system at a time instead of stacking every section.
+    private enum Tab: Hashable { case files, ai }
+    @State private var tab: Tab = .files
+    @State private var expanded: Set<String> = []   // expanded project cards
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             MeltingMascot(active: model.flashing)
@@ -18,8 +24,16 @@ struct DashboardView: View {
             header
             hero
             segments
-            files
-            agents
+            Picker("", selection: $tab) {
+                Text("파일 토큰").tag(Tab.files)
+                Text("AI 연결").tag(Tab.ai)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            switch tab {
+            case .files: projects
+            case .ai: agents
+            }
             footer
         }
         .padding(14)
@@ -81,46 +95,97 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // Per-file token usage: how many tokens each file cost by being loaded into
-    // context, and which AI loaded it.
-    private var files: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("파일별 토큰 사용량")
-                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-            if model.fileUsage.isEmpty {
-                Text("아직 파일 사용 기록이 없어요.")
+    // One card per project: total tokens + a stacked bar split by AI; expand to
+    // see each AI's exact token total.
+    private var projects: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.projectUsage.isEmpty {
+                Text("아직 AI 사용 기록이 없어요.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
-                let maxTokens = max(1, model.fileUsage.map(\.tokens).max() ?? 1)
-                ForEach(model.fileUsage) { f in
-                    fileRow(f, fraction: CGFloat(f.tokens) / CGFloat(maxTokens))
+                ForEach(model.projectUsage) { p in
+                    projectCard(p)
                 }
             }
         }
     }
 
-    private func fileRow(_ f: FileTokenUsage, fraction: CGFloat) -> some View {
-        let color = Self.agentColor(f.agent)
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 6) {
-                Text(f.shortLabel)
-                    .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
-                Spacer(minLength: 6)
-                HStack(spacing: 3) {
-                    Circle().fill(color).frame(width: 5, height: 5)
-                    Text(f.agent).font(.system(size: 10)).foregroundStyle(.secondary)
+    private func projectCard(_ p: ProjectAIUsage) -> some View {
+        let isOpen = expanded.contains(p.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if isOpen { expanded.remove(p.id) } else { expanded.insert(p.id) }
                 }
-                Text(TokenEstimator.korean(f.tokens))
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
-                    Capsule().fill(color).frame(width: max(2, geo.size.width * fraction))
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "folder.fill").font(.system(size: 12)).foregroundStyle(.tint)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(p.name).font(.system(size: 13, weight: .semibold))
+                        Text(p.path).font(.system(size: 10)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    Spacer(minLength: 6)
+                    Text(TokenEstimator.korean(p.total))
+                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(isOpen ? 180 : 0))
                 }
+                .contentShape(Rectangle())
             }
-            .frame(height: 4)
+            .buttonStyle(.plain)
+
+            stackedBar(p)
+
+            if isOpen {
+                let maxAgent = max(1, p.byAgent.map(\.tokens).max() ?? 1)
+                VStack(spacing: 6) {
+                    ForEach(p.byAgent) { a in
+                        agentRow(a, fraction: CGFloat(a.tokens) / CGFloat(maxAgent))
+                    }
+                }
+                .padding(.top, 2)
+            }
         }
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // A single horizontal bar split into per-AI segments (widths ∝ tokens).
+    private func stackedBar(_ p: ProjectAIUsage) -> some View {
+        GeometryReader { geo in
+            let total = CGFloat(max(1, p.total))
+            HStack(spacing: 1.5) {
+                ForEach(p.byAgent) { a in
+                    Capsule().fill(Self.agentColor(a.agent))
+                        .frame(width: max(3, geo.size.width * CGFloat(a.tokens) / total))
+                }
+            }
+        }
+        .frame(height: 6)
+    }
+
+    // One AI's row inside an expanded card: dot + name + bar + exact tokens.
+    private func agentRow(_ a: AgentTokens, fraction: CGFloat) -> some View {
+        let color = Self.agentColor(a.agent)
+        return HStack(spacing: 8) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(Self.agentShort(a.agent)).font(.system(size: 12))
+                .frame(width: 52, alignment: .leading)
+            GeometryReader { geo in
+                Capsule().fill(color).frame(width: max(3, geo.size.width * min(1, fraction)))
+                    .frame(maxHeight: .infinity, alignment: .center)
+            }
+            .frame(height: 5)
+            Text(TokenEstimator.korean(a.tokens))
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .frame(minWidth: 44, alignment: .trailing)
+        }
+    }
+
+    private static func agentShort(_ agent: String) -> String {
+        agent == "Claude Code" ? "Claude" : agent
     }
 
     private static func agentColor(_ agent: String) -> Color {
