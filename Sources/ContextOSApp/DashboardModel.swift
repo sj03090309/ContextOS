@@ -11,9 +11,7 @@ final class DashboardModel: ObservableObject {
     @Published var todaySaved = 0
     @Published var totalSaved = 0
     @Published var queryCount = 0
-    @Published var avgScore = 0
     @Published var aiTokens = 0
-    @Published var aiProjects = 0
     @Published var agents: [DetectedAgent] = []
     @Published var connected = false
     /// Token usage grouped by project, broken down per AI agent.
@@ -55,7 +53,6 @@ final class DashboardModel: ObservableObject {
             let s = await Self.loadSavings()
             todaySaved = s.todaySaved
             totalSaved = s.totalSaved
-            avgScore = s.avgScore
             daily = s.daily
             recent = s.recent
             if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
@@ -70,7 +67,6 @@ final class DashboardModel: ObservableObject {
         Task {
             let a = await Self.loadAgentsAndUsage()
             aiTokens = a.aiTokens
-            aiProjects = a.aiProjects
             agents = a.agents
             connected = a.connected
             projectUsage = a.projectUsage
@@ -98,42 +94,50 @@ final class DashboardModel: ObservableObject {
     }
 
     struct Savings: Sendable {
-        var todaySaved = 0, totalSaved = 0, queryCount = 0, avgScore = 0
+        var todaySaved = 0, totalSaved = 0, queryCount = 0
         var daily: [DayPoint] = []
         var recent: [UsageEvent] = []
     }
     struct AgentsUsage: Sendable {
-        var aiTokens = 0, aiProjects = 0
+        var aiTokens = 0
         var agents: [DetectedAgent] = []
         var connected = false
         var projectUsage: [ProjectAIUsage] = []
     }
 
+    // DateFormatter construction is expensive; build once, not on every 4s tick.
+    private nonisolated static let dayParser: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+    private nonisolated static let weekdayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ko_KR")
+        f.dateFormat = "EEEEE"     // narrow: 월/화/수/목/금/토/일
+        return f
+    }()
+
     private nonisolated static func loadSavings() async -> Savings {
         guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
         let s = store.summary()
 
-        let parser = DateFormatter()
-        parser.locale = Locale(identifier: "ko_KR")
-        parser.dateFormat = "yyyy-MM-dd"
-        let weekday = DateFormatter()
-        weekday.locale = Locale(identifier: "ko_KR")
-        weekday.dateFormat = "EEEEE"     // narrow: 월/화/수/목/금/토/일
-        let todayKey = parser.string(from: Date())
+        let todayKey = dayParser.string(from: Date())
         let daily = store.dailySaved(days: 7).map { point in
             DayPoint(day: point.day, saved: point.saved,
-                     label: parser.date(from: point.day).map { weekday.string(from: $0) } ?? "",
+                     label: dayParser.date(from: point.day).map { weekdayFormatter.string(from: $0) } ?? "",
                      isToday: point.day == todayKey)
         }
 
         return Savings(todaySaved: store.todaySaved(), totalSaved: s.totalSaved,
-                       queryCount: s.queryCount, avgScore: s.avgContextScore, daily: daily,
+                       queryCount: s.queryCount, daily: daily,
                        recent: store.recentEvents(limit: 6))
     }
 
     private nonisolated static func loadAgentsAndUsage() async -> AgentsUsage {
         let ai = ClaudeUsageReader.totalUsageAllProjects()
-        return AgentsUsage(aiTokens: ai.tokens, aiProjects: ai.projects,
+        return AgentsUsage(aiTokens: ai.tokens,
                            agents: AgentDetector.detect(),
                            connected: ClaudeIntegration.isGloballyInstalled(),
                            projectUsage: ProjectAITokenReader.topProjects())

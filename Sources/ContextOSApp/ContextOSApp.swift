@@ -55,8 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func syncButton() {
         mascot.setActive(model.flashing)
         guard let button = statusItem.button else { return }
-        button.image = mascot.image
-        button.title = model.todaySaved > 0 ? " " + TokenEstimator.korean(model.todaySaved) : ""
+        // Only touch the button when something actually changed — this runs at
+        // up to 60Hz and AppKit re-lays-out the status item on every assignment.
+        if button.image !== mascot.image { button.image = mascot.image }
+        let title = model.todaySaved > 0 ? " " + TokenEstimator.korean(model.todaySaved) : ""
+        if button.title != title { button.title = title }
     }
 
     @objc private func togglePopover() {
@@ -86,6 +89,7 @@ final class MascotRenderer: ObservableObject {
 
     private var timer: Timer?
     private var active = false
+    private var frame = 0
     private let startedAt = Date()
 
     func setActive(_ value: Bool) { active = value }
@@ -93,9 +97,15 @@ final class MascotRenderer: ObservableObject {
     func start() {
         guard timer == nil else { return }
         render()
-        // 60fps for smooth motion.
+        // The timer ticks at 60Hz, but while idle we render every 3rd frame
+        // (20fps) — plenty for the slow breathing bob, and it keeps this
+        // always-running menu-bar app cheap. Active keeps the full 60fps.
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.render() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.frame += 1
+                if self.active || self.frame % 3 == 0 { self.render() }
+            }
         }
     }
 
