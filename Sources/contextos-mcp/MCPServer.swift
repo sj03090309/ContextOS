@@ -83,6 +83,10 @@ struct MCPServer {
                 text = try toolReadOptimized(args)
             case "project_stats":
                 text = try toolProjectStats(args)
+            case "get_project_rules":
+                text = toolProjectRules(args)
+            case "restore_session":
+                text = toolRestoreSession(args)
             default:
                 reply(id: id, result: toolResult("Unknown tool: \(name)", isError: true))
                 return
@@ -167,6 +171,23 @@ struct MCPServer {
             out += "\nlanguages: \(langs)"
         }
         return out
+    }
+
+    private func toolProjectRules(_ args: [String: Any]) -> String {
+        let root = projectRoot(from: args)
+        guard let rules = service.projectRules(projectRoot: root) else {
+            return "No project rule files found (looked for: \(ContextService.ruleFileCandidates.joined(separator: ", "))). "
+                 + "Create .contextos/rules.md to add project-specific rules."
+        }
+        return rules
+    }
+
+    private func toolRestoreSession(_ args: [String: Any]) -> String {
+        let root = projectRoot(from: args)
+        // Best-effort index so the snapshot can report project size; a failure
+        // here shouldn't block the git/status half of the summary.
+        _ = try? service.ensureIndexed(projectRoot: root)
+        return service.sessionSnapshot(projectRoot: root)
     }
 
     // MARK: - Argument helpers

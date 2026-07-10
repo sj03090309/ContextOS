@@ -58,6 +58,34 @@ enum Tools {
                 ],
                 required: []
             )
+        ],
+        [
+            "name": "get_project_rules",
+            "description": """
+            Read the project's rule/convention files (.contextos/rules.md, CLAUDE.md, \
+            AGENTS.md, .cursorrules) so you can follow project-specific rules. \
+            Returns every rule file found, labelled by source.
+            """,
+            "inputSchema": object(
+                properties: [
+                    "path": string("Project root. Defaults to the server's working directory.")
+                ],
+                required: []
+            )
+        ],
+        [
+            "name": "restore_session",
+            "description": """
+            Summarize the current state of the project to orient a new session: \
+            git branch, uncommitted changes (what's being worked on), recent \
+            commits, and recent ContextOS activity here.
+            """,
+            "inputSchema": object(
+                properties: [
+                    "path": string("Project root. Defaults to the server's working directory.")
+                ],
+                required: []
+            )
         ]
         ]
     }
