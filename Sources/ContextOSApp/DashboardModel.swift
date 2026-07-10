@@ -20,8 +20,12 @@ final class DashboardModel: ObservableObject {
     @Published var daily: [DayPoint] = []
     /// Most recent optimization events, newest first.
     @Published var recent: [UsageEvent] = []
-    /// Brief highlight when MCP just handled an optimization.
+    /// Brief highlight when MCP just handled an optimization (energetic burst).
     @Published var flashing = false
+    /// A live Claude Code session with ContextOS is running right now, i.e. the
+    /// user is actively working. The mascot stays gently alive the whole time —
+    /// not only during the brief per-optimization bursts.
+    @Published var working = false
 
     private var lastQueryCount = -1
     private var timer: Timer?
@@ -32,6 +36,7 @@ final class DashboardModel: ObservableObject {
     init() {
         refreshFast()
         refreshSlow()
+        refreshWorking()
         // Real-time: the MCP server posts this the instant it records an
         // optimization, so the mascot reacts with no polling lag.
         optimizedObserver = DistributedNotificationCenter.default().addObserver(
@@ -64,7 +69,31 @@ final class DashboardModel: ObservableObject {
     private func onTick() {
         tick += 1
         refreshFast()
+        refreshWorking()
         if tick % 8 == 0 { refreshSlow() }
+    }
+
+    // Is a Claude Code session (with ContextOS) alive right now? Cheap enough to
+    // check every tick; keeps the mascot animated while Claude thinks and works,
+    // between the sharper per-optimization bursts.
+    private func refreshWorking() {
+        Task {
+            let w = await Self.detectClaudeSession()
+            working = w
+        }
+    }
+
+    /// True while a `contextos-mcp` process is running — which is exactly while a
+    /// Claude Code session that has ContextOS connected is open and working.
+    private nonisolated static func detectClaudeSession() async -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        p.arguments = ["-x", "contextos-mcp"]
+        p.standardOutput = Pipe()
+        p.standardError = Pipe()
+        do { try p.run() } catch { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0   // pgrep: 0 = at least one match
     }
 
     // Cheap: savings counters from the local usage DB.

@@ -18,7 +18,7 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            MeltingMascot(active: model.flashing)
+            MeltingMascot(active: model.flashing, working: model.working)
                 .frame(height: 62)
                 .padding(.horizontal, -14) // span the full panel width
                 .padding(.top, -14)
@@ -404,7 +404,11 @@ private struct VisualEffectBackground: NSViewRepresentable {
 /// a gooey neck (a Canvas metaball: blur + alpha-threshold). After settling it
 /// bobs gently; while ContextOS is optimizing it bobs faster.
 struct MeltingMascot: View {
+    /// MCP just optimized — a sharp, energetic burst.
     var active: Bool
+    /// A Claude Code session is alive (Claude is thinking/working) — a gentle
+    /// but noticeably livelier bob than the resting idle state.
+    var working: Bool = false
     @State private var start = Date()
 
     // Brand gradient (blue → purple) the metaball silhouette is filled with.
@@ -482,8 +486,12 @@ struct MeltingMascot: View {
         let startY: CGFloat = 3          // starts high, right under the arrow
         let restY = size.height - 26
         var y = startY + (restY - startY) * min(p, 1.18)
-        if t >= Double(settleTime) {     // gentle idle bob (livelier while active)
-            y += sin((t - Double(settleTime)) * (active ? 6.0 : 2.0)) * (active ? 2.6 : 1.4)
+        if t >= Double(settleTime) {
+            // Three tiers: idle breathing, a livelier "working" bob while a
+            // Claude session is alive, and a fast energetic bounce on optimize.
+            let speed: Double = active ? 6.0 : (working ? 3.6 : 2.0)
+            let amp: Double = active ? 2.6 : (working ? 1.9 : 1.4)
+            y += sin((t - Double(settleTime)) * speed) * amp
         }
         return CGPoint(x: size.width / 2, y: y)
     }

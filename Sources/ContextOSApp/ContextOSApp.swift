@@ -53,7 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func syncButton() {
-        mascot.setActive(model.flashing)
+        mascot.setState(active: model.flashing, working: model.working)
         guard let button = statusItem.button else { return }
         // Only touch the button when something actually changed — this runs at
         // up to 60Hz and AppKit re-lays-out the status item on every assignment.
@@ -81,30 +81,35 @@ extension Notification.Name {
 }
 
 /// Renders "뭉치" — the ContextOS blob mascot — to a bitmap on every animation
-/// tick. Idle → a slow gentle bob; active (MCP optimizing) → a fast squash-and-
-/// stretch bounce.
+/// tick. Three tiers: idle → a slow gentle breathing bob; working (a Claude Code
+/// session is alive) → a livelier hop; active (MCP optimizing) → a fast
+/// squash-and-stretch bounce.
 @MainActor
 final class MascotRenderer: ObservableObject {
     @Published private(set) var image = NSImage(size: .zero)
 
     private var timer: Timer?
     private var active = false
+    private var working = false
     private var frame = 0
     private let startedAt = Date()
 
-    func setActive(_ value: Bool) { active = value }
+    func setState(active: Bool, working: Bool) {
+        self.active = active
+        self.working = working
+    }
 
     func start() {
         guard timer == nil else { return }
         render()
-        // The timer ticks at 60Hz, but while idle we render every 3rd frame
+        // The timer ticks at 60Hz, but while fully idle we render every 3rd frame
         // (20fps) — plenty for the slow breathing bob, and it keeps this
-        // always-running menu-bar app cheap. Active keeps the full 60fps.
+        // always-running menu-bar app cheap. Working/active keep the full 60fps.
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.frame += 1
-                if self.active || self.frame % 3 == 0 { self.render() }
+                if self.active || self.working || self.frame % 3 == 0 { self.render() }
             }
         }
     }
@@ -116,7 +121,7 @@ final class MascotRenderer: ObservableObject {
         let scaleX: CGFloat
         let tilt: CGFloat       // left/right wiggle, in degrees
         if active {
-            // Working → unmistakably lively: quick energetic hops, a strong
+            // Optimizing → unmistakably lively: quick energetic hops, a strong
             // squash on landing / stretch at the top, and a side-to-side jiggle.
             let phase = t * 9.0
             let b = abs(sin(phase))          // 1 at the top of the hop, 0 grounded
@@ -124,6 +129,15 @@ final class MascotRenderer: ObservableObject {
             scaleY = 0.82 + 0.30 * b
             scaleX = 1.20 - 0.30 * b
             tilt = sin(t * 13.0) * 9
+        } else if working {
+            // Claude is thinking/working → a gentle but clearly awake hop, calmer
+            // than the optimize burst, with a soft wiggle.
+            let phase = t * 4.5
+            let b = abs(sin(phase))
+            bob = -b * 1.8
+            scaleY = 0.93 + 0.13 * b
+            scaleX = 1.07 - 0.13 * b
+            tilt = sin(t * 6.0) * 3.5
         } else {
             // Idle → a calm, smooth breathing bob (pure sinusoids, no cusp).
             let phase = t * 2.0
