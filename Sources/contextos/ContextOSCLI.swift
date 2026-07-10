@@ -15,27 +15,39 @@ struct ContextOS: ParsableCommand {
 
 // MARK: - contextos connect
 
-/// One command to make Claude Code use ContextOS automatically, everywhere.
+/// One command to make every detected AI agent use ContextOS automatically.
 struct Connect: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Set up automatic use in Claude Code (CLAUDE.md instruction + MCP registration)."
+        abstract: "Set up automatic use in every detected AI agent (Claude Code · Codex · Gemini · Cursor · Windsurf)."
     )
 
     func run() throws {
         let mcpPath = Self.mcpBinaryPath()
 
+        // Claude Code — the richest integration: memory file + `claude mcp add`.
+        print("── Claude Code ──")
         let url = ClaudeIntegration.globalMemoryURL()
         let updated = try ClaudeIntegration.installInstruction(at: url)
         print("\(updated ? "↻ 갱신" : "✓ 추가")됨: \(url.path)")
-        print("  → 이제 모든 Claude Code 세션이 파일 탐색 전에 ContextOS를 먼저 사용합니다.\n")
-
         if Self.registerViaClaudeCLI(mcpBinaryPath: mcpPath) {
             print("✓ MCP 서버 전역 등록 완료 (모든 프로젝트)")
         } else {
             print("MCP 서버를 전역 등록하려면 아래 한 줄을 터미널에 붙여넣으세요:")
             print("  \(ClaudeIntegration.mcpAddCommand(mcpBinaryPath: mcpPath))")
         }
-        print("\n완료! Claude Code를 재시작하면 아무것도 안 해도 자동으로 토큰을 아낍니다.")
+
+        // Every other detected agent, each in its own config format.
+        let others = AgentIntegration.connectAll(mcpBinaryPath: mcpPath)
+        if !others.isEmpty {
+            print("\n── 다른 AI 에이전트 ──")
+            for r in others {
+                var line = "✓ \(r.agent): MCP 등록 → \(r.mcpConfigPath)"
+                if let inst = r.instructionPath { line += "\n    지침 설치 → \(inst)" }
+                print(line)
+            }
+        }
+
+        print("\n완료! 연결된 도구를 재시작하면 아무것도 안 해도 자동으로 토큰을 아낍니다.")
     }
 
     private static func registerViaClaudeCLI(mcpBinaryPath: String) -> Bool {
