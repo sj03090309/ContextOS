@@ -94,16 +94,22 @@ final class DashboardModel: ObservableObject {
     //   1. Session-log writes (Claude Code / Codex) — starts the moment the
     //      user hits enter, keeps firing while the agent thinks and streams.
     //   2. A recent MCP heartbeat — covers agents whose logs we can't read.
+    //
+    // The 20s quiet threshold matters: agents write their logs per *event*
+    // (message done, tool call, tool result), so mid-turn gaps of several
+    // seconds are normal — a long think or one slow command must not make the
+    // mascot doze off and wake up again. Turning on is instant (any write);
+    // only turning off waits out the gap.
     private func refreshWorking() {
         let monitor = activityMonitor
         Task {
             let logsFresh = await Self.checkLogs(monitor)   // stat off the main actor
-            working = logsFresh || Date().timeIntervalSince(lastHeartbeat) <= 8
+            working = logsFresh || Date().timeIntervalSince(lastHeartbeat) <= 20
         }
     }
 
     private nonisolated static func checkLogs(_ monitor: AgentActivityMonitor) async -> Bool {
-        monitor.isActive(within: 6)
+        monitor.isActive(within: 20)
     }
 
     // Cheap: savings counters from the local usage DB.
