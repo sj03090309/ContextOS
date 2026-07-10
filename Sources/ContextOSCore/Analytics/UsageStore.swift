@@ -95,10 +95,16 @@ public final class UsageStore {
 
     deinit { sqlite3_close(db) }
 
+    /// Posted (cross-process) right after an optimization is recorded, so a
+    /// monitor like the menu-bar app can react in real time instead of polling.
+    public static let optimizedNotification = Notification.Name("com.contextos.optimized")
+
     /// Convenience: open the default DB, record one event, close.
     public static func record(_ event: UsageEvent) {
         guard let store = try? UsageStore(path: defaultURL().path) else { return }
-        try? store.record(event)
+        guard (try? store.record(event)) != nil else { return }
+        DistributedNotificationCenter.default().postNotificationName(
+            optimizedNotification, object: nil, userInfo: nil, deliverImmediately: true)
     }
 
     public func record(_ event: UsageEvent) throws {

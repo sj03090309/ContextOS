@@ -27,15 +27,35 @@ final class DashboardModel: ObservableObject {
     private var timer: Timer?
     private var tick = 0
     private var flashTask: Task<Void, Never>?
+    nonisolated(unsafe) private var optimizedObserver: NSObjectProtocol?
 
     init() {
         refreshFast()
         refreshSlow()
-        // The savings counter (cheap SQLite) polls every 4s; the heavier AI-usage
-        // + agent scan runs every ~32s.
+        // Real-time: the MCP server posts this the instant it records an
+        // optimization, so the mascot reacts with no polling lag.
+        optimizedObserver = DistributedNotificationCenter.default().addObserver(
+            forName: UsageStore.optimizedNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.onOptimized() }
+        }
+        // Fallback poll for the counters (and other machines): savings every 4s,
+        // the heavier AI-usage + agent scan every ~32s.
         timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.onTick() }
         }
+    }
+
+    deinit {
+        if let optimizedObserver {
+            DistributedNotificationCenter.default().removeObserver(optimizedObserver)
+        }
+    }
+
+    // Instant reaction to a just-recorded optimization: light up now, refresh the
+    // numbers right away.
+    private func onOptimized() {
+        flash()
+        refreshFast()
     }
 
     /// Manual refresh (e.g. from the ↻ button): do everything now.
