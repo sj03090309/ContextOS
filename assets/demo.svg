@@ -1,132 +1,136 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 576" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 690" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
   <defs>
     <linearGradient id="blob" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#4A8FFA"/>
       <stop offset="1" stop-color="#A385F5"/>
     </linearGradient>
     <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000" flood-opacity="0.28"/>
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000" flood-opacity="0.35"/>
     </filter>
-    <clipPath id="panelClip"><rect x="130" y="34" width="300" height="512" rx="18"/></clipPath>
+    <clipPath id="panelClip"><rect x="130" y="34" width="300" height="600" rx="18"/></clipPath>
   </defs>
 
-  <!-- Popover arrow, anchored to the menu-bar mascot -->
-  <path d="M280 20 L294 36 L266 36 Z" fill="#26262C"/>
+  <!-- Popover arrow, same material as the panel -->
+  <path d="M280 20 L294 34 L266 34 Z" fill="#1B1B1F"/>
 
-  <!-- Panel (dark popover vibrancy) -->
-  <rect x="130" y="34" width="300" height="512" rx="18" fill="#26262C" stroke="#FFFFFF" stroke-opacity="0.08" filter="url(#soft)"/>
+  <!-- Panel -->
+  <rect x="130" y="34" width="300" height="600" rx="18" fill="#1B1B1F" stroke="#FFFFFF" stroke-opacity="0.07" filter="url(#soft)"/>
 
   <g clip-path="url(#panelClip)">
-    <!-- ===== 뭉치, melted into a full-width strip along the panel top ===== -->
-    <rect x="130" y="74" width="300" height="26" fill="url(#blob)"/>
+    <!-- ===== 뭉치, small and mostly submerged in a thin full-width strip ===== -->
+    <rect x="130" y="34" width="300" height="26" fill="url(#blob)"/>
     <g>
       <animateTransform attributeName="transform" type="translate"
-        values="0 0; 0 -1.6; 0 0; 0 1.2; 0 0" keyTimes="0;0.25;0.5;0.75;1"
+        values="0 0; 0 -1.3; 0 0; 0 1; 0 0" keyTimes="0;0.25;0.5;0.75;1"
         dur="3.2s" repeatCount="indefinite"/>
-      <circle cx="280" cy="70" r="15" fill="url(#blob)"/>
-      <!-- gooey neck where the blob fuses into the strip -->
-      <path d="M262 78 Q270 72 280 74 Q290 72 298 78 L298 80 L262 80 Z" fill="url(#blob)"/>
-      <circle cx="274.8" cy="68.5" r="2.6" fill="#141414"/>
-      <circle cx="285.2" cy="68.5" r="2.6" fill="#141414"/>
+      <circle cx="280" cy="47" r="13" fill="url(#blob)"/>
+      <circle cx="275.7" cy="45" r="2.1" fill="#141414"/>
+      <circle cx="284.3" cy="45" r="2.1" fill="#141414"/>
     </g>
 
     <!-- ===== Header ===== -->
-    <text x="144" y="121" font-size="13" font-weight="600" fill="#F2F2F7">ContextOS</text>
-    <circle cx="375" cy="117" r="3" fill="#32D74B">
+    <text x="144" y="100" font-size="13" font-weight="600" fill="#F2F2F7">ContextOS</text>
+    <circle cx="376" cy="96" r="3" fill="#32D74B">
       <animate attributeName="opacity" values="1;0.35;1" dur="2s" repeatCount="indefinite"/>
     </circle>
-    <text x="416" y="121" text-anchor="end" font-size="11" fill="#98989F">연결됨</text>
+    <text x="416" y="100" text-anchor="end" font-size="11" fill="#98989F">연결됨</text>
 
     <!-- ===== Hero: cumulative saved tokens — ticks up once per cycle ===== -->
     <g text-anchor="middle" font-weight="600" font-size="30" fill="#F2F2F7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
-      <text x="280" y="168">
-        <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.10;0.125;0.25;0.275;1" dur="7s" repeatCount="indefinite"/>12.9만</text>
-      <text x="280" y="168">
-        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.125;0.14;0.17;0.18;1" dur="7s" repeatCount="indefinite"/>12.5만</text>
-      <text x="280" y="168">
-        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.17;0.18;0.21;0.22;1" dur="7s" repeatCount="indefinite"/>12.7만</text>
-      <text x="280" y="168">
-        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.21;0.22;0.25;0.26;1" dur="7s" repeatCount="indefinite"/>12.8만</text>
+      <text x="280" y="153">
+        <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.10;0.125;0.25;0.275;1" dur="7s" repeatCount="indefinite"/>285.9만</text>
+      <text x="280" y="153">
+        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.125;0.14;0.17;0.18;1" dur="7s" repeatCount="indefinite"/>285.5만</text>
+      <text x="280" y="153">
+        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.17;0.18;0.21;0.22;1" dur="7s" repeatCount="indefinite"/>285.7만</text>
+      <text x="280" y="153">
+        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.21;0.22;0.25;0.26;1" dur="7s" repeatCount="indefinite"/>285.8만</text>
     </g>
-    <text x="280" y="186" text-anchor="middle" font-size="11" fill="#98989F">누적 아낀 토큰</text>
+    <text x="280" y="173" text-anchor="middle" font-size="11" fill="#98989F">누적 아낀 토큰</text>
 
     <!-- ===== Segment summary strip ===== -->
-    <rect x="144" y="198" width="272" height="44" rx="9" fill="#FFFFFF" fill-opacity="0.06"/>
-    <line x1="234.7" y1="208" x2="234.7" y2="232" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <line x1="325.3" y1="208" x2="325.3" y2="232" stroke="#FFFFFF" stroke-opacity="0.10"/>
+    <rect x="144" y="187" width="272" height="44" rx="9" fill="#FFFFFF" fill-opacity="0.06"/>
+    <line x1="234.7" y1="196" x2="234.7" y2="222" stroke="#FFFFFF" stroke-opacity="0.10"/>
+    <line x1="325.3" y1="196" x2="325.3" y2="222" stroke="#FFFFFF" stroke-opacity="0.10"/>
     <g text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
-      <text x="189" y="221" font-size="15" font-weight="500" fill="#F2F2F7">8451</text>
-      <text x="280" y="221" font-size="15" font-weight="500" fill="#F2F2F7">213</text>
-      <text x="371" y="221" font-size="15" font-weight="500" fill="#F2F2F7">47.2만</text>
+      <text x="189.3" y="209" font-size="15" font-weight="600" fill="#F2F2F7">0</text>
+      <text x="280" y="209" font-size="15" font-weight="600" fill="#F2F2F7">47</text>
+      <text x="370.7" y="209" font-size="15" font-weight="600" fill="#F2F2F7">27.5억</text>
     </g>
     <g text-anchor="middle" font-size="10" fill="#98989F">
-      <text x="189" y="235">오늘</text>
-      <text x="280" y="235">최적화</text>
-      <text x="371" y="235">AI 사용</text>
+      <text x="189.3" y="223">오늘</text>
+      <text x="280" y="223">최적화</text>
+      <text x="370.7" y="223">AI 사용</text>
     </g>
 
-    <!-- ===== 7-day trend: wide bars, today accented ===== -->
-    <text x="144" y="264" font-size="11" font-weight="600" fill="#98989F">최근 7일 추이</text>
-    <g fill="#98989F" fill-opacity="0.35">
-      <rect x="144" y="294" width="33" height="20" rx="3"/>
-      <rect x="184" y="284" width="33" height="30" rx="3"/>
-      <rect x="224" y="298" width="33" height="16" rx="3"/>
-      <rect x="263" y="276" width="33" height="38" rx="3"/>
-      <rect x="303" y="290" width="33" height="24" rx="3"/>
-      <rect x="343" y="270" width="33" height="44" rx="3"/>
+    <!-- ===== 7-day trend: 일→토, mostly empty, only 목(작게)·토(오늘, 가득) ===== -->
+    <text x="144" y="251" font-size="11" font-weight="600" fill="#98989F">최근 7일 추이</text>
+    <g fill="#8E8E93" fill-opacity="0.55">
+      <rect x="144.0" y="308" width="28" height="2" rx="1"/>
+      <rect x="184.7" y="308" width="28" height="2" rx="1"/>
+      <rect x="225.3" y="308" width="28" height="2" rx="1"/>
+      <rect x="266.0" y="308" width="28" height="2" rx="1"/>
+      <rect x="306.7" y="299" width="28" height="11" rx="2"/>
+      <rect x="347.3" y="308" width="28" height="2" rx="1"/>
     </g>
-    <rect x="383" width="33" rx="3" fill="#0A84FF">
-      <animate attributeName="height" values="56;56;50;56;56" keyTimes="0;0.45;0.6;0.75;1" dur="3.2s" repeatCount="indefinite"/>
-      <animate attributeName="y" values="258;258;264;258;258" keyTimes="0;0.45;0.6;0.75;1" dur="3.2s" repeatCount="indefinite"/>
+    <rect x="388.0" width="28" rx="3" fill="#0A84FF">
+      <animate attributeName="height" values="46;46;41;46;46" keyTimes="0;0.45;0.6;0.75;1" dur="3.2s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="264;264;269;264;264" keyTimes="0;0.45;0.6;0.75;1" dur="3.2s" repeatCount="indefinite"/>
     </rect>
     <g text-anchor="middle" font-size="9" fill="#98989F">
-      <text x="160" y="328">월</text><text x="200" y="328">화</text><text x="240" y="328">수</text>
-      <text x="279" y="328">목</text><text x="319" y="328">금</text><text x="359" y="328">토</text>
-      <text x="399" y="328" fill="#F2F2F7" font-weight="600">일</text>
+      <text x="158" y="324">일</text><text x="198.7" y="324">월</text><text x="239.3" y="324">화</text>
+      <text x="280" y="324">수</text><text x="320.7" y="324">목</text><text x="361.3" y="324">금</text>
+      <text x="402" y="324" fill="#F2F2F7" font-weight="600">토</text>
     </g>
 
-    <!-- ===== Segmented picker ===== -->
-    <rect x="144" y="340" width="272" height="24" rx="7" fill="#FFFFFF" fill-opacity="0.06"/>
-    <rect x="146" y="342" width="88" height="20" rx="6" fill="#FFFFFF" fill-opacity="0.14"/>
+    <!-- ===== Segmented picker: selected tab gets the accent-blue fill ===== -->
+    <rect x="144" y="336" width="272" height="24" rx="7" fill="#FFFFFF" fill-opacity="0.06"/>
+    <rect x="146" y="338" width="88" height="20" rx="6" fill="#0A84FF"/>
     <g text-anchor="middle" font-size="11">
-      <text x="190" y="356" fill="#F2F2F7" font-weight="600">프로젝트</text>
-      <text x="280" y="356" fill="#98989F">활동</text>
-      <text x="370" y="356" fill="#98989F">AI 연결</text>
+      <text x="190" y="352" fill="#FFFFFF" font-weight="600">프로젝트</text>
+      <text x="280" y="352" fill="#98989F">활동</text>
+      <text x="370" y="352" fill="#98989F">AI 연결</text>
     </g>
 
-    <!-- ===== Project cards ===== -->
-    <rect x="144" y="376" width="272" height="58" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
-    <path d="M154 389 h9 l3 3 h8 v10 h-20 z" fill="#0A84FF"/>
-    <text x="176" y="394" font-size="13" font-weight="600" fill="#F2F2F7">ContextOS</text>
-    <text x="176" y="407" font-size="10" fill="#98989F">~/Desktop/ContextOS</text>
-    <text x="390" y="397" text-anchor="end" font-size="14" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">8.9만</text>
-    <path d="M398 392 l5 5 l5 -5" stroke="#98989F" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-    <rect x="154" y="418" width="150" height="6" rx="3" fill="#FF9F0A"/>
-    <rect x="306" y="418" width="62" height="6" rx="3" fill="#0A84FF"/>
-    <rect x="370" y="418" width="36" height="6" rx="3" fill="#32D74B"/>
+    <!-- ===== Project cards: header row + a single mostly-one-color bar ===== -->
+    <rect x="144" y="372" width="272" height="56" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
+    <path d="M154 384 h9 l3 3 h8 v10 h-20 z" fill="#0A84FF"/>
+    <text x="176" y="390" font-size="13" font-weight="600" fill="#F2F2F7">pycoin</text>
+    <text x="176" y="403" font-size="10" fill="#98989F">/Users/choes…esktop/pycoin</text>
+    <text x="390" y="393" text-anchor="end" font-size="14" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">22.1억</text>
+    <path d="M398 388 l5 5 l5 -5" stroke="#98989F" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <rect x="154" y="414" width="242" height="6" rx="3" fill="#FF9F0A"/>
+    <rect x="392" y="414" width="14" height="6" rx="3" fill="#0A84FF"/>
 
-    <rect x="144" y="442" width="272" height="58" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
-    <path d="M154 455 h9 l3 3 h8 v10 h-20 z" fill="#0A84FF"/>
-    <text x="176" y="460" font-size="13" font-weight="600" fill="#F2F2F7">my-web-app</text>
-    <text x="176" y="473" font-size="10" fill="#98989F">~/dev/my-web-app</text>
-    <text x="390" y="463" text-anchor="end" font-size="14" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">23.4만</text>
-    <path d="M398 458 l5 5 l5 -5" stroke="#98989F" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-    <rect x="154" y="484" width="110" height="6" rx="3" fill="#FF9F0A"/>
-    <rect x="266" y="484" width="96" height="6" rx="3" fill="#0A84FF"/>
-    <rect x="364" y="484" width="42" height="6" rx="3" fill="#98989F"/>
+    <rect x="144" y="436" width="272" height="56" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
+    <path d="M154 448 h9 l3 3 h8 v10 h-20 z" fill="#0A84FF"/>
+    <text x="176" y="454" font-size="13" font-weight="600" fill="#F2F2F7">ContextOS</text>
+    <text x="176" y="467" font-size="10" fill="#98989F">/Users/choesa…top/ContextOS</text>
+    <text x="390" y="457" text-anchor="end" font-size="14" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">6.6억</text>
+    <path d="M398 452 l5 5 l5 -5" stroke="#98989F" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <rect x="154" y="478" width="252" height="6" rx="3" fill="#FF9F0A"/>
 
-    <!-- ===== Footer: launch-at-login checkbox + refresh/quit ===== -->
-    <line x1="144" y1="512" x2="416" y2="512" stroke="#FFFFFF" stroke-opacity="0.10"/>
-    <rect x="144" y="520" width="9" height="9" rx="2" fill="none" stroke="#98989F" stroke-width="1.2"/>
-    <text x="159" y="528" font-size="10" fill="#98989F">로그인 시 시작</text>
+    <rect x="144" y="500" width="272" height="56" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
+    <path d="M154 512 h9 l3 3 h8 v10 h-20 z" fill="#0A84FF"/>
+    <text x="176" y="518" font-size="13" font-weight="600" fill="#F2F2F7">soultion1</text>
+    <text x="176" y="531" font-size="10" fill="#98989F">/Users/choes…ents/soultion1</text>
+    <text x="390" y="521" text-anchor="end" font-size="14" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">10.4만</text>
+    <path d="M398 516 l5 5 l5 -5" stroke="#98989F" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    <rect x="154" y="542" width="252" height="6" rx="3" fill="#0A84FF"/>
+
+    <!-- ===== Footer: checked launch-at-login + refresh/quit ===== -->
+    <line x1="144" y1="566" x2="416" y2="566" stroke="#FFFFFF" stroke-opacity="0.08"/>
+    <rect x="144" y="576" width="13" height="13" rx="3" fill="#0A84FF"/>
+    <path d="M147 583 l3 3 l6 -7" stroke="#FFFFFF" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="163" y="587" font-size="10" fill="#C7C7CC">로그인 시 시작</text>
     <g stroke="#98989F" stroke-width="1.5" fill="none" stroke-linecap="round">
-      <path d="M389.5 521 a5.5 5.5 0 1 0 5.5 -1.5"/>
-      <path d="M392.5 517.5 l3.5 1.8 l-2.2 3.2" fill="none"/>
-      <path d="M409.2 519 A5.5 5.5 0 1 0 414.8 519"/>
-      <line x1="412" y1="516" x2="412" y2="522"/>
+      <path d="M394.2 578.5 A5.5 5.5 0 1 0 399.8 578.5"/>
+      <path d="M397 575 l3.2 1.7 l-2 3.1" fill="none"/>
+      <path d="M409 578 A5.2 5.2 0 1 0 416 578"/>
+      <line x1="412.5" y1="573.5" x2="412.5" y2="580"/>
     </g>
   </g>
 
   <!-- ===== Caption ===== -->
-  <text x="280" y="568" text-anchor="middle" font-size="12" fill="#8E8E93">Claude Code에 질문  →  ContextOS가 관련 파일·함수만 골라 전달  →  토큰 절약</text>
+  <text x="280" y="664" text-anchor="middle" font-size="12" fill="#8E8E93">Claude Code에 질문  →  ContextOS가 관련 파일·함수만 골라 전달  →  토큰 절약</text>
 </svg>
