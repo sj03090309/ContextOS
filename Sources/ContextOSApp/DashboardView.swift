@@ -33,11 +33,22 @@ struct DashboardView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            switch tab {
-            case .files: projects
-            case .activity: activity
-            case .ai: agents
+            // Fixed-height, scrollable tab area. Expanding a project card (or
+            // switching tabs) previously changed the SwiftUI content height,
+            // which made NSPopover resize the whole window — an abrupt,
+            // unanimated jump. With a constant height the window never moves;
+            // expansion animates smoothly inside and long lists just scroll.
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    switch tab {
+                    case .files: projects
+                    case .activity: activity
+                    case .ai: agents
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(height: 200)
             footer
         }
         .padding(14)
