@@ -18,6 +18,9 @@ struct MCPServer {
     /// Per-session dedup: bodies already delivered aren't resent while this
     /// MCP process (i.e. this agent session) is alive.
     let memory = SessionMemory()
+    /// Cross-process "an agent is using me right now" signal for the menu-bar
+    /// mascot, throttled to one post per second.
+    let heartbeat = Heartbeat()
 
     func run() {
         log("contextos-mcp \(Self.version) started (stdio)")
@@ -38,6 +41,7 @@ struct MCPServer {
     // MARK: - Dispatch
 
     private func handle(_ message: [String: Any]) {
+        heartbeat.post()
         let method = message["method"] as? String ?? ""
         let id = message["id"]           // absent → notification (no reply)
         let params = message["params"] as? [String: Any] ?? [:]
@@ -237,6 +241,18 @@ struct MCPServer {
         }
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data([0x0A])) // newline delimiter
+    }
+}
+
+/// Posts the cross-process activity notification, at most once per second.
+final class Heartbeat {
+    private var last = Date.distantPast
+    func post() {
+        let now = Date()
+        guard now.timeIntervalSince(last) >= 1 else { return }
+        last = now
+        DistributedNotificationCenter.default().postNotificationName(
+            UsageStore.activityNotification, object: nil, userInfo: nil, deliverImmediately: true)
     }
 }
 

@@ -99,6 +99,11 @@ public final class UsageStore {
     /// monitor like the menu-bar app can react in real time instead of polling.
     public static let optimizedNotification = Notification.Name("com.contextos.optimized")
 
+    /// Posted (cross-process) whenever the MCP server handles *any* request —
+    /// a lightweight "an agent is talking to me right now" heartbeat that keeps
+    /// the mascot alive even for agents whose session logs we can't read.
+    public static let activityNotification = Notification.Name("com.contextos.activity")
+
     /// Convenience: open the default DB, record one event, close.
     public static func record(_ event: UsageEvent) {
         guard let store = try? UsageStore(path: defaultURL().path) else { return }

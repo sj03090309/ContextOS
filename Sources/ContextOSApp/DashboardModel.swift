@@ -22,16 +22,21 @@ final class DashboardModel: ObservableObject {
     @Published var recent: [UsageEvent] = []
     /// Brief highlight when MCP just handled an optimization (energetic burst).
     @Published var flashing = false
-    /// A live Claude Code session with ContextOS is running right now, i.e. the
-    /// user is actively working. The mascot stays gently alive the whole time —
-    /// not only during the brief per-optimization bursts.
+    /// An AI agent is actively processing a command *right now* — from the
+    /// moment the user hits enter until the response settles. Detected two
+    /// ways: session-log writes (Claude Code/Codex, catches the very first
+    /// keystroke of a turn) and MCP request heartbeats (any agent).
     @Published var working = false
 
+    private let activityMonitor = AgentActivityMonitor()
+    /// Last MCP heartbeat, posted by contextos-mcp on every request it handles.
+    private var lastHeartbeat = Date.distantPast
     private var lastQueryCount = -1
     private var timer: Timer?
     private var tick = 0
     private var flashTask: Task<Void, Never>?
     nonisolated(unsafe) private var optimizedObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var activityObserver: NSObjectProtocol?
 
     init() {
         refreshFast()
@@ -43,9 +48,18 @@ final class DashboardModel: ObservableObject {
             forName: UsageStore.optimizedNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.onOptimized() }
         }
-        // Fallback poll for the counters (and other machines): savings every 4s,
-        // the heavier AI-usage + agent scan every ~32s.
-        timer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
+        // Heartbeat from contextos-mcp on every request it handles: any agent
+        // talking to the MCP server counts as "working", instantly.
+        activityObserver = DistributedNotificationCenter.default().addObserver(
+            forName: UsageStore.activityNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.lastHeartbeat = Date()
+                self?.working = true
+            }
+        }
+        // Poll: working state every 2s (it drives the mascot, so it must feel
+        // immediate), savings every 4s, the heavier AI-usage scan every ~32s.
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.onTick() }
         }
     }
@@ -53,6 +67,9 @@ final class DashboardModel: ObservableObject {
     deinit {
         if let optimizedObserver {
             DistributedNotificationCenter.default().removeObserver(optimizedObserver)
+        }
+        if let activityObserver {
+            DistributedNotificationCenter.default().removeObserver(activityObserver)
         }
     }
 
@@ -68,32 +85,25 @@ final class DashboardModel: ObservableObject {
 
     private func onTick() {
         tick += 1
-        refreshFast()
         refreshWorking()
-        if tick % 8 == 0 { refreshSlow() }
+        if tick % 2 == 0 { refreshFast() }
+        if tick % 16 == 0 { refreshSlow() }
     }
 
-    // Is a Claude Code session (with ContextOS) alive right now? Cheap enough to
-    // check every tick; keeps the mascot animated while Claude thinks and works,
-    // between the sharper per-optimization bursts.
+    // Is an agent processing a command *right now*? Two signals, either wins:
+    //   1. Session-log writes (Claude Code / Codex) — starts the moment the
+    //      user hits enter, keeps firing while the agent thinks and streams.
+    //   2. A recent MCP heartbeat — covers agents whose logs we can't read.
     private func refreshWorking() {
+        let monitor = activityMonitor
         Task {
-            let w = await Self.detectClaudeSession()
-            working = w
+            let logsFresh = await Self.checkLogs(monitor)   // stat off the main actor
+            working = logsFresh || Date().timeIntervalSince(lastHeartbeat) <= 8
         }
     }
 
-    /// True while a `contextos-mcp` process is running — which is exactly while a
-    /// Claude Code session that has ContextOS connected is open and working.
-    private nonisolated static func detectClaudeSession() async -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        p.arguments = ["-x", "contextos-mcp"]
-        p.standardOutput = Pipe()
-        p.standardError = Pipe()
-        do { try p.run() } catch { return false }
-        p.waitUntilExit()
-        return p.terminationStatus == 0   // pgrep: 0 = at least one match
+    private nonisolated static func checkLogs(_ monitor: AgentActivityMonitor) async -> Bool {
+        monitor.isActive(within: 6)
     }
 
     // Cheap: savings counters from the local usage DB.
