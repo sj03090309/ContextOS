@@ -46,7 +46,8 @@ public struct QueryRefiner: Sendable {
 
         for term in base {
             // 1. Dictionary / synonym expansion (Korean → English, EN synonyms).
-            if let mapped = Self.dictionary[term] {
+            //    Korean particles are stripped so "삭제가"/"결제를" still match.
+            if let mapped = Self.dictionaryEntry(for: term) {
                 expansions.append(.init(from: term, to: mapped))
                 for m in mapped { add(m) }
                 if term.allSatisfy(\.isASCII) { add(term) } // keep the English original too
@@ -66,6 +67,22 @@ public struct QueryRefiner: Sendable {
     }
 
     // MARK: - Bilingual dev-term dictionary (local, curated)
+
+    /// Dictionary lookup that survives Korean particles: "삭제가" → "삭제",
+    /// "결제를" → "결제". Longest particles are tried first.
+    static func dictionaryEntry(for term: String) -> [String]? {
+        if let hit = dictionary[term] { return hit }
+        for particle in particles where term.count > particle.count && term.hasSuffix(particle) {
+            if let hit = dictionary[String(term.dropLast(particle.count))] { return hit }
+        }
+        return nil
+    }
+
+    /// Common Korean particles/suffixes, longest first so "에서" wins over "에".
+    static let particles = [
+        "에서", "으로", "부터", "까지", "하고", "이랑", "에는", "에도",
+        "가", "이", "은", "는", "을", "를", "도", "만", "에", "로", "와", "과", "랑", "요"
+    ]
 
     static let dictionary: [String: [String]] = [
         // Korean → English
@@ -96,12 +113,100 @@ public struct QueryRefiner: Sendable {
         "다운로드": ["download"],
         "프로필": ["profile"],
         "대시보드": ["dashboard"],
+        "삭제": ["delete", "remove"],
+        "추가": ["add", "insert", "create"],
+        "저장": ["save", "store", "persist"],
+        "불러오기": ["load", "fetch", "read"],
+        "목록": ["list"],
+        "리스트": ["list"],
+        "화면": ["view", "screen", "page"],
+        "페이지": ["page", "view"],
+        "버튼": ["button"],
+        "메뉴": ["menu"],
+        "이미지": ["image", "photo"],
+        "사진": ["photo", "image"],
+        "파일": ["file"],
+        "폴더": ["folder", "directory"],
+        "주문": ["order"],
+        "장바구니": ["cart", "basket"],
+        "배송": ["shipping", "delivery"],
+        "리뷰": ["review"],
+        "댓글": ["comment", "reply"],
+        "게시글": ["post", "article"],
+        "게시판": ["board", "post"],
+        "채팅": ["chat", "message"],
+        "메시지": ["message"],
+        "친구": ["friend"],
+        "팔로우": ["follow"],
+        "좋아요": ["like", "favorite"],
+        "즐겨찾기": ["favorite", "bookmark"],
+        "통계": ["stats", "statistics", "analytics"],
+        "그래프": ["graph", "chart"],
+        "차트": ["chart", "graph"],
+        "로그": ["log", "logging"],
+        "캐시": ["cache"],
+        "백업": ["backup"],
+        "동기화": ["sync", "synchronize"],
+        "권한": ["permission", "auth", "role"],
+        "보안": ["security", "secure"],
+        "테스트": ["test"],
+        "빌드": ["build"],
+        "배포": ["deploy", "release"],
+        "성능": ["performance", "perf"],
+        "속도": ["speed", "performance"],
+        "메모리": ["memory"],
+        "애니메이션": ["animation", "animate"],
+        "아이콘": ["icon"],
+        "색상": ["color", "theme"],
+        "색깔": ["color"],
+        "폰트": ["font", "typography"],
+        "날짜": ["date"],
+        "시간": ["time", "date"],
+        "위치": ["location", "position"],
+        "지도": ["map"],
+        "카메라": ["camera"],
+        "번역": ["translate", "localization", "i18n"],
+        "언어": ["language", "locale"],
+        "다크모드": ["dark", "theme", "appearance"],
+        "테마": ["theme", "appearance"],
+        "환불": ["refund"],
+        "쿠폰": ["coupon", "discount"],
+        "할인": ["discount", "sale"],
+        "포인트": ["point", "reward"],
+        "재고": ["stock", "inventory"],
+        "상품": ["product", "item"],
+        "가격": ["price", "cost"],
+        "요청": ["request"],
+        "응답": ["response"],
+        "서버": ["server", "api"],
+        "클라이언트": ["client"],
+        "연결": ["connect", "connection"],
+        "느림": ["slow", "performance"],
+        "느려": ["slow", "performance"],
+        "깨짐": ["broken", "crash", "bug"],
+        "깨져": ["broken", "crash", "bug"],
+        "튕김": ["crash"],
+        "튕겨": ["crash"],
+        "멈춤": ["hang", "freeze", "crash"],
+        "멈춰": ["hang", "freeze", "crash"],
+        "충돌": ["crash", "conflict"],
+        "버그": ["bug", "fix", "error"],
+        "수정": ["fix", "update", "edit"],
+        "리팩토링": ["refactor"],
+        "최적화": ["optimize", "performance"],
         // English synonyms / abbreviations
         "signin": ["login", "auth"],
         "auth": ["authenticate", "authentication", "login"],
         "db": ["database"],
         "config": ["settings", "config"],
         "pw": ["password"],
+        "img": ["image"],
+        "btn": ["button"],
+        "msg": ["message"],
+        "nav": ["navigation", "navbar"],
+        "api": ["api", "endpoint", "server"],
+        "ui": ["view", "interface", "screen"],
+        "crash": ["crash", "exception", "fatal"],
     ]
 
     // MARK: - Typo correction
