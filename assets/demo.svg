@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 486" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif">
+  <defs>
+    <linearGradient id="blob" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4A8FFA"/>
+      <stop offset="1" stop-color="#A385F5"/>
+    </linearGradient>
+    <linearGradient id="barToday" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#4A8FFA"/>
+      <stop offset="1" stop-color="#6FA5FB"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+    <clipPath id="panelClip"><rect x="130" y="34" width="300" height="436" rx="18"/></clipPath>
+  </defs>
+
+  <!-- Popover arrow, anchored to the menu-bar mascot -->
+  <path d="M280 20 L294 36 L266 36 Z" fill="#25252B"/>
+
+  <!-- Panel -->
+  <rect x="130" y="34" width="300" height="436" rx="18" fill="#1F1F25" stroke="#FFFFFF" stroke-opacity="0.08" filter="url(#soft)"/>
+
+  <g clip-path="url(#panelClip)">
+    <!-- ===== 뭉치 mascot, melted into the panel top, gently breathing ===== -->
+    <ellipse cx="280" cy="86" rx="30" ry="7" fill="url(#blob)" opacity="0.9"/>
+    <g transform="translate(258,44) scale(0.92)">
+      <animateTransform attributeName="transform" type="translate" additive="sum"
+        values="0 0; 0 -3; 0 0; 0 2; 0 0" keyTimes="0;0.25;0.5;0.75;1"
+        dur="3.4s" repeatCount="indefinite"/>
+      <path d="M24 6 C34 6 40 14 40 26 C40 38 33 42 24 42 C15 42 8 38 8 26 C8 14 14 6 24 6 Z" fill="url(#blob)"/>
+      <circle cx="18" cy="24" r="3.1" fill="#141414"/>
+      <circle cx="30" cy="24" r="3.1" fill="#141414"/>
+    </g>
+
+    <!-- ===== Header ===== -->
+    <text x="150" y="112" font-size="14" font-weight="600" fill="#F2F2F7">ContextOS</text>
+    <circle cx="366" cy="108" r="4" fill="#34C759">
+      <animate attributeName="opacity" values="1;0.35;1" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="376" y="112" font-size="11" fill="#9A9AA2">연결됨</text>
+
+    <!-- ===== Hero: cumulative saved tokens — ticks up once per cycle ===== -->
+    <g text-anchor="middle" font-weight="600" font-size="34" fill="#F2F2F7" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+      <text x="280" y="156">
+        <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.10;0.125;0.25;0.275;1" dur="7s" repeatCount="indefinite"/>12.9만</text>
+      <text x="280" y="156">
+        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.125;0.14;0.17;0.18;1" dur="7s" repeatCount="indefinite"/>12.5만</text>
+      <text x="280" y="156">
+        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.17;0.18;0.21;0.22;1" dur="7s" repeatCount="indefinite"/>12.7만</text>
+      <text x="280" y="156">
+        <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.21;0.22;0.25;0.26;1" dur="7s" repeatCount="indefinite"/>12.8만</text>
+    </g>
+    <text x="280" y="176" text-anchor="middle" font-size="11" fill="#9A9AA2">누적 아낀 토큰</text>
+
+    <!-- ===== Segment summary strip ===== -->
+    <rect x="148" y="190" width="264" height="46" rx="9" fill="#FFFFFF" fill-opacity="0.06"/>
+    <line x1="236" y1="202" x2="236" y2="224" stroke="#FFFFFF" stroke-opacity="0.10"/>
+    <line x1="324" y1="202" x2="324" y2="224" stroke="#FFFFFF" stroke-opacity="0.10"/>
+    <g text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+      <text x="192" y="214" font-size="15" font-weight="500" fill="#F2F2F7">8.4천</text>
+      <text x="280" y="214" font-size="15" font-weight="500" fill="#F2F2F7">213</text>
+      <text x="368" y="214" font-size="15" font-weight="500" fill="#F2F2F7">47.2만</text>
+    </g>
+    <g text-anchor="middle" font-size="10" fill="#9A9AA2">
+      <text x="192" y="230">오늘</text>
+      <text x="280" y="230">최적화</text>
+      <text x="368" y="230">AI 사용</text>
+    </g>
+
+    <!-- ===== 7-day trend (always populated; today's bar breathes) ===== -->
+    <text x="150" y="260" font-size="11" font-weight="600" fill="#9A9AA2">최근 7일 추이</text>
+    <rect x="162" y="292" width="22" height="20" fill="#8E8E93" fill-opacity="0.5"/>
+    <rect x="196" y="282" width="22" height="30" fill="#8E8E93" fill-opacity="0.5"/>
+    <rect x="230" y="296" width="22" height="16" fill="#8E8E93" fill-opacity="0.5"/>
+    <rect x="264" y="274" width="22" height="38" fill="#8E8E93" fill-opacity="0.5"/>
+    <rect x="298" y="288" width="22" height="24" fill="#8E8E93" fill-opacity="0.5"/>
+    <rect x="332" y="268" width="22" height="44" fill="#8E8E93" fill-opacity="0.5"/>
+    <rect x="366" width="22" fill="url(#barToday)">
+      <animate attributeName="height" values="56;56;50;56;56" keyTimes="0;0.45;0.6;0.75;1" dur="3.4s" repeatCount="indefinite"/>
+      <animate attributeName="y" values="256;256;262;256;256" keyTimes="0;0.45;0.6;0.75;1" dur="3.4s" repeatCount="indefinite"/>
+    </rect>
+    <g text-anchor="middle" font-size="9" fill="#9A9AA2">
+      <text x="173" y="328">월</text><text x="207" y="328">화</text><text x="241" y="328">수</text>
+      <text x="275" y="328">목</text><text x="309" y="328">금</text><text x="343" y="328">토</text>
+      <text x="377" y="328" fill="#F2F2F7" font-weight="600">일</text>
+    </g>
+
+    <!-- ===== Segmented picker ===== -->
+    <rect x="148" y="342" width="264" height="26" rx="7" fill="#FFFFFF" fill-opacity="0.06"/>
+    <rect x="150" y="344" width="86" height="22" rx="6" fill="#FFFFFF" fill-opacity="0.14"/>
+    <g text-anchor="middle" font-size="11">
+      <text x="193" y="359" fill="#F2F2F7" font-weight="600">프로젝트</text>
+      <text x="280" y="359" fill="#9A9AA2">활동</text>
+      <text x="368" y="359" fill="#9A9AA2">AI 연결</text>
+    </g>
+
+    <!-- ===== Project cards ===== -->
+    <rect x="148" y="380" width="264" height="38" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
+    <path d="M160 393 h10 l3 3 h7 v9 h-20 z" fill="#4A8FFA"/>
+    <text x="188" y="396" font-size="12" font-weight="600" fill="#F2F2F7">ContextOS</text>
+    <text x="188" y="408" font-size="9" fill="#9A9AA2">~/Desktop/ContextOS</text>
+    <text x="404" y="399" text-anchor="end" font-size="13" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">8.9만</text>
+    <rect x="160" y="412" width="150" height="4" rx="2" fill="#FF9F0A"/>
+    <rect x="312" y="412" width="60" height="4" rx="2" fill="#4A8FFA"/>
+    <rect x="374" y="412" width="26" height="4" rx="2" fill="#34C759"/>
+
+    <rect x="148" y="424" width="264" height="38" rx="12" fill="#FFFFFF" fill-opacity="0.05"/>
+    <path d="M160 437 h10 l3 3 h7 v9 h-20 z" fill="#4A8FFA"/>
+    <text x="188" y="440" font-size="12" font-weight="600" fill="#F2F2F7">my-web-app</text>
+    <text x="188" y="452" font-size="9" fill="#9A9AA2">~/dev/my-web-app</text>
+    <text x="404" y="443" text-anchor="end" font-size="13" font-weight="600" fill="#F2F2F7" font-family="ui-monospace, Menlo, monospace">23.4만</text>
+    <rect x="160" y="456" width="110" height="4" rx="2" fill="#FF9F0A"/>
+    <rect x="272" y="456" width="90" height="4" rx="2" fill="#4A8FFA"/>
+    <rect x="364" y="456" width="36" height="4" rx="2" fill="#8E8E93"/>
+  </g>
+
+  <!-- ===== Caption ===== -->
+  <text x="280" y="482" text-anchor="middle" font-size="12" fill="#8E8E93">Claude Code에 질문  →  ContextOS가 관련 파일·함수만 골라 전달  →  토큰 절약</text>
+</svg>

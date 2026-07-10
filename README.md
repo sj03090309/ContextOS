@@ -6,6 +6,15 @@
 
 <p align="center">Claude Code를 위한 로컬 컨텍스트 최적화 도구 · AI 없이 전부 내 컴퓨터에서</p>
 
+<!--
+  아래는 메뉴바 대시보드의 UI를 그대로 재현한 애니메이션(SVG)입니다.
+  실제 화면 녹화로 바꾸려면: 녹화본을 assets/demo.gif 로 저장한 뒤
+  아래 <img> 의 src 를 "assets/demo.gif" 로 바꾸면 됩니다.
+-->
+<p align="center">
+  <img src="assets/demo.svg" width="340" alt="ContextOS 메뉴바 대시보드 데모">
+</p>
+
 ---
 
 **Claude Code를 위한 로컬 컨텍스트 최적화 도구.** AI를 쓰지 않고, 전부 내 컴퓨터에서만 동작합니다.
