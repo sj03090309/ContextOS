@@ -2,9 +2,9 @@ import Foundation
 
 /// Decides which paths are worth indexing.
 ///
-/// This is the "Smart File Filter" from the spec. M1 ships a strong default
-/// deny-list (node_modules, .git, build artifacts, …) plus binary detection.
-/// `.gitignore` parsing is intentionally deferred to a later milestone.
+/// This is the "Smart File Filter" from the spec: a strong default deny-list
+/// (node_modules, .git, build artifacts, …) plus binary detection. The scanner
+/// layers the project's root `.gitignore` on top via `GitignoreMatcher`.
 public struct FileFilter: Sendable {
 
     /// Directory names that are excluded wholesale, at any depth.

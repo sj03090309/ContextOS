@@ -25,6 +25,7 @@ public struct ProjectScanner: Sendable {
     public func scan(root: URL) throws -> [ScannedFile] {
         let fm = FileManager.default
         let rootPath = root.standardizedFileURL.path
+        let gitignore = GitignoreMatcher.load(projectRoot: root)
         var results: [ScannedFile] = []
 
         // Explicit stack so we control directory pruning precisely.
@@ -51,13 +52,19 @@ public struct ProjectScanner: Sendable {
                 let isDir = values?.isDirectory ?? false
                 let name = entry.lastPathComponent
 
+                // Standardize the entry the same way as the root, so /tmp vs
+                // /private/tmp (and similar symlinks) don't break the prefix match.
+                let relative = Self.relativePath(of: entry.standardizedFileURL.path, root: rootPath)
+
                 if isDir {
                     if filter.shouldSkipDirectory(named: name) { continue }
+                    if let gitignore, gitignore.isIgnored(relative, isDirectory: true) { continue }
                     stack.append(entry)
                     continue
                 }
 
                 if filter.shouldSkipFile(named: name) { continue }
+                if let gitignore, gitignore.isIgnored(relative, isDirectory: false) { continue }
 
                 let size = values?.fileSize ?? 0
                 if size > filter.maxFileSize { continue }
@@ -66,9 +73,6 @@ public struct ProjectScanner: Sendable {
                 let language = Language.detect(fromExtension: ext)
 
                 let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-                // Standardize the entry the same way as the root, so /tmp vs
-                // /private/tmp (and similar symlinks) don't break the prefix match.
-                let relative = Self.relativePath(of: entry.standardizedFileURL.path, root: rootPath)
 
                 results.append(
                     ScannedFile(
