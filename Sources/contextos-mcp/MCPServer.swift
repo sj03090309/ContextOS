@@ -15,6 +15,9 @@ struct MCPServer {
     static let defaultProtocolVersion = "2024-11-05"
 
     let service = ContextService()
+    /// Per-session dedup: bodies already delivered aren't resent while this
+    /// MCP process (i.e. this agent session) is alive.
+    let memory = SessionMemory()
 
     func run() {
         log("contextos-mcp \(Self.version) started (stdio)")
@@ -150,14 +153,17 @@ struct MCPServer {
         }
         let root = projectRoot(from: args)
         let budget = integer(args, "token_budget") ?? 8000
-        let (selection, bundle) = try service.optimizedBundle(
-            query: query, projectRoot: root, tokenBudget: budget
+        let (selection, bundle, skipped) = try service.optimizedBundle(
+            query: query, projectRoot: root, tokenBudget: budget, memory: memory
         )
         guard !selection.included.isEmpty else {
             return "No relevant files found for “\(query)”."
         }
-        let header = "// ContextOS: \(selection.included.count) files, \(TokenEstimator.humanReadable(selection.estimatedTokens)) (budget \(TokenEstimator.humanReadable(budget))), score \(selection.contextScore)/100\n\n"
-        return header + bundle
+        var header = "// ContextOS: \(selection.included.count) files, \(TokenEstimator.humanReadable(selection.estimatedTokens)) (budget \(TokenEstimator.humanReadable(budget))), score \(selection.contextScore)/100\n"
+        if skipped > 0 {
+            header += "// \(skipped)개 파일은 이 세션에서 이미 전달된 것과 동일 — 본문 생략으로 토큰 절약\n"
+        }
+        return header + "\n" + bundle
     }
 
     private func toolProjectStats(_ args: [String: Any]) throws -> String {

@@ -53,7 +53,7 @@ struct ContextServiceTests {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let (selection, bundle) = try ContextService().optimizedBundle(
+        let (selection, bundle, _) = try ContextService().optimizedBundle(
             query: "fix login", projectRoot: root, tokenBudget: 8000
         )
         #expect(!selection.included.isEmpty)

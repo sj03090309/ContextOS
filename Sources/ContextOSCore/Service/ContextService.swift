@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// High-level facade over indexing + optimization.
 ///
@@ -94,17 +95,28 @@ public struct ContextService: Sendable {
 
     /// The selection plus a ready-to-send bundle of the included files' contents.
     ///
-    /// This is what `read_optimized` returns: the minimal context Claude Code
-    /// should actually see, already inside the token budget.
+    /// This is what `read_optimized` returns: the minimal context the agent
+    /// should actually see, already inside the token budget. Two extra token
+    /// levers on top of selection + slicing:
+    ///   - `memory`: bodies already delivered this session are skipped with a
+    ///     one-line marker instead of resent.
+    ///   - relevant-but-over-budget files are appended as a signatures-only
+    ///     outline (from the index, no file reads) so the agent still sees the
+    ///     surrounding structure for a handful of tokens.
     public func optimizedBundle(
         query: String,
         projectRoot: URL,
-        tokenBudget: Int
-    ) throws -> (selection: ContextSelection, bundle: String) {
+        tokenBudget: Int,
+        memory: SessionMemory? = nil
+    ) throws -> (selection: ContextSelection, bundle: String, skippedUnchanged: Int) {
         let selection = try relevantContext(
             query: query, projectRoot: projectRoot, tokenBudget: tokenBudget
         )
-        return (selection, assembleBundle(selection, projectRoot: projectRoot))
+        var (bundle, skipped) = assembleBundle(selection, projectRoot: projectRoot, memory: memory)
+        if !selection.excluded.isEmpty {
+            bundle += signatureOutline(for: selection.excluded, projectRoot: projectRoot)
+        }
+        return (selection, bundle, skipped)
     }
 
     /// Proactively build context from the files you're **currently editing**
@@ -122,12 +134,19 @@ public struct ContextService: Sendable {
             query: "", from: store, tokenBudget: tokenBudget, signals: signals
         )
         guard !selection.included.isEmpty else { return nil }
-        return (selection, assembleBundle(selection, projectRoot: projectRoot))
+        return (selection, assembleBundle(selection, projectRoot: projectRoot, memory: nil).bundle)
     }
 
     /// Concatenate the included files (sliced when a query narrowed them).
-    private func assembleBundle(_ selection: ContextSelection, projectRoot: URL) -> String {
+    /// With a `memory`, bodies identical to ones already delivered this session
+    /// are replaced by a one-line marker; returns how many were skipped.
+    private func assembleBundle(
+        _ selection: ContextSelection,
+        projectRoot: URL,
+        memory: SessionMemory?
+    ) -> (bundle: String, skipped: Int) {
         var bundle = ""
+        var skipped = 0
         let rootPath = projectRoot.standardizedFileURL.path
         for file in selection.included {
             let url = projectRoot.appendingPathComponent(file.path).standardizedFileURL
@@ -144,12 +163,52 @@ public struct ContextService: Sendable {
                     note = "  (\(result.totalLines)줄 중 \(result.keptLines)줄, 관련 심볼만)"
                 }
             }
+
+            if let memory {
+                let hash = Self.bodyHash(body)
+                if memory.isUnchanged(project: rootPath, path: file.path, bodyHash: hash) {
+                    bundle += "// ===== FILE: \(file.path) — 변경 없음, 이 세션에서 이미 전달됨 (본문 생략) =====\n\n"
+                    skipped += 1
+                    continue
+                }
+                memory.markServed(project: rootPath, path: file.path, bodyHash: hash)
+            }
+
             bundle += "// ===== FILE: \(file.path)\(note) =====\n"
             bundle += body
             if !body.hasSuffix("\n") { bundle += "\n" }
             bundle += "\n"
         }
-        return bundle
+        return (bundle, skipped)
+    }
+
+    private static func bodyHash(_ body: String) -> String {
+        SHA256.hash(data: Data(body.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A signatures-only outline of relevant files that didn't fit the budget,
+    /// built from the index (no file reads). A few tokens buy the agent the
+    /// structure of what else exists, and the line numbers to ask for it.
+    private func signatureOutline(for excluded: [ScoredFile], projectRoot: URL) -> String {
+        guard let store = try? Indexer.openStore(forProjectRoot: projectRoot),
+              let files = try? store.allFiles(),
+              let symbolsByFile = try? store.symbolsByFile()
+        else { return "" }
+
+        var idByPath: [String: Int64] = [:]
+        for f in files { if let id = f.id { idByPath[f.relativePath] = id } }
+
+        var out = "// ===== 관련도 높지만 예산 초과 — 시그니처 목차만 (필요하면 이 파일들을 지목해 다시 요청) =====\n"
+        for file in excluded.prefix(5) {
+            out += "// \(file.path)  (~\(TokenEstimator.abbrev(file.estimatedTokens)) tokens)\n"
+            guard let id = idByPath[file.path], let symbols = symbolsByFile[id], !symbols.isEmpty else { continue }
+            for sym in symbols.prefix(12) {
+                out += "//   L\(sym.line)  \(sym.kind.rawValue) \(sym.name)\n"
+            }
+            if symbols.count > 12 { out += "//   … 심볼 \(symbols.count - 12)개 더\n" }
+        }
+        if excluded.count > 5 { out += "// … 그 외 \(excluded.count - 5)개 파일\n" }
+        return out
     }
 
     /// Record a completed optimization to the local savings DB, so the menu-bar
