@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 448" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+  <defs>
+    <filter id="winShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Terminal window -->
+  <rect x="10" y="10" width="700" height="382" rx="12" fill="#1E1E23" stroke="#FFFFFF" stroke-opacity="0.08" filter="url(#winShadow)"/>
+  <circle cx="34" cy="34" r="6" fill="#FF5F57"/>
+  <circle cx="54" cy="34" r="6" fill="#FEBC2E"/>
+  <circle cx="74" cy="34" r="6" fill="#28C840"/>
+  <text x="360" y="38" text-anchor="middle" font-size="12" fill="#98989F" font-family="-apple-system, BlinkMacSystemFont, sans-serif">Claude Code — 아무 프로젝트</text>
+  <line x1="10" y1="52" x2="710" y2="52" stroke="#FFFFFF" stroke-opacity="0.06"/>
+
+  <!-- ===== Conversation: replays every 10s (all visible at t=0 for the poster frame) ===== -->
+
+  <!-- user prompt -->
+  <g font-size="13">
+    <g>
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.07;0.10;1" dur="10s" repeatCount="indefinite"/>
+      <text x="34" y="88" fill="#0A84FF" font-weight="700">❯</text>
+      <text x="52" y="88" fill="#F2F2F7">결제 실패 버그 고쳐줘</text>
+    </g>
+
+    <!-- tool call 1 -->
+    <g>
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.15;0.18;1" dur="10s" repeatCount="indefinite"/>
+      <text x="34" y="124" fill="#FF9F0A">⏺</text>
+      <text x="52" y="124" fill="#E8E8ED">contextos · <tspan font-weight="700">get_relevant_context</tspan>("결제 실패 버그")</text>
+    </g>
+    <g fill="#98989F">
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.21;0.24;1" dur="10s" repeatCount="indefinite"/>
+      <text x="52" y="148">⎿  정확도 94/100 · 예산 ~8.0K · 선택 ~4.3K</text>
+    </g>
+    <g fill="#98989F">
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.26;0.29;1" dur="10s" repeatCount="indefinite"/>
+      <text x="70" y="172">• Sources/Pay/PaymentService.swift  <tspan fill="#6E6E76">~2.3K — symbol PaymentService</tspan></text>
+    </g>
+    <g fill="#98989F">
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.31;0.34;1" dur="10s" repeatCount="indefinite"/>
+      <text x="70" y="196">• Sources/Pay/Receipt.swift  <tspan fill="#6E6E76">~1.1K — import 그래프 이웃</tspan></text>
+    </g>
+    <g fill="#98989F">
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.36;0.39;1" dur="10s" repeatCount="indefinite"/>
+      <text x="70" y="220">• Tests/PaymentTests.swift  <tspan fill="#6E6E76">~0.9K — symbol test_refund</tspan></text>
+    </g>
+
+    <!-- tool call 2 -->
+    <g>
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.46;0.49;1" dur="10s" repeatCount="indefinite"/>
+      <text x="34" y="256" fill="#FF9F0A">⏺</text>
+      <text x="52" y="256" fill="#E8E8ED">contextos · <tspan font-weight="700">read_optimized</tspan>("결제 실패 버그")</text>
+    </g>
+    <g fill="#98989F">
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.52;0.55;1" dur="10s" repeatCount="indefinite"/>
+      <text x="52" y="280">⎿  3개 파일 내용 반환 — 관련 함수만 슬라이싱 (127줄 중 31줄)</text>
+    </g>
+
+    <!-- result -->
+    <g>
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.62;0.66;1" dur="10s" repeatCount="indefinite"/>
+      <text x="34" y="318" fill="#32D74B">✓</text>
+      <text x="52" y="318" fill="#32D74B">프로젝트 전체 ~97.6K 대신 <tspan font-weight="700">4.2%만 읽음</tspan> → ~93.3K 토큰 절약</text>
+    </g>
+
+    <!-- menu-bar echo -->
+    <g>
+      <animate attributeName="opacity" values="1;1;0;0;1;1" keyTimes="0;0.015;0.03;0.72;0.76;1" dur="10s" repeatCount="indefinite"/>
+      <text x="52" y="352" fill="#6E6E76" font-size="12">메뉴바의 뭉치가 신나게 통통 튑니다 — 오늘 아낀 토큰 <tspan fill="#98989F">+9.3만</tspan></text>
+    </g>
+  </g>
+
+  <!-- blinking caret -->
+  <rect x="34" y="340" width="7" height="15" fill="#F2F2F7">
+    <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.45;0.5;0.95;1" dur="1.1s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- Caption -->
+  <text x="360" y="428" text-anchor="middle" font-size="12" fill="#8E8E93" font-family="-apple-system, BlinkMacSystemFont, sans-serif">Claude Code가 파일을 뒤지기 전에 ContextOS를 자동으로 먼저 호출합니다 — 설정할 것 없음</text>
+</svg>
