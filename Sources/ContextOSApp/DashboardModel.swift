@@ -18,6 +18,10 @@ final class DashboardModel: ObservableObject {
     @Published var connected = false
     /// Token usage grouped by project, broken down per AI agent.
     @Published var projectUsage: [ProjectAIUsage] = []
+    /// Tokens saved per day for the last 7 days (oldest → today).
+    @Published var daily: [DayPoint] = []
+    /// Most recent optimization events, newest first.
+    @Published var recent: [UsageEvent] = []
     /// Brief highlight when MCP just handled an optimization.
     @Published var flashing = false
 
@@ -52,6 +56,8 @@ final class DashboardModel: ObservableObject {
             todaySaved = s.todaySaved
             totalSaved = s.totalSaved
             avgScore = s.avgScore
+            daily = s.daily
+            recent = s.recent
             if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
             lastQueryCount = s.queryCount
             queryCount = s.queryCount
@@ -83,7 +89,19 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    struct Savings: Sendable { var todaySaved = 0, totalSaved = 0, queryCount = 0, avgScore = 0 }
+    struct DayPoint: Sendable, Identifiable {
+        var day: String     // yyyy-MM-dd
+        var saved: Int
+        var label: String   // Korean weekday, e.g. "월"
+        var isToday: Bool
+        var id: String { day }
+    }
+
+    struct Savings: Sendable {
+        var todaySaved = 0, totalSaved = 0, queryCount = 0, avgScore = 0
+        var daily: [DayPoint] = []
+        var recent: [UsageEvent] = []
+    }
     struct AgentsUsage: Sendable {
         var aiTokens = 0, aiProjects = 0
         var agents: [DetectedAgent] = []
@@ -94,8 +112,23 @@ final class DashboardModel: ObservableObject {
     private nonisolated static func loadSavings() async -> Savings {
         guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
         let s = store.summary()
+
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "ko_KR")
+        parser.dateFormat = "yyyy-MM-dd"
+        let weekday = DateFormatter()
+        weekday.locale = Locale(identifier: "ko_KR")
+        weekday.dateFormat = "EEEEE"     // narrow: 월/화/수/목/금/토/일
+        let todayKey = parser.string(from: Date())
+        let daily = store.dailySaved(days: 7).map { point in
+            DayPoint(day: point.day, saved: point.saved,
+                     label: parser.date(from: point.day).map { weekday.string(from: $0) } ?? "",
+                     isToday: point.day == todayKey)
+        }
+
         return Savings(todaySaved: store.todaySaved(), totalSaved: s.totalSaved,
-                       queryCount: s.queryCount, avgScore: s.avgContextScore)
+                       queryCount: s.queryCount, avgScore: s.avgContextScore, daily: daily,
+                       recent: store.recentEvents(limit: 6))
     }
 
     private nonisolated static func loadAgentsAndUsage() async -> AgentsUsage {

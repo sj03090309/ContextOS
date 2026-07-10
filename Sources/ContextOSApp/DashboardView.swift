@@ -11,7 +11,7 @@ struct DashboardView: View {
 
     // Which "screen" the segmented control shows — keeps the panel short by
     // showing one system at a time instead of stacking every section.
-    private enum Tab: Hashable { case files, ai }
+    private enum Tab: Hashable { case files, activity, ai }
     @State private var tab: Tab = .files
     @State private var expanded: Set<String> = []   // expanded project cards
 
@@ -24,14 +24,17 @@ struct DashboardView: View {
             header
             hero
             segments
+            trend
             Picker("", selection: $tab) {
-                Text("파일 토큰").tag(Tab.files)
+                Text("프로젝트").tag(Tab.files)
+                Text("활동").tag(Tab.activity)
                 Text("AI 연결").tag(Tab.ai)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             switch tab {
             case .files: projects
+            case .activity: activity
             case .ai: agents
             }
             footer
@@ -70,6 +73,32 @@ struct DashboardView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 4)
+    }
+
+    // Tokens saved per day over the last week; today's bar is accented.
+    private var trend: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("최근 7일 추이")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            let maxSaved = max(1, model.daily.map(\.saved).max() ?? 1)
+            HStack(alignment: .bottom, spacing: 6) {
+                ForEach(model.daily) { d in
+                    VStack(spacing: 4) {
+                        ZStack(alignment: .bottom) {
+                            Color.clear.frame(height: 40)
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(d.isToday ? Color.accentColor : Color.secondary.opacity(0.35))
+                                .frame(height: max(3, 40 * CGFloat(d.saved) / CGFloat(maxSaved)))
+                        }
+                        Text(d.label)
+                            .font(.system(size: 9, weight: d.isToday ? .semibold : .regular))
+                            .foregroundStyle(d.isToday ? .primary : .secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .help("\(d.day) · \(TokenEstimator.korean(d.saved)) 아낌")
+                }
+            }
+        }
     }
 
     // A macOS-style segmented summary strip.
@@ -146,10 +175,82 @@ struct DashboardView: View {
                     }
                 }
                 .padding(.top, 2)
+
+                // Quick actions — only for projects that still exist on disk.
+                if FileManager.default.fileExists(atPath: p.path) {
+                    HStack(spacing: 8) {
+                        Button {
+                            NSWorkspace.shared.activateFileViewerSelecting(
+                                [URL(fileURLWithPath: p.path)])
+                        } label: {
+                            Label("Finder", systemImage: "folder")
+                        }
+                        Button {
+                            Self.openTerminal(at: p.path)
+                        } label: {
+                            Label("터미널", systemImage: "terminal")
+                        }
+                        Spacer()
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .font(.system(size: 11))
+                }
             }
         }
         .padding(10)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Open Terminal.app at the given directory.
+    private static func openTerminal(at path: String) {
+        let url = URL(fileURLWithPath: path)
+        let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+        let config = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: config)
+    }
+
+    // Recent optimization events, newest first: what was optimized where, how
+    // many tokens it saved, and how long ago.
+    private var activity: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.recent.isEmpty {
+                Text("아직 활동 기록이 없어요.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                ForEach(model.recent, id: \.timestamp) { e in
+                    activityRow(e)
+                }
+            }
+        }
+    }
+
+    private func activityRow(_ e: UsageEvent) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 10)).foregroundStyle(.tint)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(e.query.isEmpty ? "컨텍스트 최적화" : e.query)
+                    .font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
+                Text("\((e.project as NSString).lastPathComponent) · 파일 \(e.fileCount)개 · \(Self.timeAgo(e.timestamp))")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            Text("-\(TokenEstimator.korean(e.savedTokens))")
+                .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.green)
+        }
+        .padding(.vertical, 2)
+    }
+
+    /// Compact Korean relative time, e.g. "3분 전".
+    private static func timeAgo(_ ts: Double) -> String {
+        let s = Int(Date().timeIntervalSince1970 - ts)
+        if s < 60 { return "방금" }
+        if s < 3600 { return "\(s / 60)분 전" }
+        if s < 86_400 { return "\(s / 3600)시간 전" }
+        return "\(s / 86_400)일 전"
     }
 
     // A single horizontal bar split into per-AI segments (widths ∝ tokens).
