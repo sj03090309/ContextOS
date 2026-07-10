@@ -4,7 +4,8 @@
 
 <h1 align="center">ContextOS</h1>
 
-<p align="center">Claude Code를 위한 로컬 컨텍스트 최적화 도구 · AI 없이 전부 내 컴퓨터에서</p>
+<p align="center">AI 코딩 에이전트를 위한 로컬 컨텍스트 최적화 도구 · AI 없이 전부 내 컴퓨터에서</p>
+<p align="center">Claude Code · Codex · Gemini CLI · Cursor · Windsurf</p>
 
 <!--
   아래 두 데모는 실제 UI/동작을 그대로 재현한 애니메이션(SVG)입니다.
@@ -19,9 +20,9 @@
 
 ---
 
-**Claude Code를 위한 로컬 컨텍스트 최적화 도구.** AI를 쓰지 않고, 전부 내 컴퓨터에서만 동작합니다.
+**AI 코딩 에이전트를 위한 로컬 컨텍스트 최적화 도구.** AI를 쓰지 않고, 전부 내 컴퓨터에서만 동작합니다.
 
-ContextOS는 Claude Code가 코드베이스 전체를 뒤지는 대신 **작업에 관련된 파일·함수만** 읽도록 도와줍니다. 그 결과 **더 적은 토큰으로 더 정확하게** 작업하게 됩니다.
+ContextOS는 AI 에이전트가 코드베이스 전체를 뒤지는 대신 **작업에 관련된 파일·함수만** 읽도록 도와줍니다. 그 결과 **더 적은 토큰으로 더 정확하게** 작업하게 됩니다. `contextos connect` 한 번이면 **Claude Code · Codex · Gemini CLI · Cursor · Windsurf** 중 설치된 모든 도구에 자동 연결됩니다.
 
 > OpenAI / Claude / Gemini API 없음. LLM 호출 없음. 외부 서버 없음.
 > AST·Tree-sitter 스타일 정적 분석·Git·파일시스템·규칙 기반 엔진만 사용합니다.
@@ -50,7 +51,9 @@ ContextOS는 Claude Code가 코드베이스 전체를 뒤지는 대신 **작업�
 - **스마트 파일 필터** — `node_modules`·`.git`·`build`·바이너리 등 노이즈 자동 제외. 프로젝트 루트의 `.gitignore` 패턴도 존중합니다.
 - **컨텍스트 옵티마이저** — 어휘 매칭 + **IDF 가중치**(희귀 심볼 우대) + import 그래프 확장으로 관련 파일을 랭킹하고, 토큰 예산 안에서 선택.
 - **심볼 단위 슬라이싱** — 파일 전체 대신 **관련 함수 본문 + 나머지는 시그니처(목차)만** 전달. 큰 파일에서 토큰을 크게 절감.
-- **능동적 쿼리 보정** — 한↔영 개발용어 사전, 오타 교정(프로젝트 실제 심볼과 대조), 인덱스 기반 확장. "로그인 고쳐줘" → `login, authenticate` 로 알아서 이해.
+- **세션 중복 제거** — 같은 세션에서 **이미 전달한 파일은 다시 보내지 않습니다** (내용이 바뀌었을 때만 재전송). 반복 질문 시 응답 크기가 ~90% 줄어듭니다.
+- **예산 초과 파일 시그니처 목차** — 예산에 못 들어간 관련 파일도 이름만 버리지 않고 **심볼 목차(파일·라인·시그니처)** 로 압축해 함께 전달. 몇 토큰으로 주변 구조까지 파악.
+- **능동적 쿼리 보정** — 110+ 항목 한↔영 개발용어 사전(조사 자동 제거: "삭제가"→`delete`), 오타 교정(프로젝트 실제 심볼과 대조), 인덱스 기반 확장. "장바구니 버그 고쳐줘" → `cart, bug, fix` 로 알아서 이해.
 - **Git 신호** — 지금 편집 중인(커밋 안 된) 파일을 감지해 관련 컨텍스트를 미리 준비.
 - **파일 감시** — 파일이 바뀌면 인덱스를 자동 갱신.
 - **로컬 토큰 추정** — 외부 API 없이 토큰 수를 근사.
@@ -69,13 +72,23 @@ swift build -c release          # CLI / MCP / 앱 빌드
 swift test                      # 테스트
 ```
 
-### 2. Claude Code에 연결 (핵심)
+### 2. AI 에이전트에 연결 (핵심)
 
 ```sh
 .build/release/contextos connect
 ```
 
-이 한 줄이 (1) `~/.claude/CLAUDE.md` 에 자동 사용 지침을 넣고 (2) MCP 서버를 전역 등록합니다. **Claude Code를 재시작**하면 이후 모든 프로젝트에서 자동으로 적용됩니다.
+이 한 줄이 **설치된 모든 AI 에이전트**를 자동으로 찾아 연결합니다:
+
+| 에이전트 | MCP 등록 | 자동 사용 지침 |
+|---|---|---|
+| Claude Code | `claude mcp add` (전역) | `~/.claude/CLAUDE.md` |
+| Codex CLI | `~/.codex/config.toml` | `~/.codex/AGENTS.md` |
+| Gemini CLI | `~/.gemini/settings.json` | `~/.gemini/GEMINI.md` |
+| Cursor | `~/.cursor/mcp.json` | (Cursor 설정에서 규칙 추가) |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | — |
+
+설치 안 된 도구는 건드리지 않고, 다시 실행해도 중복 없이 갱신만 됩니다. **도구를 재시작**하면 이후 모든 프로젝트에서 자동 적용됩니다.
 
 ### 3. 메뉴바 앱 (선택)
 
@@ -93,9 +106,10 @@ open dist/ContextOS.app
 모든 로직은 `ContextOSCore` 에 있고, 나머지는 얇은 어댑터입니다.
 
 ```
-Claude Code ──MCP(stdio)──▶ contextos-mcp ──▶ ContextOSCore ──▶ SQLite 인덱스
-메뉴바 앱   ────────────────────────────────────┘
-CLI (개발용) ───────────────────────────────────┘
+Claude Code · Codex · Gemini
+Cursor · Windsurf ──MCP(stdio)──▶ contextos-mcp ──▶ ContextOSCore ──▶ SQLite 인덱스
+메뉴바 앱   ──────────────────────────────────────────┘
+CLI (개발용) ─────────────────────────────────────────┘
 ```
 
 | 타깃 | 역할 |
@@ -109,11 +123,11 @@ CLI (개발용) ─────────────────────�
 
 | 명령 | 설명 |
 |---|---|
-| `contextos connect` | Claude Code 자동 연동 (지침 설치 + MCP 등록) |
+| `contextos connect` | 설치된 모든 AI 에이전트 자동 연동 (지침 설치 + MCP 등록) |
 | `contextos context "<작업>"` | 관련 파일을 직접 찾기 (붙여넣기용) |
 | `contextos watch [경로]` | 파일 변경 시 자동 재인덱싱 |
 
-### MCP 도구 (Claude Code가 자동 호출)
+### MCP 도구 (AI 에이전트가 자동 호출)
 
 | 도구 | 설명 |
 |---|---|
