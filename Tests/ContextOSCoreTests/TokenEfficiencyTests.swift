@@ -77,6 +77,33 @@ final class TokenEfficiencyTests: XCTestCase {
         XCTAssertTrue(b.bundle.contains("def login"))
     }
 
+    func testMemoryEntriesExpireAfterTTL() {
+        // After the agent compacts its context, earlier bodies are gone from
+        // its memory — the TTL guarantees we eventually resend rather than
+        // withholding a file forever.
+        let memory = SessionMemory(ttl: 60)
+        memory.markServed(project: "/p", path: "a.swift", bodyHash: "h1")
+        XCTAssertTrue(memory.isUnchanged(project: "/p", path: "a.swift", bodyHash: "h1"))
+        let later = Date(timeIntervalSinceNow: 61)
+        XCTAssertFalse(memory.isUnchanged(project: "/p", path: "a.swift", bodyHash: "h1", now: later))
+    }
+
+    func testFreshBypassEquivalent() throws {
+        // fresh=true in the MCP layer passes memory=nil — verify a nil memory
+        // resends everything even when a populated memory exists.
+        let root = try makeProject()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = ContextService()
+        let memory = SessionMemory()
+
+        _ = try service.optimizedBundle(
+            query: "fix login", projectRoot: root, tokenBudget: 8000, memory: memory)
+        let fresh = try service.optimizedBundle(
+            query: "fix login", projectRoot: root, tokenBudget: 8000, memory: nil)
+        XCTAssertEqual(fresh.skippedUnchanged, 0)
+        XCTAssertTrue(fresh.bundle.contains("def login"))
+    }
+
     func testExcludedFilesGetSignatureOutline() throws {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }

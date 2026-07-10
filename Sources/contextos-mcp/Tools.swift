@@ -28,13 +28,16 @@ enum Tools {
             "description": """
             Like get_relevant_context, but returns the actual concatenated contents \
             of the selected files, already within the token budget — the minimal \
-            context to read for the task.
+            context to read for the task. Bodies identical to ones already sent in \
+            this session are elided; pass fresh=true to force full resend (e.g. \
+            after your context was compacted and earlier file contents were lost).
             """,
             "inputSchema": object(
                 properties: [
                     "query": string("What you want to work on."),
                     "path": string("Project root. Defaults to the server's working directory."),
-                    "token_budget": integer("Max tokens of content to return. Default 8000.")
+                    "token_budget": integer("Max tokens of content to return. Default 8000."),
+                    "fresh": boolean("Resend file bodies even if already sent this session. Use after context compaction.")
                 ],
                 required: ["query"]
             )
@@ -106,5 +109,9 @@ enum Tools {
 
     private static func integer(_ description: String) -> [String: Any] {
         ["type": "integer", "description": description]
+    }
+
+    private static func boolean(_ description: String) -> [String: Any] {
+        ["type": "boolean", "description": description]
     }
 }

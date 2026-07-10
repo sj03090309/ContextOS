@@ -167,7 +167,7 @@ public struct ContextService: Sendable {
             if let memory {
                 let hash = Self.bodyHash(body)
                 if memory.isUnchanged(project: rootPath, path: file.path, bodyHash: hash) {
-                    bundle += "// ===== FILE: \(file.path) — 변경 없음, 이 세션에서 이미 전달됨 (본문 생략) =====\n\n"
+                    bundle += "// ===== FILE: \(file.path) — 변경 없음, 이 세션에서 이미 전달됨 (본문 생략; 다시 필요하면 fresh=true로 재요청) =====\n\n"
                     skipped += 1
                     continue
                 }

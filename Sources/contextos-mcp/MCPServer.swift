@@ -157,8 +157,11 @@ struct MCPServer {
         }
         let root = projectRoot(from: args)
         let budget = integer(args, "token_budget") ?? 8000
+        // fresh=true bypasses the session dedup — the agent lost earlier
+        // context (compaction) and needs the bodies again.
+        let fresh = (args["fresh"] as? Bool) ?? false
         let (selection, bundle, skipped) = try service.optimizedBundle(
-            query: query, projectRoot: root, tokenBudget: budget, memory: memory
+            query: query, projectRoot: root, tokenBudget: budget, memory: fresh ? nil : memory
         )
         guard !selection.included.isEmpty else {
             return "No relevant files found for “\(query)”."
