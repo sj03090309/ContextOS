@@ -11,9 +11,10 @@ public struct HeuristicParser: LanguageParser {
 
     public func supports(_ language: Language) -> Bool {
         switch language {
-        case .swift, .python, .javascript, .typescript, .go, .rust, .java, .kotlin:
+        case .swift, .python, .javascript, .typescript, .go, .rust, .java, .kotlin,
+             .c, .cpp, .ruby, .objectiveC:
             return true
-        default:
+        case .unknown:
             return false
         }
     }
@@ -54,7 +55,9 @@ public struct HeuristicParser: LanguageParser {
     /// Brace-matching for C-family/Swift; indentation for Python.
     static func blockEnd(lines: [String], startIndex: Int, language: Language) -> Int {
         switch language {
-        case .python:
+        case .python, .ruby:
+            // Ruby's `def … end` nests by indentation in practice, so the
+            // indentation heuristic reads its blocks about as well as Python's.
             return pythonBlockEnd(lines: lines, startIndex: startIndex)
         default:
             return braceBlockEnd(lines: lines, startIndex: startIndex)
@@ -153,10 +156,43 @@ public struct HeuristicParser: LanguageParser {
                 Rule(pattern: rx(#"\b(?:class|interface|enum)\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
                 Rule(pattern: rx(#"\bfun\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function))
             ]
-        default:
+        case .c:
+            return [
+                Rule(pattern: rx(#"^\s*#\s*include\s*[<"]([^>"]+)[>"]"#), result: .importEdge),
+                Rule(pattern: rx(#"\b(?:struct|enum|union)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{"#), result: .symbol(.type)),
+                Rule(pattern: cFunctionPattern, result: .symbol(.function))
+            ]
+        case .cpp:
+            return [
+                Rule(pattern: rx(#"^\s*#\s*include\s*[<"]([^>"]+)[>"]"#), result: .importEdge),
+                Rule(pattern: rx(#"\b(?:class|struct|enum|union|namespace)\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:{]"#), result: .symbol(.type)),
+                Rule(pattern: cFunctionPattern, result: .symbol(.function))
+            ]
+        case .ruby:
+            return [
+                Rule(pattern: rx(#"^\s*require(?:_relative)?\s+['"]([^'"]+)['"]"#), result: .importEdge),
+                Rule(pattern: rx(#"^\s*(?:class|module)\s+([A-Z][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                Rule(pattern: rx(#"^\s*def\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_]*[?!=]?)"#), result: .symbol(.function))
+            ]
+        case .objectiveC:
+            return [
+                Rule(pattern: rx(#"^\s*#\s*(?:import|include)\s*[<"]([^>"]+)[>"]"#), result: .importEdge),
+                Rule(pattern: rx(#"^\s*@(?:interface|implementation|protocol)\s+([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.type)),
+                // Method: "- (ReturnType)name…" or "+ (ReturnType)name…".
+                Rule(pattern: rx(#"^\s*[-+]\s*\([^)]*\)\s*([A-Za-z_][A-Za-z0-9_]*)"#), result: .symbol(.function)),
+                Rule(pattern: cFunctionPattern, result: .symbol(.function))
+            ]
+        case .unknown:
             return []
         }
     }
+
+    /// C-family function *definition*: a type-ish prefix, the name, an open
+    /// paren, and no ";" (which would make it a prototype). Control keywords
+    /// are excluded so `if (…)` / `while (…)` don't register.
+    private static let cFunctionPattern = rx(
+        #"^(?!\s*(?:if|else|while|for|switch|return|do|case|sizeof)\b)[A-Za-z_][A-Za-z0-9_\s\*]*[\s\*]([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*$"#
+    )
 
     private static func rx(_ pattern: String) -> CompiledRegex {
         CompiledRegex(pattern)
