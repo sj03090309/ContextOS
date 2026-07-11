@@ -90,16 +90,18 @@ final class DashboardModel: ObservableObject {
         if tick % 16 == 0 { refreshSlow() }
     }
 
-    // Is an agent processing a command *right now*? Two signals, either wins:
+    // Is an agent processing a command *right now*? Signals, any of which wins:
     //   1. Session-log writes (Claude Code / Codex) — starts the moment the
     //      user hits enter, keeps firing while the agent thinks and streams.
-    //   2. A recent MCP heartbeat — covers agents whose logs we can't read.
+    //   2. The log's last event is an unanswered tool call — the agent is
+    //      waiting on a long tool (build/test) that writes nothing until done.
+    //   3. A recent MCP heartbeat — covers agents whose logs we can't read.
     //
     // The 20s quiet threshold matters: agents write their logs per *event*
     // (message done, tool call, tool result), so mid-turn gaps of several
-    // seconds are normal — a long think or one slow command must not make the
-    // mascot doze off and wake up again. Turning on is instant (any write);
-    // only turning off waits out the gap.
+    // seconds are normal — a long think must not make the mascot doze off and
+    // wake up again. Turning on is instant (any write); only turning off waits
+    // out the gap (and a pending tool call holds it on regardless of the gap).
     private func refreshWorking() {
         let monitor = activityMonitor
         Task {

@@ -13,7 +13,7 @@ import Foundation
 public final class AgentActivityMonitor: @unchecked Sendable {
 
     private let home: URL
-    private var hotFiles: [URL] = []
+    private var hottest: (url: URL, mtime: Date)?
     private var lastScan = Date.distantPast
     private let lock = NSLock()
 
@@ -21,32 +21,87 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     /// A live session's file was created recently, so its parent dir is fresh.
     private let staleDirWindow: TimeInterval = 7 * 86_400
 
+    /// A log whose last event is an *unanswered* tool call keeps the session
+    /// "active" for up to this long even with no writes — one long-running tool
+    /// (a build, a test suite) produces no log lines until it returns. The cap
+    /// bounds the failure mode where the agent died mid-tool: after it, a
+    /// pending call no longer counts.
+    private let pendingToolCap: TimeInterval = 5 * 60
+
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.home = home
     }
 
-    /// True when any known agent session log was modified within `window`.
-    public func isActive(within window: TimeInterval = 6, now: Date = Date()) -> Bool {
+    /// True when an agent is actively processing a command. Two tiers:
+    ///   1. The hottest session log was written within `window` — covers the
+    ///      user's message, the agent thinking, and streamed output.
+    ///   2. It's been quiet longer than that, but the log's last event is a
+    ///      tool call with no result yet — the agent is *waiting on a tool
+    ///      right now* (a long build/test), which writes nothing until it ends.
+    public func isActive(within window: TimeInterval = 20, now: Date = Date()) -> Bool {
         lock.lock(); defer { lock.unlock() }
 
-        // Fast path: the sessions that were active moments ago.
-        if hotFiles.contains(where: { mtime($0).map { now.timeIntervalSince($0) <= window } == true }) {
-            return true
+        // Refresh which file is hottest at most every 4s; between scans we reuse
+        // the last hottest file and just re-stat it (cheap, catches new writes).
+        if now.timeIntervalSince(lastScan) >= 4 || hottest == nil {
+            lastScan = now
+            var newest: (URL, Date)?
+            for file in candidateLogs(now: now) {
+                guard let m = mtime(file) else { continue }
+                if newest == nil || m > newest!.1 { newest = (file, m) }
+            }
+            hottest = newest
+        } else if let h = hottest, let m = mtime(h.url) {
+            hottest = (h.url, m)   // re-stat the known hot file for fresh mtime
         }
 
-        // Rescan at most every 4s — between scans a brand-new session is caught
-        // on the next pass, which at a 2s UI tick is unnoticeable.
-        guard now.timeIntervalSince(lastScan) >= 4 else { return false }
-        lastScan = now
+        guard let h = hottest else { return false }
+        let quiet = now.timeIntervalSince(h.mtime)
+        if quiet <= window { return true }
+        // Long-tool tier: only worth a tail read while the session is plausibly
+        // still alive, and only pays the read during the quiet gaps.
+        if quiet <= pendingToolCap, Self.hasPendingToolCall(h.url) { return true }
+        return false
+    }
 
-        var newest: [(URL, Date)] = []
-        for file in candidateLogs(now: now) {
-            if let m = mtime(file) { newest.append((file, m)) }
+    // MARK: - Pending tool-call detection
+
+    /// Whether the tail of a Claude Code / Codex session log ends on a tool call
+    /// that hasn't been answered — i.e. a tool is running right now. Reads only
+    /// the last slice of the file and matches `tool_use` ids against the
+    /// `tool_use_id`s of later `tool_result` blocks.
+    static func hasPendingToolCall(_ url: URL, tailBytes: Int = 128 * 1024) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let start = size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.readToEnd(), let text = String(data: data, encoding: .utf8) else {
+            return false
         }
-        newest.sort { $0.1 > $1.1 }
-        hotFiles = newest.prefix(4).map(\.0)
 
-        return newest.first.map { now.timeIntervalSince($0.1) <= window } ?? false
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        // If we started mid-file, the first line is probably a fragment — drop it.
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+
+        var openToolUseIDs = Set<String>()
+        for line in lines {
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  let message = obj["message"] as? [String: Any],
+                  let content = message["content"] as? [[String: Any]]
+            else { continue }
+            for block in content {
+                switch block["type"] as? String {
+                case "tool_use":
+                    if let id = block["id"] as? String { openToolUseIDs.insert(id) }
+                case "tool_result":
+                    if let id = block["tool_use_id"] as? String { openToolUseIDs.remove(id) }
+                default:
+                    break
+                }
+            }
+        }
+        return !openToolUseIDs.isEmpty
     }
 
     // MARK: - Log discovery
