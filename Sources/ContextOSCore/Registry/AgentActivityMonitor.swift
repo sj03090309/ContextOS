@@ -23,10 +23,11 @@ public final class AgentActivityMonitor: @unchecked Sendable {
 
     /// A log whose last event is an *unanswered* tool call keeps the session
     /// "active" for up to this long even with no writes — one long-running tool
-    /// (a build, a test suite) produces no log lines until it returns. The cap
-    /// bounds the failure mode where the agent died mid-tool: after it, a
-    /// pending call no longer counts.
-    private let pendingToolCap: TimeInterval = 5 * 60
+    /// (a build, a test suite, a big install) produces no log lines until it
+    /// returns. Generous enough to cover essentially any real tool; the cap
+    /// only bounds the failure mode where the agent died mid-tool, so a pending
+    /// call doesn't pin the mascot on forever.
+    private let pendingToolCap: TimeInterval = 15 * 60
 
     public init(home: URL = FileManager.default.homeDirectoryForCurrentUser) {
         self.home = home

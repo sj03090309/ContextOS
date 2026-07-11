@@ -100,13 +100,23 @@ final class AgentActivityMonitorTests: XCTestCase {
         XCTAssertFalse(AgentActivityMonitor(home: home).isActive(within: 20))
     }
 
+    func testPendingToolCallWithinCapStaysActive() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        // A genuinely long tool: unanswered for 10 minutes, still under the cap.
+        try writeLog(home, ".claude/projects/-Users-me-app/s.jsonl",
+                     lines: [toolUseLine], mtime: Date(timeIntervalSinceNow: -600))
+
+        XCTAssertTrue(AgentActivityMonitor(home: home).isActive(within: 20))
+    }
+
     func testPendingToolCallExpiresAfterCap() throws {
         let home = try makeHome()
         defer { try? FileManager.default.removeItem(at: home) }
-        // Unanswered tool call, but quiet for 10 minutes — the agent likely died
+        // Unanswered tool call, but quiet for 20 minutes — the agent likely died
         // mid-tool; the cap stops the mascot from staying on forever.
         try writeLog(home, ".claude/projects/-Users-me-app/s.jsonl",
-                     lines: [toolUseLine], mtime: Date(timeIntervalSinceNow: -600))
+                     lines: [toolUseLine], mtime: Date(timeIntervalSinceNow: -1200))
 
         XCTAssertFalse(AgentActivityMonitor(home: home).isActive(within: 20))
     }
