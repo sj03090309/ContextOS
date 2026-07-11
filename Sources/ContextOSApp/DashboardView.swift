@@ -424,12 +424,26 @@ struct MeltingMascot: View {
     private var impactTime: CGFloat { .pi / (2 * omega) }   // when cos() first hits 0
     private let settleTime: CGFloat = 2.6
 
+    // "File gobble" while optimizing: little file cards fly into 뭉치 and get
+    // eaten, one every `fileCycle`, staggered across `fileCount` lanes.
+    private let fileCycle: Double = 0.85
+    private let fileCount = 3
+
     var body: some View {
         GeometryReader { geo in
             TimelineView(.animation) { tl in
                 let t = tl.date.timeIntervalSince(start)
                 let c = blobCenter(t, geo.size)
                 ZStack {
+                    // Files being consumed (drawn behind the blob so they vanish
+                    // *into* it), only while actively optimizing.
+                    ForEach(fileStates(t, center: c).indices, id: \.self) { i in
+                        let f = fileStates(t, center: c)[i]
+                        fileCard
+                            .scaleEffect(f.scale)
+                            .opacity(f.opacity)
+                            .position(f.pos)
+                    }
                     grad.mask(metaball(t))
                     // Eyes track the blob and fade in as it settles.
                     let eyeOpacity = min(1, max(0, (meltProgress(t) - 0.6) / 0.4))
@@ -451,6 +465,41 @@ struct MeltingMascot: View {
 
     private var eye: some View {
         Circle().fill(Color(white: 0.12)).frame(width: 4.5, height: 4.5)
+    }
+
+    // A tiny document ("file/context being eaten"), in the app's savings amber.
+    private var fileCard: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 1.6)
+                .fill(Color(red: 0.98, green: 0.63, blue: 0.09))
+            VStack(spacing: 1.4) {
+                Capsule().fill(.white.opacity(0.85)).frame(height: 1)
+                Capsule().fill(.white.opacity(0.85)).frame(height: 1)
+            }
+            .padding(.horizontal, 1.8)
+            .padding(.vertical, 2.2)
+        }
+        .frame(width: 8, height: 10)
+    }
+
+    // Per-file position/scale/opacity as it flies in from a side and is absorbed.
+    private func fileStates(_ t: TimeInterval, center c: CGPoint)
+        -> [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] {
+        guard active, t >= Double(settleTime) else { return [] }
+        var out: [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] = []
+        for i in 0..<fileCount {
+            let phase = ((t / fileCycle) + Double(i) / Double(fileCount))
+                .truncatingRemainder(dividingBy: 1)
+            let dir: CGFloat = (i % 2 == 0) ? 1 : -1        // alternate sides
+            let startDist: CGFloat = 52
+            let x = c.x + dir * startDist * CGFloat(1 - phase)
+            let y = c.y - 2 - sin(CGFloat(phase) * .pi) * 4 // gentle arc
+            let opacity: CGFloat = phase < 0.12 ? CGFloat(phase / 0.12)
+                : (phase > 0.82 ? max(0, CGFloat((1 - phase) / 0.18)) : 1)
+            let scale: CGFloat = phase > 0.82 ? max(0.1, CGFloat((1 - phase) / 0.18)) : 1
+            out.append((CGPoint(x: x, y: y), scale, opacity))
+        }
+        return out
     }
 
     private func metaball(_ t: TimeInterval) -> some View {
@@ -503,6 +552,13 @@ struct MeltingMascot: View {
         if x < impactTime {
             let f = x / impactTime                    // 0 → 1 during the fall
             return (r * (1 - 0.16 * f), r * (1 + 0.36 * f))   // teardrop stretch
+        }
+        // While gobbling, chomp: widen + flatten in sharp pulses timed to the
+        // files being eaten, instead of the plain settling wobble.
+        if active, x >= CGFloat(settleTime) {
+            let f = 2 * Double.pi * Double(fileCount) / fileCycle
+            let chomp = CGFloat(pow((cos(t * f) + 1) / 2, 4))
+            return (r * (1 + 0.30 * chomp), r * (1 - 0.26 * chomp))
         }
         let dt = x - impactTime
         let wobble = exp(-3.2 * dt) * sin(2 * .pi * 2.4 * dt)  // decaying jelly

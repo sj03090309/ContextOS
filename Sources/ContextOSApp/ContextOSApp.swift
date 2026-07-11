@@ -121,14 +121,15 @@ final class MascotRenderer: ObservableObject {
         let scaleX: CGFloat
         let tilt: CGFloat       // left/right wiggle, in degrees
         if active {
-            // Optimizing → unmistakably lively: quick energetic hops, a strong
-            // squash on landing / stretch at the top, and a side-to-side jiggle.
-            let phase = t * 9.0
-            let b = abs(sin(phase))          // 1 at the top of the hop, 0 grounded
-            bob = -b * 3.2
-            scaleY = 0.82 + 0.30 * b
-            scaleX = 1.20 - 0.30 * b
-            tilt = sin(t * 13.0) * 9
+            // Optimizing → 뭉치 is *gobbling* files: a rhythmic chomp (widen +
+            // flatten in sharp pulses, like a mouth snapping shut on each bite)
+            // with a small nod. Reads as "eating context" even at menu-bar size,
+            // where the flying file cards (shown in the popover) can't.
+            let chomp = pow((cos(t * 22.0) + 1) / 2, 4)   // sharp bite ~3.5×/sec
+            bob = -chomp * 1.2
+            scaleX = 1.0 + 0.28 * chomp
+            scaleY = 1.0 - 0.24 * chomp
+            tilt = sin(t * 11.0) * 3.5
         } else if working {
             // Claude is thinking/working → a gentle but clearly awake hop, calmer
             // than the optimize burst, with a soft wiggle.
