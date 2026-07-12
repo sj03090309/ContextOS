@@ -210,6 +210,32 @@ public final class IndexStore {
         return out
     }
 
+    /// Symbols for a specific set of files (by project-relative path), ordered
+    /// by line. Targeted alternative to `symbolsByFile()` for when only a few
+    /// files are needed — avoids loading the entire symbol table.
+    public func symbols(forPaths paths: [String]) throws -> [String: [Symbol]] {
+        guard !paths.isEmpty else { return [:] }
+        let placeholders = paths.map { _ in "?" }.joined(separator: ",")
+        let stmt = try prepare("""
+        SELECT f.path, s.name, s.kind, s.line
+        FROM symbols s JOIN files f ON f.id = s.file_id
+        WHERE f.path IN (\(placeholders))
+        ORDER BY s.line;
+        """)
+        defer { sqlite3_finalize(stmt) }
+        for (i, p) in paths.enumerated() { bindText(stmt, Int32(i + 1), p) }
+        var out: [String: [Symbol]] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let symbol = Symbol(
+                name: columnText(stmt, 1),
+                kind: SymbolKind(rawValue: columnText(stmt, 2)) ?? .variable,
+                line: Int(sqlite3_column_int64(stmt, 3))
+            )
+            out[columnText(stmt, 0), default: []].append(symbol)
+        }
+        return out
+    }
+
     /// All import edges, grouped by their owning file's rowid.
     public func importsByFile() throws -> [Int64: [ImportEdge]] {
         let stmt = try prepare("SELECT file_id, module, line FROM imports;")

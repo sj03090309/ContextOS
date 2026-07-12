@@ -31,14 +31,14 @@ ContextOS는 AI 에이전트가 코드베이스 전체를 뒤지는 대신 **작
 
 ## 어떻게 동작하나요
 
-1. `contextos connect` 를 한 번 실행하면, Claude Code에 **"파일을 직접 탐색하기 전에 ContextOS부터 써라"** 는 지침이 심어지고 MCP 서버가 등록됩니다.
-2. 이후 아무 프로젝트에서 Claude Code로 작업하면, Claude Code가 **자동으로** ContextOS를 호출해 관련 파일만 받아 읽습니다.
+1. `contextos connect` 를 한 번 실행하면, 설치된 각 AI 에이전트에 **"파일을 직접 탐색하기 전에 ContextOS부터 써라"** 는 지침이 심어지고 MCP 서버가 등록됩니다.
+2. 이후 아무 프로젝트에서 에이전트로 작업하면, 에이전트가 **자동으로** ContextOS를 호출해 관련 파일만 받아 읽습니다.
 3. 메뉴바 앱은 **얼마나 아꼈는지**를 실시간으로 보여줍니다.
 
 당신은 아무것도 안 해도 됩니다. 최적화는 눈에 안 보이게 돌아갑니다.
 
 ```
-평소처럼 Claude Code에 질문
+평소처럼 AI 에이전트에 질문
    → ContextOS가 관련 파일·함수만 골라서 전달
    → 토큰 절약, 응답 품질 향상
 ```
@@ -116,7 +116,7 @@ CLI (개발용) ─────────────────────�
 |---|---|
 | `ContextOSCore` | 인덱싱·최적화·슬라이싱·보정 등 순수 로직 |
 | `contextos` | CLI (`connect` · `context` · `watch`) |
-| `contextos-mcp` | Claude Code용 MCP 서버 (stdio JSON-RPC) |
+| `contextos-mcp` | AI 에이전트용 MCP 서버 (stdio JSON-RPC) |
 | `ContextOSApp` | SwiftUI 메뉴바 모니터 |
 
 ### CLI 명령
@@ -132,7 +132,7 @@ CLI (개발용) ─────────────────────�
 | 도구 | 설명 |
 |---|---|
 | `get_relevant_context` | 작업에 관련된 최소 파일 목록 반환 |
-| `read_optimized` | 관련 파일 내용을 (슬라이싱해) 반환 |
+| `read_optimized` | 관련 파일 내용을 (슬라이싱·세션 중복 제거해) 반환. `fresh=true`로 전체 재전송 |
 | `index_project` | 프로젝트 강제 재인덱싱 |
 | `project_stats` | 인덱스 통계 |
 | `get_project_rules` | 프로젝트 규칙 파일(`.contextos/rules.md`·`CLAUDE.md`·`AGENTS.md`·`.cursorrules`) 읽기 |

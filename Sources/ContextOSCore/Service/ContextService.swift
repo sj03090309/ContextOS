@@ -190,18 +190,16 @@ public struct ContextService: Sendable {
     /// built from the index (no file reads). A few tokens buy the agent the
     /// structure of what else exists, and the line numbers to ask for it.
     private func signatureOutline(for excluded: [ScoredFile], projectRoot: URL) -> String {
+        let shown = Array(excluded.prefix(5))
         guard let store = try? Indexer.openStore(forProjectRoot: projectRoot),
-              let files = try? store.allFiles(),
-              let symbolsByFile = try? store.symbolsByFile()
+              // Targeted: only the shown files' symbols, not the whole table.
+              let symbolsByPath = try? store.symbols(forPaths: shown.map(\.path))
         else { return "" }
 
-        var idByPath: [String: Int64] = [:]
-        for f in files { if let id = f.id { idByPath[f.relativePath] = id } }
-
         var out = "// ===== 관련도 높지만 예산 초과 — 시그니처 목차만 (필요하면 이 파일들을 지목해 다시 요청) =====\n"
-        for file in excluded.prefix(5) {
+        for file in shown {
             out += "// \(file.path)  (~\(TokenEstimator.abbrev(file.estimatedTokens)) tokens)\n"
-            guard let id = idByPath[file.path], let symbols = symbolsByFile[id], !symbols.isEmpty else { continue }
+            guard let symbols = symbolsByPath[file.path], !symbols.isEmpty else { continue }
             for sym in symbols.prefix(12) {
                 out += "//   L\(sym.line)  \(sym.kind.rawValue) \(sym.name)\n"
             }

@@ -108,4 +108,24 @@ struct IndexStoreTests {
         #expect(try store.importCount() == 1)
         #expect(try store.fileCountByLanguage()[.python] == 1)
     }
+
+    @Test("symbols(forPaths:) returns only the requested files, ordered by line")
+    func targetedSymbols() throws {
+        let store = try IndexStore(path: ":memory:")
+        func add(_ path: String, _ syms: [(String, Int)]) throws {
+            let id = try store.insertFile(IndexedFile(
+                relativePath: path, language: .swift, byteSize: 10,
+                lineCount: 10, contentHash: path, modifiedAt: 0))
+            for (n, l) in syms { try store.insertSymbol(Symbol(name: n, kind: .function, line: l), fileID: id) }
+        }
+        try add("a.swift", [("beta", 20), ("alpha", 5)])
+        try add("b.swift", [("gamma", 1)])
+        try add("c.swift", [("delta", 1)])
+
+        let got = try store.symbols(forPaths: ["a.swift", "b.swift"])
+        #expect(Set(got.keys) == ["a.swift", "b.swift"])       // c.swift excluded
+        #expect(got["a.swift"]?.map(\.name) == ["alpha", "beta"]) // line-ordered
+        #expect(got["b.swift"]?.map(\.name) == ["gamma"])
+        #expect(try store.symbols(forPaths: []).isEmpty)
+    }
 }
