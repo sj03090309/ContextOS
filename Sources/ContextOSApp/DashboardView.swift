@@ -3,6 +3,14 @@ import AppKit
 import ServiceManagement
 import ContextOSCore
 
+/// The ContextOS brand palette — the amber of the app icon and the "tokens
+/// saved" accent, used consistently across the dashboard.
+enum Brand {
+    static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)       // #F59E0B
+    static let amberLight = Color(red: 0.97, green: 0.72, blue: 0.20)  // #F7B733
+    static let amberDeep = Color(red: 0.91, green: 0.54, blue: 0.00)   // #E98A00
+}
+
 /// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
 /// a translucent surface that adapts to the system light/dark appearance,
 /// with one hero number (cumulative savings) up top, a segmented summary,
@@ -53,6 +61,8 @@ struct DashboardView: View {
         }
         .padding(14)
         .frame(width: 300)
+        // Brand accent: picker selection, borderless buttons, folder icons.
+        .tint(Brand.amber)
         // Pin the background to a single, constant vibrancy so its color doesn't
         // deepen when the popover becomes key (e.g. after a click).
         .background(VisualEffectBackground())
@@ -99,7 +109,7 @@ struct DashboardView: View {
                         ZStack(alignment: .bottom) {
                             Color.clear.frame(height: 40)
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(d.isToday ? Color.accentColor : Color.secondary.opacity(0.35))
+                                .fill(d.isToday ? Brand.amber : Color.secondary.opacity(0.35))
                                 .frame(height: max(3, 40 * CGFloat(d.saved) / CGFloat(maxSaved)))
                         }
                         Text(d.label)
@@ -411,10 +421,9 @@ struct MeltingMascot: View {
     var working: Bool = false
     @State private var start = Date()
 
-    // Brand gradient (blue → purple) the metaball silhouette is filled with.
+    // Brand gradient (amber, matching the app icon) the metaball is filled with.
     private let grad = LinearGradient(
-        colors: [Color(red: 0.29, green: 0.56, blue: 0.98),
-                 Color(red: 0.64, green: 0.52, blue: 0.96)],
+        colors: [Brand.amberLight, Brand.amberDeep],
         startPoint: .topLeading, endPoint: .bottomTrailing)
 
     // Damped-bounce constants. The droplet first touches down at `impactTime`,
@@ -434,11 +443,12 @@ struct MeltingMascot: View {
             TimelineView(.animation) { tl in
                 let t = tl.date.timeIntervalSince(start)
                 let c = blobCenter(t, geo.size)
+                let files = fileStates(t, center: c)
                 ZStack {
                     // Files being consumed (drawn behind the blob so they vanish
                     // *into* it), only while actively optimizing.
-                    ForEach(fileStates(t, center: c).indices, id: \.self) { i in
-                        let f = fileStates(t, center: c)[i]
+                    ForEach(files.indices, id: \.self) { i in
+                        let f = files[i]
                         fileCard
                             .scaleEffect(f.scale)
                             .opacity(f.opacity)
@@ -467,14 +477,15 @@ struct MeltingMascot: View {
         Circle().fill(Color(white: 0.12)).frame(width: 4.5, height: 4.5)
     }
 
-    // A tiny document ("file/context being eaten"), in the app's savings amber.
+    // A tiny document ("file/context being eaten") — cream paper with amber
+    // text lines, so it stays visible against the amber blob it flies into.
     private var fileCard: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 1.6)
-                .fill(Color(red: 0.98, green: 0.63, blue: 0.09))
+                .fill(Color(red: 1.0, green: 0.97, blue: 0.93))
             VStack(spacing: 1.4) {
-                Capsule().fill(.white.opacity(0.85)).frame(height: 1)
-                Capsule().fill(.white.opacity(0.85)).frame(height: 1)
+                Capsule().fill(Brand.amberDeep.opacity(0.8)).frame(height: 1)
+                Capsule().fill(Brand.amberDeep.opacity(0.8)).frame(height: 1)
             }
             .padding(.horizontal, 1.8)
             .padding(.vertical, 2.2)

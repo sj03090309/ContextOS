@@ -1,24 +1,31 @@
 import AppKit
 import Foundation
 
-// Generates AppIcon.icns for ContextOS: a blue→purple rounded tile with a white
-// sparkles glyph, matching the menu-bar look. Run: swift scripts/make_icon.swift
+// Generates the ContextOS app icon: the 뭉치 blob mascot (cream, dark eyes) on
+// an amber rounded tile — the same amber as the app's "tokens saved" accent.
+// Outputs AppIcon.icns (repo root) + assets/icon.png (README header).
+// Run: swift scripts/make_icon.swift
 
-let blue = NSColor(calibratedRed: 0.29, green: 0.56, blue: 0.98, alpha: 1)
-let purple = NSColor(calibratedRed: 0.62, green: 0.50, blue: 0.96, alpha: 1)
+let amberTop = NSColor(calibratedRed: 0.97, green: 0.72, blue: 0.20, alpha: 1)   // #F7B733
+let amberBottom = NSColor(calibratedRed: 0.91, green: 0.54, blue: 0.00, alpha: 1) // #E98A00
+let cream = NSColor(calibratedRed: 1.00, green: 0.97, blue: 0.93, alpha: 1)       // #FFF7EC
+let eyeBrown = NSColor(calibratedRed: 0.48, green: 0.29, blue: 0.02, alpha: 1)    // #7A4A06
 
-func whiteSparkles(pointSize: CGFloat) -> NSImage {
-    let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold)
-    let base = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)!
-        .withSymbolConfiguration(cfg)!
-    let tinted = NSImage(size: base.size)
-    tinted.lockFocus()
-    NSColor.white.set()
-    let r = NSRect(origin: .zero, size: base.size)
-    base.draw(in: r)
-    r.fill(using: .sourceAtop)
-    tinted.unlockFocus()
-    return tinted
+/// The 뭉치 silhouette, designed in a 48×48 y-down space (same path as the app).
+func blobPath(in rect: NSRect) -> NSBezierPath {
+    func pt(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+        // Flip y: design space is y-down, AppKit is y-up.
+        NSPoint(x: rect.minX + x / 48 * rect.width,
+                y: rect.minY + (48 - y) / 48 * rect.height)
+    }
+    let p = NSBezierPath()
+    p.move(to: pt(24, 6))
+    p.curve(to: pt(40, 26), controlPoint1: pt(34, 6), controlPoint2: pt(40, 14))
+    p.curve(to: pt(24, 42), controlPoint1: pt(40, 38), controlPoint2: pt(33, 42))
+    p.curve(to: pt(8, 26), controlPoint1: pt(15, 42), controlPoint2: pt(8, 38))
+    p.curve(to: pt(24, 6), controlPoint1: pt(8, 14), controlPoint2: pt(14, 6))
+    p.close()
+    return p
 }
 
 func renderIcon(px: Int) -> Data {
@@ -34,15 +41,24 @@ func renderIcon(px: Int) -> Data {
     let margin = size * 0.085
     let tile = NSRect(x: margin, y: margin, width: size - 2*margin, height: size - 2*margin)
     let radius = tile.width * 0.225
-    let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
-    NSGradient(starting: blue, ending: purple)!.draw(in: path, angle: -55)
+    let tilePath = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
+    NSGradient(starting: amberTop, ending: amberBottom)!.draw(in: tilePath, angle: -65)
 
-    // White sparkles centered, ~46% of the icon.
-    let glyph = whiteSparkles(pointSize: size * 0.46)
-    let g = glyph.size
-    let gx = (size - g.width) / 2
-    let gy = (size - g.height) / 2
-    glyph.draw(in: NSRect(x: gx, y: gy, width: g.width, height: g.height))
+    // 뭉치 centered, ~62% of the tile.
+    let blobSize = tile.width * 0.62
+    let blobRect = NSRect(x: (size - blobSize) / 2, y: (size - blobSize) / 2,
+                          width: blobSize, height: blobSize)
+    cream.setFill()
+    blobPath(in: blobRect).fill()
+
+    // Eyes (design coords: centers (18,24) & (30,24), r 3.1 in 48-space).
+    eyeBrown.setFill()
+    let er = blobSize * 3.1 / 48
+    for ex in [CGFloat(18), CGFloat(30)] {
+        let cx = blobRect.minX + ex / 48 * blobSize
+        let cy = blobRect.minY + (48 - 24) / 48 * blobSize
+        NSBezierPath(ovalIn: NSRect(x: cx - er, y: cy - er, width: er * 2, height: er * 2)).fill()
+    }
 
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
@@ -64,9 +80,12 @@ for (name, px) in variants {
     try! renderIcon(px: px).write(to: iconset.appendingPathComponent("\(name).png"))
 }
 
+// README header image.
+try! renderIcon(px: 256).write(to: URL(fileURLWithPath: "assets/icon.png"))
+
 let p = Process()
 p.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 p.arguments = ["-c", "icns", "AppIcon.iconset", "-o", "AppIcon.icns"]
 try! p.run(); p.waitUntilExit()
 try? fm.removeItem(at: iconset)
-print(p.terminationStatus == 0 ? "✓ AppIcon.icns 생성 완료" : "✗ iconutil 실패")
+print(p.terminationStatus == 0 ? "✓ AppIcon.icns + assets/icon.png 생성 완료" : "✗ iconutil 실패")
