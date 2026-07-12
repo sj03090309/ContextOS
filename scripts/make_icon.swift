@@ -2,14 +2,14 @@ import AppKit
 import Foundation
 
 // Generates the ContextOS app icon: the 뭉치 blob mascot (cream, dark eyes) on
-// an amber rounded tile — the same amber as the app's "tokens saved" accent.
+// an ink (charcoal) rounded tile — a restrained, editor-like identity.
 // Outputs AppIcon.icns (repo root) + assets/icon.png (README header).
 // Run: swift scripts/make_icon.swift
 
-let amberTop = NSColor(calibratedRed: 0.97, green: 0.72, blue: 0.20, alpha: 1)   // #F7B733
-let amberBottom = NSColor(calibratedRed: 0.91, green: 0.54, blue: 0.00, alpha: 1) // #E98A00
-let cream = NSColor(calibratedRed: 1.00, green: 0.97, blue: 0.93, alpha: 1)       // #FFF7EC
-let eyeBrown = NSColor(calibratedRed: 0.48, green: 0.29, blue: 0.02, alpha: 1)    // #7A4A06
+let inkTop = NSColor(calibratedRed: 0.118, green: 0.118, blue: 0.141, alpha: 1)   // #1E1E24
+let inkBottom = NSColor(calibratedRed: 0.078, green: 0.078, blue: 0.094, alpha: 1) // #141418
+let cream = NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1)    // #EFE7D6
+let eyeInk = NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1)   // #17171B
 
 /// The 뭉치 silhouette, designed in a 48×48 y-down space (same path as the app).
 func blobPath(in rect: NSRect) -> NSBezierPath {
@@ -42,7 +42,7 @@ func renderIcon(px: Int) -> Data {
     let tile = NSRect(x: margin, y: margin, width: size - 2*margin, height: size - 2*margin)
     let radius = tile.width * 0.225
     let tilePath = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
-    NSGradient(starting: amberTop, ending: amberBottom)!.draw(in: tilePath, angle: -65)
+    NSGradient(starting: inkTop, ending: inkBottom)!.draw(in: tilePath, angle: -90)
 
     // 뭉치 centered, ~62% of the tile.
     let blobSize = tile.width * 0.62
@@ -52,7 +52,7 @@ func renderIcon(px: Int) -> Data {
     blobPath(in: blobRect).fill()
 
     // Eyes (design coords: centers (18,24) & (30,24), r 3.1 in 48-space).
-    eyeBrown.setFill()
+    eyeInk.setFill()
     let er = blobSize * 3.1 / 48
     for ex in [CGFloat(18), CGFloat(30)] {
         let cx = blobRect.minX + ex / 48 * blobSize

@@ -3,12 +3,22 @@ import AppKit
 import ServiceManagement
 import ContextOSCore
 
-/// The ContextOS brand palette — the amber of the app icon and the "tokens
-/// saved" accent, used consistently across the dashboard.
+/// The ContextOS brand palette — the ink + cream of the app icon (뭉치 in cream
+/// on a charcoal tile), used consistently across the dashboard.
 enum Brand {
-    static let amber = Color(red: 0.96, green: 0.62, blue: 0.04)       // #F59E0B
-    static let amberLight = Color(red: 0.97, green: 0.72, blue: 0.20)  // #F7B733
-    static let amberDeep = Color(red: 0.91, green: 0.54, blue: 0.00)   // #E98A00
+    static let cream = Color(red: 0.937, green: 0.906, blue: 0.839)      // #EFE7D6
+    static let creamLight = Color(red: 0.953, green: 0.925, blue: 0.867) // #F3ECDD
+    static let creamDeep = Color(red: 0.894, green: 0.851, blue: 0.765)  // #E4D9C3
+    static let ink = Color(red: 0.090, green: 0.090, blue: 0.106)        // #17171B
+
+    /// Monochrome accent that reads on both appearances: cream on dark, ink on
+    /// light — literally the two icon colors, so contrast is always high.
+    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1)  // cream
+            : NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1)  // ink
+    })
 }
 
 /// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
@@ -62,7 +72,7 @@ struct DashboardView: View {
         .padding(14)
         .frame(width: 300)
         // Brand accent: picker selection, borderless buttons, folder icons.
-        .tint(Brand.amber)
+        .tint(Brand.accent)
         // Pin the background to a single, constant vibrancy so its color doesn't
         // deepen when the popover becomes key (e.g. after a click).
         .background(VisualEffectBackground())
@@ -109,7 +119,7 @@ struct DashboardView: View {
                         ZStack(alignment: .bottom) {
                             Color.clear.frame(height: 40)
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(d.isToday ? Brand.amber : Color.secondary.opacity(0.35))
+                                .fill(d.isToday ? Brand.accent : Color.secondary.opacity(0.35))
                                 .frame(height: max(3, 40 * CGFloat(d.saved) / CGFloat(maxSaved)))
                         }
                         Text(d.label)
@@ -313,7 +323,9 @@ struct DashboardView: View {
 
     private static func agentColor(_ agent: String) -> Color {
         switch agent {
-        case "Claude Code": return .orange
+        // Claude Code — the primary agent — wears the brand accent; the rest
+        // keep distinct hues so the per-agent split stays readable.
+        case "Claude Code": return Brand.accent
         case "Codex":       return .blue
         case "Copilot":     return .green
         case "Gemini":      return .purple
@@ -421,9 +433,9 @@ struct MeltingMascot: View {
     var working: Bool = false
     @State private var start = Date()
 
-    // Brand gradient (amber, matching the app icon) the metaball is filled with.
+    // Brand gradient (cream, matching the app icon) the metaball is filled with.
     private let grad = LinearGradient(
-        colors: [Brand.amberLight, Brand.amberDeep],
+        colors: [Brand.creamLight, Brand.creamDeep],
         startPoint: .topLeading, endPoint: .bottomTrailing)
 
     // Damped-bounce constants. The droplet first touches down at `impactTime`,
@@ -477,20 +489,23 @@ struct MeltingMascot: View {
         Circle().fill(Color(white: 0.12)).frame(width: 4.5, height: 4.5)
     }
 
-    // A tiny document ("file/context being eaten") — cream paper with amber
-    // text lines, so it stays visible against the amber blob it flies into.
+    // A tiny document ("file/context being eaten") — an ink card with cream
+    // text lines and a soft glow, so it reads against both the dark panel it
+    // flies over and the cream blob it vanishes into.
     private var fileCard: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 1.6)
-                .fill(Color(red: 1.0, green: 0.97, blue: 0.93))
+                .fill(Brand.ink)
+                .overlay(RoundedRectangle(cornerRadius: 1.6).strokeBorder(Brand.cream.opacity(0.5), lineWidth: 0.5))
             VStack(spacing: 1.4) {
-                Capsule().fill(Brand.amberDeep.opacity(0.8)).frame(height: 1)
-                Capsule().fill(Brand.amberDeep.opacity(0.8)).frame(height: 1)
+                Capsule().fill(Brand.cream.opacity(0.85)).frame(height: 1)
+                Capsule().fill(Brand.cream.opacity(0.85)).frame(height: 1)
             }
             .padding(.horizontal, 1.8)
             .padding(.vertical, 2.2)
         }
         .frame(width: 8, height: 10)
+        .shadow(color: Brand.cream.opacity(0.25), radius: 1.5)
     }
 
     // Per-file position/scale/opacity as it flies in from a side and is absorbed.
