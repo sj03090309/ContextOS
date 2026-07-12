@@ -7,18 +7,33 @@ import ContextOSCore
 /// on a charcoal tile), used consistently across the dashboard.
 enum Brand {
     static let cream = Color(red: 0.937, green: 0.906, blue: 0.839)      // #EFE7D6
-    static let creamLight = Color(red: 0.953, green: 0.925, blue: 0.867) // #F3ECDD
-    static let creamDeep = Color(red: 0.894, green: 0.851, blue: 0.765)  // #E4D9C3
     static let ink = Color(red: 0.090, green: 0.090, blue: 0.106)        // #17171B
+
+    /// An appearance-adaptive color: `dark` in dark mode, `light` in light mode.
+    private static func adaptive(dark: NSColor, light: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
 
     /// Monochrome accent that reads on both appearances: cream on dark, ink on
     /// light — literally the two icon colors, so contrast is always high.
-    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
-        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        return dark
-            ? NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1)  // cream
-            : NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1)  // ink
-    })
+    static let accent = adaptive(
+        dark: NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1),   // cream
+        light: NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1))  // ink
+
+    /// The mascot inverts with the appearance like the accent does — a static
+    /// cream blob would vanish on the light popover material. Dark: cream blob
+    /// with ink eyes (the icon). Light: ink blob with cream eyes (its negative).
+    static let blobTop = adaptive(
+        dark: NSColor(calibratedRed: 0.953, green: 0.925, blue: 0.867, alpha: 1),   // #F3ECDD
+        light: NSColor(calibratedRed: 0.180, green: 0.180, blue: 0.212, alpha: 1))  // #2E2E36
+    static let blobBottom = adaptive(
+        dark: NSColor(calibratedRed: 0.894, green: 0.851, blue: 0.765, alpha: 1),   // #E4D9C3
+        light: NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1))  // #17171B
+    static let mascotEye = adaptive(
+        dark: NSColor(calibratedWhite: 0.12, alpha: 1),
+        light: NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1))  // cream
 }
 
 /// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
@@ -433,9 +448,9 @@ struct MeltingMascot: View {
     var working: Bool = false
     @State private var start = Date()
 
-    // Brand gradient (cream, matching the app icon) the metaball is filled with.
+    // Brand gradient (icon colors, appearance-adaptive) filling the metaball.
     private let grad = LinearGradient(
-        colors: [Brand.creamLight, Brand.creamDeep],
+        colors: [Brand.blobTop, Brand.blobBottom],
         startPoint: .topLeading, endPoint: .bottomTrailing)
 
     // Damped-bounce constants. The droplet first touches down at `impactTime`,
@@ -486,7 +501,7 @@ struct MeltingMascot: View {
     }
 
     private var eye: some View {
-        Circle().fill(Color(white: 0.12)).frame(width: 4.5, height: 4.5)
+        Circle().fill(Brand.mascotEye).frame(width: 4.5, height: 4.5)
     }
 
     // A tiny document ("file/context being eaten") — an ink card with cream

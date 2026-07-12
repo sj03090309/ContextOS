@@ -102,14 +102,16 @@ final class MascotRenderer: ObservableObject {
     func start() {
         guard timer == nil else { return }
         render()
-        // The timer ticks at 60Hz, but while fully idle we render every 3rd frame
-        // (20fps) — plenty for the slow breathing bob, and it keeps this
-        // always-running menu-bar app cheap. Working/active keep the full 60fps.
+        // The timer ticks at 60Hz but rendering is decimated: 30fps while busy
+        // (plenty for a ~3.5Hz chomp on an 18px glyph), 20fps while idle.
+        // `working` can stay on for hours during a long agent session, so a full
+        // 60fps bitmap render there would be a constant CPU tax for nothing.
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 self.frame += 1
-                if self.active || self.working || self.frame % 3 == 0 { self.render() }
+                let step = (self.active || self.working) ? 2 : 3
+                if self.frame % step == 0 { self.render() }
             }
         }
     }
