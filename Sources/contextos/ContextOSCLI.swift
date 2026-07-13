@@ -110,6 +110,9 @@ struct Hook: ParsableCommand {
         guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 6 else { return }
 
         let root = URL(fileURLWithPath: cwd).standardizedFileURL
+        // Only index real project roots — never a home dir or huge folder the
+        // agent happens to run in (this fires on *every* prompt).
+        guard ContextService.looksLikeProjectRoot(root) else { return }
         let service = ContextService()
         guard let (selection, text) = try? service.promptContext(query: prompt, projectRoot: root),
               !selection.included.isEmpty else { return }

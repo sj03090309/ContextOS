@@ -37,6 +37,11 @@ public final class IndexStore {
             throw IndexStoreError.open(message)
         }
         try exec("PRAGMA journal_mode=WAL;")
+        // The prompt hook (every prompt) and the MCP server (every tool call)
+        // can re-index the same project concurrently — separate processes, so
+        // WAL alone isn't enough for two writers. Wait for the lock instead of
+        // failing instantly with SQLITE_BUSY.
+        try exec("PRAGMA busy_timeout=5000;")
         try exec("PRAGMA foreign_keys=ON;")
         try createSchema()
     }

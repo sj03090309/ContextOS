@@ -79,6 +79,13 @@ public final class UsageStore {
             sqlite3_close(db)
             throw IndexStoreError.open(message)
         }
+        // Every session's MCP server (plus the per-prompt hook, plus the menu-bar
+        // app reading) writes/reads this one shared DB — wait for the lock rather
+        // than failing instantly when they overlap.
+        if path != ":memory:" {
+            try exec("PRAGMA journal_mode=WAL;")
+            try exec("PRAGMA busy_timeout=5000;")
+        }
         try exec("""
         CREATE TABLE IF NOT EXISTS usage (
             id         INTEGER PRIMARY KEY,

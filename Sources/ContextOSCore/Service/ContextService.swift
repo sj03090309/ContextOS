@@ -40,6 +40,21 @@ public struct ContextService: Sendable {
         self.useRefiner = useRefiner
     }
 
+    /// Whether `url` looks like a real project root worth indexing — used by
+    /// the always-on prompt hook so it never tries to index a home directory or
+    /// some huge non-project folder the agent happens to be launched in.
+    public static func looksLikeProjectRoot(_ url: URL) -> Bool {
+        let markers = [
+            ".git", ".hg", ".svn", ".contextos",
+            "Package.swift", "package.json", "tsconfig.json", "Cargo.toml",
+            "go.mod", "pom.xml", "build.gradle", "build.gradle.kts",
+            "pyproject.toml", "requirements.txt", "setup.py", "Gemfile",
+            "composer.json", "CMakeLists.txt", "Makefile"
+        ]
+        let fm = FileManager.default
+        return markers.contains { fm.fileExists(atPath: url.appendingPathComponent($0).path) }
+    }
+
     /// Actively refine a raw query against a project's symbol vocabulary.
     public func refineQuery(_ query: String, projectRoot: URL) -> RefinedQuery {
         let vocab = (try? Indexer.openStore(forProjectRoot: projectRoot).symbolNames()) ?? []
