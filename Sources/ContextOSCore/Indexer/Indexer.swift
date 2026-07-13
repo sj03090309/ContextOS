@@ -36,10 +36,16 @@ public struct Indexer: Sendable {
         let start = Date()
 
         let dbURL = Self.databaseURL(forProjectRoot: projectRoot)
-        try FileManager.default.createDirectory(
-            at: dbURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        let indexDir = dbURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: indexDir, withIntermediateDirectories: true)
+        // Make the index self-ignoring so it never pollutes the host project's
+        // `git status`. ContextOS now indexes every project the agent touches,
+        // so a stray `.contextos/` (+ its -wal/-shm files) would show up as
+        // untracked in each one. A `.gitignore` of "*" inside the dir hides it.
+        let ignore = indexDir.appendingPathComponent(".gitignore")
+        if !FileManager.default.fileExists(atPath: ignore.path) {
+            try? "*\n".write(to: ignore, atomically: true, encoding: .utf8)
+        }
 
         let store = try IndexStore(path: dbURL.path)
 
