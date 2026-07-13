@@ -133,4 +133,37 @@ final class AgentActivityMonitorTests: XCTestCase {
             .write(to: resolved, atomically: true, encoding: .utf8)
         XCTAssertFalse(AgentActivityMonitor.hasPendingToolCall(resolved))
     }
+
+    // MARK: - Codex format (response_item / call_id)
+
+    private let codexCallLine = #"{"type":"response_item","payload":{"type":"function_call","id":"fc_1","call_id":"call_ABC","name":"shell","arguments":"{}"}}"#
+    private let codexOutputLine = #"{"type":"response_item","payload":{"type":"function_call_output","call_id":"call_ABC","output":"done"}}"#
+    private let codexCustomCallLine = #"{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"call_XYZ","name":"apply_patch","input":""}}"#
+    private let codexCustomOutputLine = #"{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_XYZ","output":"ok"}}"#
+
+    func testCodexUnansweredFunctionCallIsPending() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let url = home.appendingPathComponent("rollout-pending.jsonl")
+        try (codexCallLine + "\n").write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertTrue(AgentActivityMonitor.hasPendingToolCall(url))
+    }
+
+    func testCodexAnsweredFunctionCallIsNotPending() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let url = home.appendingPathComponent("rollout-done.jsonl")
+        try ([codexCallLine, codexCustomCallLine, codexOutputLine, codexCustomOutputLine]
+            .joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertFalse(AgentActivityMonitor.hasPendingToolCall(url))
+    }
+
+    func testCodexLongToolKeepsActiveDespiteQuietLog() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        // A Codex tool (e.g. a long build) in flight, log quiet for 2 minutes.
+        try writeLog(home, ".codex/sessions/2026/07/13/rollout-x.jsonl",
+                     lines: [codexCallLine], mtime: Date(timeIntervalSinceNow: -120))
+        XCTAssertTrue(AgentActivityMonitor(home: home).isActive(within: 20))
+    }
 }

@@ -69,8 +69,12 @@ public final class AgentActivityMonitor: @unchecked Sendable {
 
     /// Whether the tail of a Claude Code / Codex session log ends on a tool call
     /// that hasn't been answered — i.e. a tool is running right now. Reads only
-    /// the last slice of the file and matches `tool_use` ids against the
-    /// `tool_use_id`s of later `tool_result` blocks.
+    /// the last slice of the file, then matches each call against its result:
+    ///   - Claude Code: assistant `tool_use` (id) vs user `tool_result`
+    ///     (tool_use_id), inside `message.content`.
+    ///   - Codex: `response_item` `*_call` (call_id) vs `*_call_output`
+    ///     (call_id), inside `payload`.
+    /// An unmatched call id means that tool is still in flight.
     static func hasPendingToolCall(_ url: URL, tailBytes: Int = 128 * 1024) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
@@ -85,24 +89,39 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         // If we started mid-file, the first line is probably a fragment — drop it.
         if start > 0, !lines.isEmpty { lines.removeFirst() }
 
-        var openToolUseIDs = Set<String>()
+        // Claude (toolu_…) and Codex (call_…) ids share one set; namespaces
+        // don't collide, so a single open/close tally covers both formats.
+        var open = Set<String>()
         for line in lines {
-            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let message = obj["message"] as? [String: Any],
-                  let content = message["content"] as? [[String: Any]]
+            guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any]
             else { continue }
-            for block in content {
-                switch block["type"] as? String {
-                case "tool_use":
-                    if let id = block["id"] as? String { openToolUseIDs.insert(id) }
-                case "tool_result":
-                    if let id = block["tool_use_id"] as? String { openToolUseIDs.remove(id) }
-                default:
-                    break
+
+            // Claude Code: message.content blocks.
+            if let message = obj["message"] as? [String: Any],
+               let content = message["content"] as? [[String: Any]] {
+                for block in content {
+                    switch block["type"] as? String {
+                    case "tool_use":    if let id = block["id"] as? String { open.insert(id) }
+                    case "tool_result": if let id = block["tool_use_id"] as? String { open.remove(id) }
+                    default: break
+                    }
+                }
+            }
+
+            // Codex: response_item envelope, calls/outputs linked by call_id.
+            if obj["type"] as? String == "response_item",
+               let payload = obj["payload"] as? [String: Any],
+               let callID = payload["call_id"] as? String {
+                switch payload["type"] as? String {
+                case "function_call", "custom_tool_call", "tool_search_call":
+                    open.insert(callID)
+                case "function_call_output", "custom_tool_call_output", "tool_search_output":
+                    open.remove(callID)
+                default: break
                 }
             }
         }
-        return !openToolUseIDs.isEmpty
+        return !open.isEmpty
     }
 
     // MARK: - Log discovery
