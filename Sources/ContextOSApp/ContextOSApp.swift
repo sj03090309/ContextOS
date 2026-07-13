@@ -116,6 +116,10 @@ final class MascotRenderer: ObservableObject {
         }
     }
 
+    // Optimizing "both-sides suction" (style A): little bits fly into 뭉치 from
+    // the left and right, one absorbed every half-cycle, each landing a chomp.
+    private let foodCycle = 0.55
+
     private func render() {
         let t = Date().timeIntervalSince(startedAt)
         let bob: CGFloat        // vertical offset
@@ -123,15 +127,13 @@ final class MascotRenderer: ObservableObject {
         let scaleX: CGFloat
         let tilt: CGFloat       // left/right wiggle, in degrees
         if active {
-            // Optimizing → 뭉치 is *gobbling* files: a rhythmic chomp (widen +
-            // flatten in sharp pulses, like a mouth snapping shut on each bite)
-            // with a small nod. Reads as "eating context" even at menu-bar size,
-            // where the flying file cards (shown in the popover) can't.
-            let chomp = pow((cos(t * 22.0) + 1) / 2, 4)   // sharp bite ~3.5×/sec
-            bob = -chomp * 1.2
-            scaleX = 1.0 + 0.28 * chomp
-            scaleY = 1.0 - 0.24 * chomp
-            tilt = sin(t * 11.0) * 3.5
+            // Chomp timed to each bite arriving (2 per cycle, alternating sides).
+            let frac = (t / foodCycle).truncatingRemainder(dividingBy: 1)
+            let chomp = pow((cos(4 * .pi * frac) + 1) / 2, 6)
+            bob = -chomp * 1.0
+            scaleX = 1.0 + 0.26 * chomp
+            scaleY = 1.0 - 0.22 * chomp
+            tilt = 0
         } else if working {
             // Claude is thinking/working → a gentle but clearly awake hop, calmer
             // than the optimize burst, with a soft wiggle.
@@ -153,13 +155,24 @@ final class MascotRenderer: ObservableObject {
         // Solid black on transparent + isTemplate: macOS then auto-adapts the
         // icon to the menu bar's light/dark appearance, same as SF Symbols do.
         // Eyes are punched as holes via an even-odd fill so the bar shows through.
-        let glyph = BlobShape()
+        let blob = BlobShape()
             .fill(Color.black, style: FillStyle(eoFill: true))
             .frame(width: 18, height: 18)
             .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
             .rotationEffect(.degrees(tilt), anchor: .bottom)
             .offset(y: bob)
-            .frame(width: 24, height: 24) // pad so the bounce/wiggle isn't clipped
+
+        // The food bits, behind the blob so they vanish *into* it. A constant
+        // 30-wide frame (vs the blob's 18) gives them travel room and keeps the
+        // status-item width from jumping when optimizing starts/stops.
+        let glyph = ZStack {
+            if active {
+                foodBit(lane: 0, t: t)   // from the left
+                foodBit(lane: 1, t: t)   // from the right
+            }
+            blob
+        }
+        .frame(width: 30, height: 24)
 
         let renderer = ImageRenderer(content: glyph)
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
@@ -167,6 +180,24 @@ final class MascotRenderer: ObservableObject {
             nsImage.isTemplate = true
             image = nsImage
         }
+    }
+
+    /// One food bit flying in from a side toward 뭉치 and being absorbed.
+    /// Lane 0 comes from the left, lane 1 from the right, staggered half a cycle.
+    @ViewBuilder
+    private func foodBit(lane: Int, t: TimeInterval) -> some View {
+        let phase = (t / foodCycle + Double(lane) * 0.5).truncatingRemainder(dividingBy: 1)
+        let dir: CGFloat = lane == 0 ? -1 : 1
+        let x = dir * 15 * CGFloat(1 - phase)     // edge (±15) → center (0)
+        let opacity = phase < 0.15 ? phase / 0.15
+            : (phase > 0.85 ? max(0, (1 - phase) / 0.15) : 1)
+        let scale = phase > 0.85 ? max(0.2, CGFloat((1 - phase) / 0.15)) : 1
+        RoundedRectangle(cornerRadius: 1)
+            .fill(Color.black)
+            .frame(width: 3.4, height: 4.4)
+            .scaleEffect(scale)
+            .opacity(opacity)
+            .offset(x: x, y: -1)
     }
 }
 
