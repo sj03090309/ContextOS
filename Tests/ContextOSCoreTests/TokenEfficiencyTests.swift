@@ -65,6 +65,24 @@ final class TokenEfficiencyTests: XCTestCase {
         XCTAssertTrue(second.bundle.contains("verify_two_factor"))
     }
 
+    func testQueryAutoRefreshesStaleIndex() throws {
+        // Regression: ensureIndexed used to skip when the DB existed, so a file
+        // added after the first query stayed invisible. A query must now see new
+        // symbols without any manual reindex.
+        let root = try makeProject()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = ContextService()
+
+        _ = try service.relevantContext(query: "login", projectRoot: root, tokenBudget: 8000) // builds index
+
+        try "def transfer_funds(dst, amount):\n    return amount\n"
+            .write(to: root.appendingPathComponent("src/wallet.py"), atomically: true, encoding: .utf8)
+
+        let sel = try service.relevantContext(query: "transfer_funds", projectRoot: root, tokenBudget: 8000)
+        XCTAssertTrue(sel.included.contains { $0.path == "src/wallet.py" },
+                      "a symbol added after the first query must be found without a manual reindex")
+    }
+
     func testWithoutMemoryNothingIsSkipped() throws {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }

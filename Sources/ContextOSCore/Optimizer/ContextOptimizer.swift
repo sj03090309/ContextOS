@@ -63,16 +63,27 @@ public struct ContextOptimizer: Sendable {
         // (appears in few files) is a much stronger signal than one that matches
         // a ubiquitous name. Rare matches get boosted, common ones stay ~1.
         let fileCount = files.count
-        var symbolWordDF: [String: Int] = [:]
-        for (_, syms) in symbolsByFile {
-            var wordsInFile = Set<String>()
-            for s in syms { for w in TextTokens.subwords(of: s.name) { wordsInFile.insert(w) } }
-            for w in wordsInFile { symbolWordDF[w, default: 0] += 1 }
+        // Global document frequency across every matchable surface — symbol
+        // names, file-name stems, and path components — so a term that's common
+        // *anywhere* (e.g. "file", "view", "test") is recognised as low-signal,
+        // not just one that happens to be a common symbol. This is what stops a
+        // broad dictionary expansion like 파일→"file" from flooding the results.
+        var termDF: [String: Int] = [:]
+        for file in files {
+            guard let id = file.id else { continue }
+            var words = Set(TextTokens.subwords(of: file.relativePath))
+            words.formUnion(TextTokens.subwords(of: PathResolution.stem(of: file.relativePath)))
+            for s in symbolsByFile[id] ?? [] { for w in TextTokens.subwords(of: s.name) { words.insert(w) } }
+            for w in words { termDF[w, default: 0] += 1 }
         }
         func idf(_ term: String) -> Double {
-            let df = symbolWordDF[term] ?? 0
-            let raw = 1.0 + log2(Double(fileCount + 1) / Double(df + 1)) * 0.35
-            return min(2.5, max(0.7, raw))
+            let df = termDF[term] ?? 0
+            let coverage = fileCount > 0 ? Double(df) / Double(fileCount) : 0
+            // Rare terms boosted toward 2.6; terms spread across the codebase
+            // actively suppressed toward ~0.1 (not merely floored at 1).
+            let rarity = 1.0 + log2(Double(fileCount + 1) / Double(df + 1)) * 0.4
+            let penalty = max(0.12, 1.0 - coverage * 1.8)
+            return min(2.6, max(0.12, rarity * penalty))
         }
 
         // 1. Base lexical scoring.
@@ -88,6 +99,7 @@ public struct ContextOptimizer: Sendable {
 
             var fileScore = 0.0
             var fileReasons: [String] = []
+            var matchedTerms = 0
 
             for term in terms {
                 var best = 0.0
@@ -126,13 +138,17 @@ public struct ContextOptimizer: Sendable {
                 }
 
                 if best > 0 {
+                    matchedTerms += 1
                     fileScore += best * idf(term)
                     if let reason { fileReasons.append("‘\(term)’ → \(reason)") }
                 }
             }
 
             if fileScore > 0 {
-                scores[id] = fileScore
+                // Reward files central to the query (matched several distinct
+                // terms) over ones caught by a single broad term.
+                let coverageBoost = 1.0 + 0.2 * Double(max(0, matchedTerms - 1))
+                scores[id] = fileScore * coverageBoost
                 reasons[id] = fileReasons
             }
         }

@@ -57,14 +57,13 @@ public struct ContextService: Sendable {
         public var estimatedTotalTokens: Int
     }
 
-    /// Ensure `projectRoot` has an index, building one if absent.
-    /// Returns `true` if it (re)built the index this call.
+    /// Ensure `projectRoot` has a **fresh** index. Always runs the incremental
+    /// indexer, which re-parses only files whose size+mtime changed since last
+    /// time — cheap on an up-to-date project, and it guarantees queries never
+    /// run against a stale index (the previous "skip if the DB exists" behavior
+    /// meant edits were silently invisible until a manual re-index).
     @discardableResult
     public func ensureIndexed(projectRoot: URL, forceReindex: Bool = false) throws -> Bool {
-        let dbURL = Indexer.databaseURL(forProjectRoot: projectRoot)
-        if !forceReindex, FileManager.default.fileExists(atPath: dbURL.path) {
-            return false
-        }
         try indexer.index(projectRoot: projectRoot)
         return true
     }
@@ -105,6 +104,14 @@ public struct ContextService: Sendable {
     ) throws -> (selection: ContextSelection, text: String)? {
         let selection = try relevantContext(query: query, projectRoot: projectRoot, tokenBudget: tokenBudget)
         guard !selection.included.isEmpty else { return nil }
+        // Quality gate for a hook that fires on *every* prompt: only inject when
+        // there's a real lexical/graph match. A selection driven purely by Git
+        // recency (no term matched) means the prompt wasn't a code task — e.g. a
+        // confirmation like "그렇게 해줘" — so injecting files would be noise.
+        let hasLexicalMatch = selection.included.contains { file in
+            file.reasons.contains { !$0.hasPrefix("git:") }
+        }
+        guard hasLexicalMatch else { return nil }
 
         let shown = Array(selection.included.prefix(maxFiles))
         let symbolsByPath = (try? Indexer.openStore(forProjectRoot: projectRoot)

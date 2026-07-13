@@ -21,16 +21,16 @@ struct ContextServiceTests {
         return root
     }
 
-    @Test("auto-indexes on first query")
+    @Test("indexes on first query and refreshes on later ones")
     func autoIndexes() throws {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let service = ContextService()
-        let didBuild = try service.ensureIndexed(projectRoot: root)
-        #expect(didBuild)
-        // Second call should NOT rebuild.
-        #expect(try service.ensureIndexed(projectRoot: root) == false)
+        #expect(try service.ensureIndexed(projectRoot: root))
+        // Now always incrementally refreshes (cheap) so edits never go stale,
+        // rather than skipping when the DB already exists.
+        #expect(try service.ensureIndexed(projectRoot: root))
     }
 
     @Test("selects login and its graph neighbours, not billing")
