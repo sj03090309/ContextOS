@@ -14,6 +14,58 @@ public enum ClaudeIntegration {
             .appendingPathComponent(".claude/CLAUDE.md")
     }
 
+    public static func settingsURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/settings.json")
+    }
+
+    /// Install (idempotently) a `UserPromptSubmit` hook that runs `<contextos>
+    /// hook`, so ContextOS injects the relevant files into **every** prompt
+    /// automatically — instead of hoping the agent chooses to call the MCP
+    /// tools. Existing settings and other hooks are preserved; re-running
+    /// replaces ContextOS's own entry rather than duplicating it.
+    @discardableResult
+    public static func installPromptHook(at url: URL, contextosBinaryPath: String) throws -> Bool {
+        var root: [String: Any] = [:]
+        if let data = try? Data(contentsOf: url),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = parsed
+        }
+        var hooks = root["hooks"] as? [String: Any] ?? [:]
+        var ups = hooks["UserPromptSubmit"] as? [[String: Any]] ?? []
+
+        // Drop any prior ContextOS hook entry so updates don't stack up.
+        let hadPrior = ups.contains { isContextOSGroup($0) }
+        ups.removeAll(where: isContextOSGroup)
+        ups.append([
+            "hooks": [[
+                "type": "command",
+                "command": contextosBinaryPath,
+                "args": ["hook"],
+                "timeout": 20
+            ]]
+        ])
+        hooks["UserPromptSubmit"] = ups
+        root["hooks"] = hooks
+
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url)
+        return hadPrior
+    }
+
+    /// True if a UserPromptSubmit group is ContextOS's own (its command points
+    /// at a `contextos` binary run with the `hook` arg).
+    private static func isContextOSGroup(_ group: [String: Any]) -> Bool {
+        let inner = group["hooks"] as? [[String: Any]] ?? []
+        return inner.contains { entry in
+            let cmd = (entry["command"] as? String) ?? ""
+            let args = (entry["args"] as? [String]) ?? []
+            return cmd.hasSuffix("/contextos") || (cmd.contains("contextos") && args.contains("hook"))
+        }
+    }
+
     public static func projectMemoryURL(projectRoot: URL) -> URL {
         projectRoot.appendingPathComponent("CLAUDE.md")
     }

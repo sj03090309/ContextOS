@@ -8,7 +8,7 @@ struct ContextOS: ParsableCommand {
         commandName: "contextos",
         abstract: "Local, AI-free context manager for Claude Code.",
         version: "2.0.0",
-        subcommands: [Connect.self, Context.self, Watch.self],
+        subcommands: [Connect.self, Context.self, Watch.self, Hook.self],
         defaultSubcommand: Connect.self
     )
 }
@@ -22,9 +22,12 @@ struct Connect: ParsableCommand {
     )
 
     func run() throws {
-        let mcpPath = Self.mcpBinaryPath()
+        let mcpPath = Self.binaryPath(name: "contextos-mcp")
+        let cliPath = Self.binaryPath(name: "contextos")
 
-        // Claude Code — the richest integration: memory file + `claude mcp add`.
+        // Claude Code — the richest integration: memory file + `claude mcp add`
+        // + an auto-inject prompt hook so ContextOS runs on *every* prompt,
+        // not only when the agent chooses to call the MCP tools.
         print("── Claude Code ──")
         let url = ClaudeIntegration.globalMemoryURL()
         let updated = try ClaudeIntegration.installInstruction(at: url)
@@ -34,6 +37,12 @@ struct Connect: ParsableCommand {
         } else {
             print("MCP 서버를 전역 등록하려면 아래 한 줄을 터미널에 붙여넣으세요:")
             print("  \(ClaudeIntegration.mcpAddCommand(mcpBinaryPath: mcpPath))")
+        }
+        do {
+            try ClaudeIntegration.installPromptHook(at: ClaudeIntegration.settingsURL(), contextosBinaryPath: cliPath)
+            print("✓ 자동 주입 훅 설치 (매 프롬프트마다 관련 파일 자동 제공)")
+        } catch {
+            print("자동 주입 훅 설치 실패(수동 설정 가능): \(error)")
         }
 
         // Every other detected agent, each in its own config format.
@@ -60,8 +69,9 @@ struct Connect: ParsableCommand {
         return p.terminationStatus == 0
     }
 
-    /// Prefer a stable installed location over the (transient) dev build.
-    private static func mcpBinaryPath() -> String {
+    /// Resolve a bundled binary (`contextos` or `contextos-mcp`) to a stable
+    /// installed path, preferring an installed .app over the transient dev build.
+    static func binaryPath(name: String) -> String {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         let appLocations = [
@@ -70,14 +80,50 @@ struct Connect: ParsableCommand {
             home.appendingPathComponent("Desktop/ContextOS.app").path
         ]
         for app in appLocations {
-            let path = app + "/Contents/Resources/contextos-mcp"
+            let path = app + "/Contents/Resources/" + name
             if fm.fileExists(atPath: path) { return path }
         }
         let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
         let siblingDir = exe.deletingLastPathComponent()
-        let sibling = siblingDir.appendingPathComponent("contextos-mcp").path
+        let sibling = siblingDir.appendingPathComponent(name).path
         if fm.fileExists(atPath: sibling), !siblingDir.path.contains("/debug") { return sibling }
-        return fm.currentDirectoryPath + "/.build/release/contextos-mcp"
+        return fm.currentDirectoryPath + "/.build/release/" + name
+    }
+}
+
+// MARK: - contextos hook
+
+/// Claude Code `UserPromptSubmit` hook. Reads the prompt JSON on stdin, and
+/// prints the relevant-files context as `additionalContext` so it's injected
+/// into every prompt automatically. Always exits 0 (never blocks the prompt).
+struct Hook: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "Claude Code prompt hook (reads stdin JSON, injects relevant context)."
+    )
+
+    func run() throws {
+        guard let data = try? FileHandle.standardInput.readToEnd(),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let prompt = (obj["prompt"] as? String) ?? ""
+        let cwd = (obj["cwd"] as? String) ?? FileManager.default.currentDirectoryPath
+        // Skip trivial prompts (confirmations, one-word replies).
+        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 6 else { return }
+
+        let root = URL(fileURLWithPath: cwd).standardizedFileURL
+        let service = ContextService()
+        guard let (selection, text) = try? service.promptContext(query: prompt, projectRoot: root),
+              !selection.included.isEmpty else { return }
+        service.recordUsage(for: selection, query: prompt, projectRoot: root)
+
+        let payload: [String: Any] = [
+            "hookSpecificOutput": [
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": text
+            ]
+        ]
+        if let out = try? JSONSerialization.data(withJSONObject: payload) {
+            FileHandle.standardOutput.write(out)
+        }
     }
 }
 

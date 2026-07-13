@@ -93,6 +93,39 @@ public struct ContextService: Sendable {
         return selection
     }
 
+    /// A compact, injectable context for an editor prompt hook: the relevant
+    /// files with their key symbols, small enough to prepend to every prompt so
+    /// the agent reads precisely instead of grepping the repo. Returns nil when
+    /// nothing relevant is found. Records nothing — the caller decides.
+    public func promptContext(
+        query: String,
+        projectRoot: URL,
+        tokenBudget: Int = 2500,
+        maxFiles: Int = 6
+    ) throws -> (selection: ContextSelection, text: String)? {
+        let selection = try relevantContext(query: query, projectRoot: projectRoot, tokenBudget: tokenBudget)
+        guard !selection.included.isEmpty else { return nil }
+
+        let shown = Array(selection.included.prefix(maxFiles))
+        let symbolsByPath = (try? Indexer.openStore(forProjectRoot: projectRoot)
+            .symbols(forPaths: shown.map(\.path))) ?? [:]
+
+        var out = "[ContextOS] 이 요청에 관련된 파일 (정확도 \(selection.contextScore)/100). "
+        out += "본문이 필요하면 read_optimized(\"\(query)\") 를 호출하세요.\n"
+        for file in shown {
+            let reason = file.reasons.first.map { " — \($0)" } ?? ""
+            out += "- \(file.path)  (~\(TokenEstimator.abbrev(file.estimatedTokens)))\(reason)\n"
+            if let syms = symbolsByPath[file.path], !syms.isEmpty {
+                let names = syms.prefix(6).map { "L\($0.line) \($0.name)" }.joined(separator: ", ")
+                out += "    \(names)\n"
+            }
+        }
+        if selection.included.count > maxFiles {
+            out += "- … 그 외 \(selection.included.count - maxFiles)개 파일\n"
+        }
+        return (selection, out)
+    }
+
     /// The selection plus a ready-to-send bundle of the included files' contents.
     ///
     /// This is what `read_optimized` returns: the minimal context the agent

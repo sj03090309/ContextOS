@@ -49,6 +49,7 @@ ContextOS는 AI 에이전트가 코드베이스 전체를 뒤지는 대신 **작
 
 - **프로젝트 인덱서** — 파일·심볼·import 관계를 한 번 분석해 로컬 SQLite에 저장. 이후엔 전체를 다시 읽지 않습니다.
 - **스마트 파일 필터** — `node_modules`·`.git`·`build`·바이너리 등 노이즈 자동 제외. 프로젝트 루트의 `.gitignore` 패턴도 존중합니다.
+- **자동 주입 훅** — Claude Code의 `UserPromptSubmit` 훅으로, **에이전트가 도구를 부르든 말든 매 프롬프트마다** 관련 파일·핵심 심볼을 자동 주입합니다. "먼저 ContextOS를 쓰라"는 지침에만 의존하지 않으니, 실제 절약이 매 턴 일관되게 발생합니다. (사소한 프롬프트는 건너뛰고, 실패해도 프롬프트를 막지 않음)
 - **컨텍스트 옵티마이저** — 어휘 매칭 + **IDF 가중치**(희귀 심볼 우대) + import 그래프 확장으로 관련 파일을 랭킹하고, 토큰 예산 안에서 선택.
 - **심볼 단위 슬라이싱** — 파일 전체 대신 **관련 함수 본문 + 나머지는 시그니처(목차)만** 전달. 큰 파일에서 토큰을 크게 절감.
 - **세션 중복 제거** — 같은 세션에서 **이미 전달한 파일은 다시 보내지 않습니다** (내용이 바뀌었을 때만 재전송). 반복 질문 시 응답 크기가 ~90% 줄어듭니다.
@@ -82,7 +83,7 @@ swift test                      # 테스트
 
 | 에이전트 | MCP 등록 | 자동 사용 지침 |
 |---|---|---|
-| Claude Code | `claude mcp add` (전역) | `~/.claude/CLAUDE.md` |
+| Claude Code | `claude mcp add` (전역) + 자동 주입 훅 | `~/.claude/CLAUDE.md` |
 | Codex CLI | `~/.codex/config.toml` | `~/.codex/AGENTS.md` |
 | Gemini CLI | `~/.gemini/settings.json` | `~/.gemini/GEMINI.md` |
 | Cursor | `~/.cursor/mcp.json` | (Cursor 설정에서 규칙 추가) |
