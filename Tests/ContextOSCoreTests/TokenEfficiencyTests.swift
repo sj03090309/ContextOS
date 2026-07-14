@@ -126,7 +126,7 @@ final class TokenEfficiencyTests: XCTestCase {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
         // A tiny budget forces at least one relevant file out.
-        let (selection, bundle, _) = try ContextService().optimizedBundle(
+        let (selection, bundle, _, _, _) = try ContextService().optimizedBundle(
             query: "fix login", projectRoot: root, tokenBudget: 30)
         XCTAssertFalse(selection.excluded.isEmpty)
         XCTAssertTrue(bundle.contains("시그니처 목차"))

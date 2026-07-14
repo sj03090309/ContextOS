@@ -113,10 +113,16 @@ struct Hook: ParsableCommand {
         // Only index real project roots — never a home dir or huge folder the
         // agent happens to run in (this fires on *every* prompt).
         guard ContextService.looksLikeProjectRoot(root) else { return }
+
+        // Skip files injected on the previous prompt of this session, so a long
+        // session doesn't keep re-injecting the same context every turn.
+        let stateURL = Self.stateURL(root: root, sessionID: obj["session_id"] as? String)
+        let previous = Self.loadPreviousPaths(stateURL)
+
         let service = ContextService()
-        guard let (selection, text) = try? service.promptContext(query: prompt, projectRoot: root),
-              !selection.included.isEmpty else { return }
-        service.recordUsage(for: selection, query: prompt, projectRoot: root)
+        guard let (allPaths, text) = try? service.promptContext(
+            query: prompt, projectRoot: root, excluding: previous) else { return }
+        Self.savePreviousPaths(stateURL, allPaths)   // remember this turn's full set
 
         let payload: [String: Any] = [
             "hookSpecificOutput": [
@@ -126,6 +132,30 @@ struct Hook: ParsableCommand {
         ]
         if let out = try? JSONSerialization.data(withJSONObject: payload) {
             FileHandle.standardOutput.write(out)
+        }
+    }
+
+    /// Per-(project, session) state file holding the last prompt's injected
+    /// paths. Lives under .contextos (self-ignored), so it never dirties git.
+    private static func stateURL(root: URL, sessionID: String?) -> URL {
+        // Sanitize to a stable filename. NB: String.hashValue is randomly seeded
+        // per process, so it must NOT be used here — it'd differ every run.
+        let sid = (sessionID ?? "default").filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        let key = sid.isEmpty ? "default" : String(sid.prefix(64))
+        return root.appendingPathComponent(".contextos/.hook-\(key).json")
+    }
+
+    private static func loadPreviousPaths(_ url: URL) -> Set<String> {
+        guard let data = try? Data(contentsOf: url),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [String] else { return [] }
+        return Set(arr)
+    }
+
+    private static func savePreviousPaths(_ url: URL, _ paths: [String]) {
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONSerialization.data(withJSONObject: paths) {
+            try? data.write(to: url)
         }
     }
 }

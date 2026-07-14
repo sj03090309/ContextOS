@@ -39,6 +39,21 @@ final class PromptContextTests: XCTestCase {
         let result = try ContextService().promptContext(query: "quantum chromodynamics", projectRoot: root)
         XCTAssertNil(result)
     }
+
+    func testPromptContextExcludesPreviouslyInjectedFiles() throws {
+        let root = try makeProject()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = ContextService()
+
+        let first = try XCTUnwrap(service.promptContext(query: "fix login", projectRoot: root))
+        XCTAssertTrue(first.text.contains("src/login.py"))
+
+        // Feeding the previous turn's files as `excluding` drops them — nothing
+        // new to inject, so a repeat prompt injects nothing.
+        let second = try service.promptContext(
+            query: "fix login", projectRoot: root, excluding: Set(first.allPaths))
+        XCTAssertNil(second)
+    }
 }
 
 final class PromptHookInstallTests: XCTestCase {

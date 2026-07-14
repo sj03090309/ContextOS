@@ -115,8 +115,9 @@ public struct ContextService: Sendable {
         query: String,
         projectRoot: URL,
         tokenBudget: Int = 2500,
-        maxFiles: Int = 6
-    ) throws -> (selection: ContextSelection, text: String)? {
+        maxFiles: Int = 6,
+        excluding: Set<String> = []
+    ) throws -> (allPaths: [String], text: String)? {
         let selection = try relevantContext(query: query, projectRoot: projectRoot, tokenBudget: tokenBudget)
         guard !selection.included.isEmpty else { return nil }
         // Quality gate for a hook that fires on *every* prompt: only inject when
@@ -128,7 +129,12 @@ public struct ContextService: Sendable {
         }
         guard hasLexicalMatch else { return nil }
 
-        let shown = Array(selection.included.prefix(maxFiles))
+        let allPaths = selection.included.map(\.path)
+        // Drop files already injected on the previous prompt, then cap — so a
+        // long session doesn't re-inject the same files every turn.
+        let shown = selection.included.filter { !excluding.contains($0.path) }.prefix(maxFiles)
+        guard !shown.isEmpty else { return nil }   // nothing new since last time
+
         let symbolsByPath = (try? Indexer.openStore(forProjectRoot: projectRoot)
             .symbols(forPaths: shown.map(\.path))) ?? [:]
 
@@ -142,10 +148,7 @@ public struct ContextService: Sendable {
                 out += "    \(names)\n"
             }
         }
-        if selection.included.count > maxFiles {
-            out += "- … 그 외 \(selection.included.count - maxFiles)개 파일\n"
-        }
-        return (selection, out)
+        return (allPaths, out)
     }
 
     /// The selection plus a ready-to-send bundle of the included files' contents.
@@ -163,15 +166,20 @@ public struct ContextService: Sendable {
         projectRoot: URL,
         tokenBudget: Int,
         memory: SessionMemory? = nil
-    ) throws -> (selection: ContextSelection, bundle: String, skippedUnchanged: Int) {
+    ) throws -> (selection: ContextSelection, bundle: String, skippedUnchanged: Int,
+                 deliveredFullTokens: Int, deliveredTokens: Int) {
         let selection = try relevantContext(
             query: query, projectRoot: projectRoot, tokenBudget: tokenBudget
         )
-        var (bundle, skipped) = assembleBundle(selection, projectRoot: projectRoot, memory: memory)
+        var assembled = assembleBundle(selection, projectRoot: projectRoot, memory: memory)
+        // Measure the delivered file bodies *before* appending the over-budget
+        // signature outline — the outline is bonus context for OTHER files, not
+        // a cost against what we saved on the files we actually delivered.
+        let deliveredTokens = optimizer.estimator.estimate(text: assembled.bundle)
         if !selection.excluded.isEmpty {
-            bundle += signatureOutline(for: selection.excluded, projectRoot: projectRoot)
+            assembled.bundle += signatureOutline(for: selection.excluded, projectRoot: projectRoot)
         }
-        return (selection, bundle, skipped)
+        return (selection, assembled.bundle, assembled.skipped, assembled.deliveredFull, deliveredTokens)
     }
 
     /// Proactively build context from the files you're **currently editing**
@@ -194,14 +202,17 @@ public struct ContextService: Sendable {
 
     /// Concatenate the included files (sliced when a query narrowed them).
     /// With a `memory`, bodies identical to ones already delivered this session
-    /// are replaced by a one-line marker; returns how many were skipped.
+    /// are replaced by a one-line marker. Also returns `deliveredFull`: the full
+    /// token size of the files actually delivered this call (excluding deduped
+    /// ones) — the honest baseline for "what you'd have read without ContextOS".
     private func assembleBundle(
         _ selection: ContextSelection,
         projectRoot: URL,
         memory: SessionMemory?
-    ) -> (bundle: String, skipped: Int) {
+    ) -> (bundle: String, skipped: Int, deliveredFull: Int) {
         var bundle = ""
         var skipped = 0
+        var deliveredFull = 0
         let rootPath = projectRoot.standardizedFileURL.path
         for file in selection.included {
             let url = projectRoot.appendingPathComponent(file.path).standardizedFileURL
@@ -229,12 +240,15 @@ public struct ContextService: Sendable {
                 memory.markServed(project: rootPath, path: file.path, bodyHash: hash)
             }
 
+            // Delivered in full (sliced or whole): the counterfactual is the
+            // agent reading the whole file, so credit its full-file estimate.
+            deliveredFull += file.estimatedTokens
             bundle += "// ===== FILE: \(file.path)\(note) =====\n"
             bundle += body
             if !body.hasSuffix("\n") { bundle += "\n" }
             bundle += "\n"
         }
-        return (bundle, skipped)
+        return (bundle, skipped, deliveredFull)
     }
 
     private static func bodyHash(_ body: String) -> String {
@@ -264,19 +278,28 @@ public struct ContextService: Sendable {
         return out
     }
 
-    /// Record a completed optimization to the local savings DB, so the menu-bar
-    /// dashboard can show how many tokens were saved. Called by the MCP server
-    /// each time Claude Code asks for context.
-    public func recordUsage(for selection: ContextSelection, query: String, projectRoot: URL) {
-        let full = (try? summary(projectRoot: projectRoot))?.estimatedTotalTokens
-            ?? selection.estimatedTokens
+    /// Record the **delivery** saving: the full-file size of what ContextOS
+    /// actually delivered this call vs the sliced/deduped tokens it sent. This
+    /// is the honest measure — "you were going to read these files (fullTokens);
+    /// ContextOS gave you deliveredTokens instead" — recorded once, at the
+    /// read_optimized delivery point (not on planning calls or the hint hook, so
+    /// nothing is double-counted or inflated by a whole-project baseline).
+    public func recordDelivery(
+        query: String,
+        projectRoot: URL,
+        fullTokens: Int,
+        deliveredTokens: Int,
+        contextScore: Int,
+        fileCount: Int
+    ) {
+        guard fullTokens > deliveredTokens else { return }   // nothing saved (e.g. all deduped)
         UsageStore.record(UsageEvent(
             project: projectRoot.path,
             query: query,
-            selectedTokens: selection.estimatedTokens,
-            fullTokens: full,
-            contextScore: selection.contextScore,
-            fileCount: selection.included.count
+            selectedTokens: deliveredTokens,
+            fullTokens: fullTokens,
+            contextScore: contextScore,
+            fileCount: fileCount
         ))
     }
 

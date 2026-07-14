@@ -129,10 +129,10 @@ final class MascotRenderer: ObservableObject {
         if active {
             // Chomp timed to each bite arriving (2 per cycle, alternating sides).
             let frac = (t / foodCycle).truncatingRemainder(dividingBy: 1)
-            let chomp = pow((cos(4 * .pi * frac) + 1) / 2, 6)
-            bob = -chomp * 1.0
-            scaleX = 1.0 + 0.26 * chomp
-            scaleY = 1.0 - 0.22 * chomp
+            let chomp = pow((cos(4 * .pi * frac) + 1) / 2, 5)
+            bob = -chomp * 1.4
+            scaleX = 1.0 + 0.36 * chomp     // gape wide then snap shut
+            scaleY = 1.0 - 0.30 * chomp
             tilt = 0
         } else if working {
             // Claude is thinking/working → a gentle but clearly awake hop, calmer
@@ -188,13 +188,13 @@ final class MascotRenderer: ObservableObject {
     private func foodBit(lane: Int, t: TimeInterval) -> some View {
         let phase = (t / foodCycle + Double(lane) * 0.5).truncatingRemainder(dividingBy: 1)
         let dir: CGFloat = lane == 0 ? -1 : 1
-        let x = dir * 15 * CGFloat(1 - phase)     // edge (±15) → center (0)
-        let opacity = phase < 0.15 ? phase / 0.15
-            : (phase > 0.85 ? max(0, (1 - phase) / 0.15) : 1)
-        let scale = phase > 0.85 ? max(0.2, CGFloat((1 - phase) / 0.15)) : 1
-        RoundedRectangle(cornerRadius: 1)
+        let x = dir * 16 * CGFloat(1 - phase)     // edge (±16) → center (0)
+        let opacity = phase < 0.12 ? phase / 0.12
+            : (phase > 0.82 ? max(0, (1 - phase) / 0.18) : 1)
+        let scale = phase > 0.82 ? max(0.2, CGFloat((1 - phase) / 0.18)) : 1
+        RoundedRectangle(cornerRadius: 1.2)
             .fill(Color.black)
-            .frame(width: 3.4, height: 4.4)
+            .frame(width: 5, height: 6)
             .scaleEffect(scale)
             .opacity(opacity)
             .offset(x: x, y: -1)

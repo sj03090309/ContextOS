@@ -21,9 +21,6 @@ struct MCPServer {
     /// Cross-process "an agent is using me right now" signal for the menu-bar
     /// mascot, throttled to one post per second.
     let heartbeat = Heartbeat()
-    /// Guards against double-counting savings when an agent calls both
-    /// get_relevant_context and read_optimized for the same task.
-    let recordGuard = RecordGuard()
 
     func run() {
         log("contextos-mcp \(Self.version) started (stdio)")
@@ -129,10 +126,9 @@ struct MCPServer {
         }
         let root = projectRoot(from: args)
         let budget = integer(args, "token_budget") ?? 8000
+        // Planning call — points at files but delivers no content, so it records
+        // no saving (only read_optimized, the delivery, does).
         let selection = try service.relevantContext(query: query, projectRoot: root, tokenBudget: budget)
-        if recordGuard.shouldRecord(query: query, project: root.path) {
-            service.recordUsage(for: selection, query: query, projectRoot: root)
-        }
 
         guard !selection.isEmpty else {
             return "No relevant files found for “\(query)”. Terms: \(selection.terms.joined(separator: ", "))"
@@ -165,17 +161,18 @@ struct MCPServer {
         // fresh=true bypasses the session dedup — the agent lost earlier
         // context (compaction) and needs the bodies again.
         let fresh = (args["fresh"] as? Bool) ?? false
-        let (selection, bundle, skipped) = try service.optimizedBundle(
+        let (selection, bundle, skipped, deliveredFull, deliveredTokens) = try service.optimizedBundle(
             query: query, projectRoot: root, tokenBudget: budget, memory: fresh ? nil : memory
         )
         guard !selection.included.isEmpty else {
             return "No relevant files found for “\(query)”."
         }
-        // Record the delivery too — this is where slicing/dedup savings are real —
-        // unless get_relevant_context already logged this same task moments ago.
-        if recordGuard.shouldRecord(query: query, project: root.path) {
-            service.recordUsage(for: selection, query: query, projectRoot: root)
-        }
+        // Honest delivery saving: full size of the files actually delivered vs
+        // the sliced/deduped tokens we sent (outline excluded from the tally).
+        service.recordDelivery(
+            query: query, projectRoot: root,
+            fullTokens: deliveredFull, deliveredTokens: deliveredTokens,
+            contextScore: selection.contextScore, fileCount: selection.included.count)
         var header = "// ContextOS: \(selection.included.count) files, \(TokenEstimator.humanReadable(selection.estimatedTokens)) (budget \(TokenEstimator.humanReadable(budget))), score \(selection.contextScore)/100\n"
         if skipped > 0 {
             header += "// \(skipped)개 파일은 이 세션에서 이미 전달된 것과 동일 — 본문 생략으로 토큰 절약\n"
@@ -254,21 +251,6 @@ struct MCPServer {
         }
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data([0x0A])) // newline delimiter
-    }
-}
-
-/// Suppresses duplicate savings records for the same task within a short window,
-/// so calling get_relevant_context then read_optimized counts once — but the
-/// same query issued again later (a genuinely new task) still records.
-final class RecordGuard {
-    private var last: [String: Date] = [:]
-    private let window: TimeInterval = 30
-
-    func shouldRecord(query: String, project: String, now: Date = Date()) -> Bool {
-        let key = project + "\u{1f}" + query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if let t = last[key], now.timeIntervalSince(t) < window { return false }
-        last[key] = now
-        return true
     }
 }
 
