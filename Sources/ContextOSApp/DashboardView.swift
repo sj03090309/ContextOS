@@ -526,7 +526,7 @@ struct MeltingMascot: View {
     // Per-file position/scale/opacity as it flies in from a side and is absorbed.
     private func fileStates(_ t: TimeInterval, center c: CGPoint)
         -> [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] {
-        guard active, t >= Double(settleTime) else { return [] }
+        guard active || working, t >= Double(settleTime) else { return [] }
         var out: [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] = []
         for i in 0..<fileCount {
             let phase = ((t / fileCycle) + Double(i) / Double(fileCount))
@@ -577,10 +577,11 @@ struct MeltingMascot: View {
         let restY = size.height - 26
         var y = startY + (restY - startY) * min(p, 1.18)
         if t >= Double(settleTime) {
-            // Three tiers: idle breathing, a livelier "working" bob while a
-            // Claude session is alive, and a fast energetic bounce on optimize.
-            let speed: Double = active ? 6.0 : (working ? 3.6 : 2.0)
-            let amp: Double = active ? 2.6 : (working ? 1.9 : 1.4)
+            // Eating (agent working) → a lively bob under the flying food cards;
+            // idle → a calm breathing bob.
+            let eating = active || working
+            let speed: Double = eating ? 4.6 : 2.0
+            let amp: Double = eating ? 2.2 : 1.4
             y += sin((t - Double(settleTime)) * speed) * amp
         }
         return CGPoint(x: size.width / 2, y: y)
@@ -596,7 +597,7 @@ struct MeltingMascot: View {
         }
         // While gobbling, chomp: widen + flatten in sharp pulses timed to the
         // files being eaten, instead of the plain settling wobble.
-        if active, x >= CGFloat(settleTime) {
+        if active || working, x >= CGFloat(settleTime) {
             let f = 2 * Double.pi * Double(fileCount) / fileCycle
             let chomp = CGFloat(pow((cos(t * f) + 1) / 2, 4))
             return (r * (1 + 0.30 * chomp), r * (1 - 0.26 * chomp))

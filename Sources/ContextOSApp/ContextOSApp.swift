@@ -116,17 +116,21 @@ final class MascotRenderer: ObservableObject {
         }
     }
 
-    // Optimizing "both-sides suction" (style A): little bits fly into 뭉치 from
-    // the left and right, one absorbed every half-cycle, each landing a chomp.
+    // "Both-sides suction" (style A): little bits fly into 뭉치 from the left and
+    // right, one absorbed every half-cycle, each landing a chomp.
     private let foodCycle = 0.55
 
     private func render() {
         let t = Date().timeIntervalSince(startedAt)
+        // 뭉치 eats the whole time the agent is working on the user's request —
+        // from the moment they hit enter (working) through each optimization
+        // (active) until the response settles — not just in a brief flash.
+        let eating = active || working
         let bob: CGFloat        // vertical offset
         let scaleY: CGFloat     // squash & stretch
         let scaleX: CGFloat
         let tilt: CGFloat       // left/right wiggle, in degrees
-        if active {
+        if eating {
             // Chomp timed to each bite arriving (2 per cycle, alternating sides).
             let frac = (t / foodCycle).truncatingRemainder(dividingBy: 1)
             let chomp = pow((cos(4 * .pi * frac) + 1) / 2, 5)
@@ -134,15 +138,6 @@ final class MascotRenderer: ObservableObject {
             scaleX = 1.0 + 0.36 * chomp     // gape wide then snap shut
             scaleY = 1.0 - 0.30 * chomp
             tilt = 0
-        } else if working {
-            // Claude is thinking/working → a gentle but clearly awake hop, calmer
-            // than the optimize burst, with a soft wiggle.
-            let phase = t * 4.5
-            let b = abs(sin(phase))
-            bob = -b * 1.8
-            scaleY = 0.93 + 0.13 * b
-            scaleX = 1.07 - 0.13 * b
-            tilt = sin(t * 6.0) * 3.5
         } else {
             // Idle → a calm, smooth breathing bob (pure sinusoids, no cusp).
             let phase = t * 2.0
@@ -164,9 +159,9 @@ final class MascotRenderer: ObservableObject {
 
         // The food bits, behind the blob so they vanish *into* it. A constant
         // 30-wide frame (vs the blob's 18) gives them travel room and keeps the
-        // status-item width from jumping when optimizing starts/stops.
+        // status-item width from jumping when eating starts/stops.
         let glyph = ZStack {
-            if active {
+            if eating {
                 foodBit(lane: 0, t: t)   // from the left
                 foodBit(lane: 1, t: t)   // from the right
             }
