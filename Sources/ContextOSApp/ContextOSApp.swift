@@ -91,6 +91,9 @@ final class MascotRenderer: ObservableObject {
     private var timer: Timer?
     private var active = false
     private var working = false
+    /// Eases 0↔1 toward the eating state so start/stop is a smooth ramp, not a
+    /// snap between breathing and chomping.
+    private var intensity: CGFloat = 0
     private var frame = 0
     private let startedAt = Date()
 
@@ -110,8 +113,10 @@ final class MascotRenderer: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.frame += 1
-                let step = (self.active || self.working) ? 2 : 3
-                if self.frame % step == 0 { self.render() }
+                // Keep the smooth 30fps through the ramp-down too (intensity > 0),
+                // not only while actively eating.
+                let busy = self.active || self.working || self.intensity > 0.02
+                if self.frame % (busy ? 2 : 3) == 0 { self.render() }
             }
         }
     }
@@ -122,30 +127,31 @@ final class MascotRenderer: ObservableObject {
 
     private func render() {
         let t = Date().timeIntervalSince(startedAt)
-        // 뭉치 eats the whole time the agent is working on the user's request —
-        // from the moment they hit enter (working) through each optimization
-        // (active) until the response settles — not just in a brief flash.
-        let eating = active || working
-        let bob: CGFloat        // vertical offset
-        let scaleY: CGFloat     // squash & stretch
-        let scaleX: CGFloat
-        let tilt: CGFloat       // left/right wiggle, in degrees
-        if eating {
-            // Chomp timed to each bite arriving (2 per cycle, alternating sides).
-            let frac = (t / foodCycle).truncatingRemainder(dividingBy: 1)
-            let chomp = pow((cos(4 * .pi * frac) + 1) / 2, 5)
-            bob = -chomp * 1.4
-            scaleX = 1.0 + 0.36 * chomp     // gape wide then snap shut
-            scaleY = 1.0 - 0.30 * chomp
-            tilt = 0
-        } else {
-            // Idle → a calm, smooth breathing bob (pure sinusoids, no cusp).
-            let phase = t * 2.0
-            bob = sin(phase) * 1.6
-            scaleY = 1 + 0.05 * cos(phase)
-            scaleX = 1 - 0.05 * cos(phase)
-            tilt = 0
-        }
+        // 뭉치 eats the whole time the agent works on the request (from the
+        // instant the user hits enter until it finishes). Ease `intensity`
+        // toward the target so the transition is a smooth ramp, not a snap.
+        let target: CGFloat = (active || working) ? 1 : 0
+        intensity += (target - intensity) * 0.16
+        let k = max(0, min(1, intensity))
+
+        // Idle breathing (calm sinusoids).
+        let iph = t * 2.0
+        let idleBob = sin(iph) * 1.6
+        let idleSY = 1 + 0.05 * cos(iph)
+        let idleSX = 1 - 0.05 * cos(iph)
+
+        // Eating chomp, timed to each bite arriving (2 per cycle, alternating
+        // sides). Softened (pow 4) for a rounder, more natural motion.
+        let frac = (t / foodCycle).truncatingRemainder(dividingBy: 1)
+        let chomp = pow((cos(4 * .pi * frac) + 1) / 2, 4)
+        let eatBob = -chomp * 1.4
+        let eatSX = 1.0 + 0.34 * chomp
+        let eatSY = 1.0 - 0.28 * chomp
+
+        // Blend idle → eating by the eased intensity.
+        let bob = idleBob * (1 - k) + eatBob * k
+        let scaleX = idleSX * (1 - k) + eatSX * k
+        let scaleY = idleSY * (1 - k) + eatSY * k
 
         // Solid black on transparent + isTemplate: macOS then auto-adapts the
         // icon to the menu bar's light/dark appearance, same as SF Symbols do.
@@ -154,16 +160,16 @@ final class MascotRenderer: ObservableObject {
             .fill(Color.black, style: FillStyle(eoFill: true))
             .frame(width: 18, height: 18)
             .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
-            .rotationEffect(.degrees(tilt), anchor: .bottom)
             .offset(y: bob)
 
         // The food bits, behind the blob so they vanish *into* it. A constant
         // 30-wide frame (vs the blob's 18) gives them travel room and keeps the
-        // status-item width from jumping when eating starts/stops.
+        // status-item width from jumping when eating starts/stops. Their opacity
+        // rides the intensity, so they fade in/out with the ramp.
         let glyph = ZStack {
-            if eating {
-                foodBit(lane: 0, t: t)   // from the left
-                foodBit(lane: 1, t: t)   // from the right
+            if k > 0.02 {
+                foodBit(lane: 0, t: t, fade: k)   // from the left
+                foodBit(lane: 1, t: t, fade: k)   // from the right
             }
             blob
         }
@@ -180,7 +186,7 @@ final class MascotRenderer: ObservableObject {
     /// One food bit flying in from a side toward 뭉치 and being absorbed.
     /// Lane 0 comes from the left, lane 1 from the right, staggered half a cycle.
     @ViewBuilder
-    private func foodBit(lane: Int, t: TimeInterval) -> some View {
+    private func foodBit(lane: Int, t: TimeInterval, fade: CGFloat) -> some View {
         let phase = (t / foodCycle + Double(lane) * 0.5).truncatingRemainder(dividingBy: 1)
         let dir: CGFloat = lane == 0 ? -1 : 1
         let x = dir * 16 * CGFloat(1 - phase)     // edge (±16) → center (0)
@@ -191,7 +197,7 @@ final class MascotRenderer: ObservableObject {
             .fill(Color.black)
             .frame(width: 5, height: 6)
             .scaleEffect(scale)
-            .opacity(opacity)
+            .opacity(opacity * fade)
             .offset(x: x, y: -1)
     }
 }

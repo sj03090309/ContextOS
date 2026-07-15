@@ -93,20 +93,32 @@ struct Connect: ParsableCommand {
 
 // MARK: - contextos hook
 
-/// Claude Code `UserPromptSubmit` hook. Reads the prompt JSON on stdin, and
-/// prints the relevant-files context as `additionalContext` so it's injected
-/// into every prompt automatically. Always exits 0 (never blocks the prompt).
+/// Claude Code hook. On `UserPromptSubmit` it (a) signals the menu-bar mascot to
+/// start eating this instant and (b) injects the relevant-files context; on
+/// `Stop` it signals the mascot to stop. Always exits 0 (never blocks the turn).
 struct Hook: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Claude Code prompt hook (reads stdin JSON, injects relevant context)."
+        abstract: "Claude Code hook (reads stdin JSON; injects context + drives the mascot in real time)."
     )
 
     func run() throws {
         guard let data = try? FileHandle.standardInput.readToEnd(),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let event = (obj["hook_event_name"] as? String) ?? "UserPromptSubmit"
+
+        // Real-time mascot control: the turn just ended → stop eating now.
+        if event == "Stop" {
+            Self.post(UsageStore.turnStopNotification)
+            return
+        }
+        // The turn just started (user hit enter) → start eating now, for *any*
+        // prompt, before the injection guards below.
+        Self.post(UsageStore.turnStartNotification)
+
         let prompt = (obj["prompt"] as? String) ?? ""
         let cwd = (obj["cwd"] as? String) ?? FileManager.default.currentDirectoryPath
-        // Skip trivial prompts (confirmations, one-word replies).
+        // Skip trivial prompts (confirmations, one-word replies) for *injection*
+        // (the mascot already started above).
         guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 6 else { return }
 
         let root = URL(fileURLWithPath: cwd).standardizedFileURL
@@ -133,6 +145,14 @@ struct Hook: ParsableCommand {
         if let out = try? JSONSerialization.data(withJSONObject: payload) {
             FileHandle.standardOutput.write(out)
         }
+    }
+
+    /// Fire a cross-process notification to the menu-bar app, giving the daemon
+    /// a beat to deliver it before this short-lived process exits.
+    private static func post(_ name: Notification.Name) {
+        DistributedNotificationCenter.default().postNotificationName(
+            name, object: nil, userInfo: nil, deliverImmediately: true)
+        usleep(40_000)   // 40ms: ensure delivery before exit
     }
 
     /// Per-(project, session) state file holding the last prompt's injected

@@ -29,48 +29,59 @@ final class DashboardModel: ObservableObject {
     @Published var working = false
 
     private let activityMonitor = AgentActivityMonitor()
-    /// Last MCP heartbeat, posted by contextos-mcp on every request it handles.
-    private var lastHeartbeat = Date.distantPast
+    /// Last MCP heartbeat / activity signal (posted by contextos-mcp and the
+    /// UserPromptSubmit hook). Also the "turn start" time.
+    private var lastActivity = Date.distantPast
+    /// Last "turn ended" signal (the Stop hook). When this is newer than
+    /// `lastActivity`, the agent finished and the mascot should stop *now*.
+    private var lastStop = Date.distantPast
     private var lastQueryCount = -1
     private var timer: Timer?
     private var tick = 0
     private var flashTask: Task<Void, Never>?
     nonisolated(unsafe) private var optimizedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var activityObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var startObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var stopObserver: NSObjectProtocol?
 
     init() {
         refreshFast()
         refreshSlow()
         refreshWorking()
+        let center = DistributedNotificationCenter.default()
         // Real-time: the MCP server posts this the instant it records an
         // optimization, so the mascot reacts with no polling lag.
-        optimizedObserver = DistributedNotificationCenter.default().addObserver(
+        optimizedObserver = center.addObserver(
             forName: UsageStore.optimizedNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.onOptimized() }
         }
-        // Heartbeat from contextos-mcp on every request it handles: any agent
-        // talking to the MCP server counts as "working", instantly.
-        activityObserver = DistributedNotificationCenter.default().addObserver(
-            forName: UsageStore.activityNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                self?.lastHeartbeat = Date()
-                self?.working = true
-            }
+        // Turn START — the UserPromptSubmit hook fires the instant the user hits
+        // enter. Start eating immediately.
+        startObserver = center.addObserver(
+            forName: UsageStore.turnStartNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.lastActivity = Date(); self?.working = true }
         }
-        // Poll: working state every 2s (it drives the mascot, so it must feel
-        // immediate), savings every 4s, the heavier AI-usage scan every ~32s.
+        // Turn STOP — the Stop hook fires the instant the agent finishes. Stop now.
+        stopObserver = center.addObserver(
+            forName: UsageStore.turnStopNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.lastStop = Date(); self?.working = false }
+        }
+        // MCP heartbeat on every request: keeps a hook-less agent's turn alive.
+        activityObserver = center.addObserver(
+            forName: UsageStore.activityNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.lastActivity = Date(); self?.working = true }
+        }
+        // Poll: working state every 2s (fallback for agents without our hooks),
+        // savings every 4s, the heavier AI-usage scan every ~32s.
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.onTick() }
         }
     }
 
     deinit {
-        if let optimizedObserver {
-            DistributedNotificationCenter.default().removeObserver(optimizedObserver)
-        }
-        if let activityObserver {
-            DistributedNotificationCenter.default().removeObserver(activityObserver)
-        }
+        let center = DistributedNotificationCenter.default()
+        [optimizedObserver, activityObserver, startObserver, stopObserver]
+            .compactMap { $0 }.forEach { center.removeObserver($0) }
     }
 
     // Instant reaction to a just-recorded optimization: light up now, refresh the
@@ -90,23 +101,21 @@ final class DashboardModel: ObservableObject {
         if tick % 16 == 0 { refreshSlow() }
     }
 
-    // Is an agent processing a command *right now*? Signals, any of which wins:
-    //   1. Session-log writes (Claude Code / Codex) — starts the moment the
-    //      user hits enter, keeps firing while the agent thinks and streams.
-    //   2. The log's last event is an unanswered tool call — the agent is
-    //      waiting on a long tool (build/test) that writes nothing until done.
-    //   3. A recent MCP heartbeat — covers agents whose logs we can't read.
-    //
-    // The 20s quiet threshold matters: agents write their logs per *event*
-    // (message done, tool call, tool result), so mid-turn gaps of several
-    // seconds are normal — a long think must not make the mascot doze off and
-    // wake up again. Turning on is instant (any write); only turning off waits
-    // out the gap (and a pending tool call holds it on regardless of the gap).
+    // Fallback poll (every 2s) for agents without our Stop hook — e.g. Codex.
+    // The hooks give Claude Code exact, instant start/stop; this only fills in
+    // when they're absent. Crucially, an explicit Stop wins: once the turn ended
+    // we do NOT let the 20s session-log tail resurrect "working".
     private func refreshWorking() {
+        // Explicit turn boundary from the hooks takes precedence.
+        if lastStop > lastActivity {
+            working = false          // finished — stay stopped until the next turn
+            return
+        }
         let monitor = activityMonitor
         Task {
             let logsFresh = await Self.checkLogs(monitor)   // stat off the main actor
-            working = logsFresh || Date().timeIntervalSince(lastHeartbeat) <= 20
+            if lastStop > lastActivity { working = false; return }
+            working = logsFresh || Date().timeIntervalSince(lastActivity) <= 20
         }
     }
 

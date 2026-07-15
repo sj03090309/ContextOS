@@ -72,10 +72,13 @@ final class PromptHookInstallTests: XCTestCase {
         XCTAssertFalse(hadPrior)
 
         let root = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-        let ups = ((root?["hooks"] as? [String: Any])?["UserPromptSubmit"]) as? [[String: Any]]
-        let entry = ((ups?.first?["hooks"]) as? [[String: Any]])?.first
-        XCTAssertEqual(entry?["command"] as? String, "/opt/ctx/contextos")
-        XCTAssertEqual(entry?["args"] as? [String], ["hook"])
+        let hooks = root?["hooks"] as? [String: Any]
+        for event in ["UserPromptSubmit", "Stop"] {   // both are installed
+            let groups = hooks?[event] as? [[String: Any]]
+            let entry = ((groups?.first?["hooks"]) as? [[String: Any]])?.first
+            XCTAssertEqual(entry?["command"] as? String, "/opt/ctx/contextos", "\(event) hook")
+            XCTAssertEqual(entry?["args"] as? [String], ["hook"], "\(event) hook")
+        }
     }
 
     func testInstallPreservesOtherSettingsAndHooks() throws {

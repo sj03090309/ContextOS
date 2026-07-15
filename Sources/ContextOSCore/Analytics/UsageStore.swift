@@ -111,6 +111,12 @@ public final class UsageStore {
     /// the mascot alive even for agents whose session logs we can't read.
     public static let activityNotification = Notification.Name("com.contextos.activity")
 
+    /// Posted the instant a turn *starts* (the UserPromptSubmit hook) and *ends*
+    /// (the Stop hook), so the mascot can react in real time — eating the moment
+    /// the user hits enter and stopping the moment the agent finishes.
+    public static let turnStartNotification = Notification.Name("com.contextos.turnStart")
+    public static let turnStopNotification = Notification.Name("com.contextos.turnStop")
+
     /// Convenience: open the default DB, record one event, close.
     public static func record(_ event: UsageEvent) {
         guard let store = try? UsageStore(path: defaultURL().path) else { return }

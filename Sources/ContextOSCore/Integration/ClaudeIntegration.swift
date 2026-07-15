@@ -19,11 +19,10 @@ public enum ClaudeIntegration {
             .appendingPathComponent(".claude/settings.json")
     }
 
-    /// Install (idempotently) a `UserPromptSubmit` hook that runs `<contextos>
-    /// hook`, so ContextOS injects the relevant files into **every** prompt
-    /// automatically — instead of hoping the agent chooses to call the MCP
-    /// tools. Existing settings and other hooks are preserved; re-running
-    /// replaces ContextOS's own entry rather than duplicating it.
+    /// Install (idempotently) the ContextOS hooks that run `<contextos> hook`:
+    /// `UserPromptSubmit` (inject context + start the mascot eating) and `Stop`
+    /// (stop the mascot). Existing settings and other hooks are preserved;
+    /// re-running replaces ContextOS's own entries rather than duplicating them.
     @discardableResult
     public static func installPromptHook(at url: URL, contextosBinaryPath: String) throws -> Bool {
         var root: [String: Any] = [:]
@@ -32,20 +31,24 @@ public enum ClaudeIntegration {
             root = parsed
         }
         var hooks = root["hooks"] as? [String: Any] ?? [:]
-        var ups = hooks["UserPromptSubmit"] as? [[String: Any]] ?? []
 
-        // Drop any prior ContextOS hook entry so updates don't stack up.
-        let hadPrior = ups.contains { isContextOSGroup($0) }
-        ups.removeAll(where: isContextOSGroup)
-        ups.append([
+        let group: [String: Any] = [
             "hooks": [[
                 "type": "command",
                 "command": contextosBinaryPath,
                 "args": ["hook"],
                 "timeout": 20
             ]]
-        ])
-        hooks["UserPromptSubmit"] = ups
+        ]
+
+        var hadPrior = false
+        for event in ["UserPromptSubmit", "Stop"] {
+            var groups = hooks[event] as? [[String: Any]] ?? []
+            if groups.contains(where: isContextOSGroup) { hadPrior = true }
+            groups.removeAll(where: isContextOSGroup)
+            groups.append(group)
+            hooks[event] = groups
+        }
         root["hooks"] = hooks
 
         try FileManager.default.createDirectory(
@@ -55,8 +58,8 @@ public enum ClaudeIntegration {
         return hadPrior
     }
 
-    /// True if a UserPromptSubmit group is ContextOS's own (its command points
-    /// at a `contextos` binary run with the `hook` arg).
+    /// True if a hook group is ContextOS's own (its command points at a
+    /// `contextos` binary run with the `hook` arg).
     private static func isContextOSGroup(_ group: [String: Any]) -> Bool {
         let inner = group["hooks"] as? [[String: Any]] ?? []
         return inner.contains { entry in
