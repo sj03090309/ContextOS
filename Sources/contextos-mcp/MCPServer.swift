@@ -41,10 +41,16 @@ struct MCPServer {
     // MARK: - Dispatch
 
     private func handle(_ message: [String: Any]) {
-        heartbeat.post()
         let method = message["method"] as? String ?? ""
         let id = message["id"]           // absent → notification (no reply)
         let params = message["params"] as? [String: Any] ?? [:]
+
+        // Only real work counts as "the agent is busy". `ping`, `initialize`,
+        // `tools/list` and the initialized notification are connection
+        // bookkeeping — Claude Code sends a keepalive `ping` on an idle
+        // connection, so firing the heartbeat for every message made the mascot
+        // eat whenever a session was merely *open*, with nothing being asked.
+        if UsageStore.isAgentActivity(method: method) { heartbeat.post() }
 
         switch method {
         case "initialize":

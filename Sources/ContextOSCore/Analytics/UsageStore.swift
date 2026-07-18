@@ -215,10 +215,23 @@ public final class UsageStore {
     /// monitor like the menu-bar app can react in real time instead of polling.
     public static let optimizedNotification = Notification.Name("com.contextos.optimized")
 
-    /// Posted (cross-process) whenever the MCP server handles *any* request —
-    /// a lightweight "an agent is talking to me right now" heartbeat that keeps
-    /// the mascot alive even for agents whose session logs we can't read.
+    /// Posted (cross-process) when the MCP server handles a real **tool call** —
+    /// a lightweight "an agent is working right now" heartbeat that keeps the
+    /// mascot alive even for agents whose session logs we can't read.
+    ///
+    /// Deliberately not fired for every request: an idle MCP connection still
+    /// exchanges `ping`, `initialize` and `tools/list`, so heart-beating on those
+    /// made the mascot eat whenever a session was merely open. See
+    /// `isAgentActivity`.
     public static let activityNotification = Notification.Name("com.contextos.activity")
+
+    /// Whether a JSON-RPC method means the agent is actively working, rather than
+    /// protocol housekeeping (handshake, capability listing, keepalive ping). Only
+    /// a tool call is real work; the rest happens on an idle connection and must
+    /// not wake the mascot.
+    public static func isAgentActivity(method: String) -> Bool {
+        method == "tools/call"
+    }
 
     /// Posted the instant a turn *starts* (the UserPromptSubmit hook) and *ends*
     /// (the Stop hook), so the mascot can react in real time — eating the moment

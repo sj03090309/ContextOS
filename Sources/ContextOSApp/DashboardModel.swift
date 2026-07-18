@@ -118,7 +118,9 @@ final class DashboardModel: ObservableObject {
     // when they're absent. Crucially, an explicit Stop wins: once the turn ended
     // we do NOT let the 20s session-log tail resurrect "working".
     private func refreshWorking() {
-        // Explicit turn boundary from the hooks takes precedence.
+        // Explicit turn boundary from the hooks takes precedence: once a Stop
+        // has landed, nothing reopens the turn until the next real activity
+        // (a UserPromptSubmit or a tool-call heartbeat) arrives *after* it.
         if lastStop > lastActivity {
             set(&working, false)     // finished — stay stopped until the next turn
             return
@@ -126,7 +128,12 @@ final class DashboardModel: ObservableObject {
         let monitor = activityMonitor
         Task {
             let logsFresh = await Self.checkLogs(monitor)   // stat off the main actor
-            if lastStop > lastActivity { set(&working, false); return }
+            // Re-check after the await: a Stop may have arrived while we were
+            // statting. The 20s session-log tail must not revive a turn the
+            // Stop hook already closed — Claude Code keeps touching the log for
+            // a moment after it finishes, which is exactly what used to keep the
+            // mascot eating with nothing being asked.
+            guard lastStop <= lastActivity else { set(&working, false); return }
             set(&working, logsFresh || Date().timeIntervalSince(lastActivity) <= 20)
         }
     }
