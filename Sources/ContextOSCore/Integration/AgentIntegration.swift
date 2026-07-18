@@ -65,24 +65,28 @@ public enum AgentIntegration {
 
     /// Cursor: `~/.cursor/mcp.json` (global MCP; rules live in Cursor's own UI).
     static func connectCursor(home: URL, mcpBinaryPath: String) throws -> ConnectionResult? {
-        let dir = home.appendingPathComponent(".cursor")
-        guard FileManager.default.fileExists(atPath: dir.path) else { return nil }
-
-        let mcp = dir.appendingPathComponent("mcp.json")
-        try mergeMCPJSON(at: mcp, mcpBinaryPath: mcpBinaryPath)
-
-        return ConnectionResult(agent: "Cursor", mcpConfigPath: mcp.path, instructionPath: nil)
+        try connectMCPOnly(agent: "Cursor", configDir: ".cursor", fileName: "mcp.json",
+                           home: home, mcpBinaryPath: mcpBinaryPath)
     }
 
     /// Windsurf: `~/.codeium/windsurf/mcp_config.json`.
     static func connectWindsurf(home: URL, mcpBinaryPath: String) throws -> ConnectionResult? {
-        let dir = home.appendingPathComponent(".codeium/windsurf")
+        try connectMCPOnly(agent: "Windsurf", configDir: ".codeium/windsurf",
+                           fileName: "mcp_config.json", home: home, mcpBinaryPath: mcpBinaryPath)
+    }
+
+    /// Agents whose entire wiring is one `mcpServers` JSON file — no global
+    /// instruction file to install, because their rules live in the app's own UI.
+    /// Only the directory, the filename, and the name differ.
+    private static func connectMCPOnly(agent: String, configDir: String, fileName: String,
+                                       home: URL, mcpBinaryPath: String) throws -> ConnectionResult? {
+        let dir = home.appendingPathComponent(configDir)
         guard FileManager.default.fileExists(atPath: dir.path) else { return nil }
 
-        let mcp = dir.appendingPathComponent("mcp_config.json")
+        let mcp = dir.appendingPathComponent(fileName)
         try mergeMCPJSON(at: mcp, mcpBinaryPath: mcpBinaryPath)
 
-        return ConnectionResult(agent: "Windsurf", mcpConfigPath: mcp.path, instructionPath: nil)
+        return ConnectionResult(agent: agent, mcpConfigPath: mcp.path, instructionPath: nil)
     }
 
     // MARK: - Config writers

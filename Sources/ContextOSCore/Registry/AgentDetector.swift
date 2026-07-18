@@ -1,7 +1,7 @@
 import Foundation
 
 /// A locally-detected AI coding agent.
-public struct DetectedAgent: Sendable, Identifiable {
+public struct DetectedAgent: Sendable, Identifiable, Equatable {
     public var name: String
     public var present: Bool
     /// Extra info we could read locally (e.g. Claude Code project count). May be nil.

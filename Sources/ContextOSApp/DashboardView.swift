@@ -51,14 +51,20 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            MeltingMascot(active: model.flashing, working: model.working)
+            // 뭉치 is *not* in this tree — it is a sibling hosting view laid over
+            // this space by `PopoverContentController`. Sharing one SwiftUI tree
+            // with a 30fps animation made every mascot frame re-run the whole
+            // panel's view graph (calendar cells, project cards and all), which
+            // cost 16% of a core; split apart, each redraws on its own.
+            Color.clear
                 .frame(height: 62)
-                .padding(.horizontal, -14) // span the full panel width
+                .padding(.horizontal, -14) // reserve the strip 뭉치 melts into
                 .padding(.top, -14)
             header
             hero
             segments
-            trend
+            calendar
+            weekStrip
             Picker("", selection: $tab) {
                 Text("프로젝트").tag(Tab.files)
                 Text("활동").tag(Tab.activity)
@@ -122,30 +128,53 @@ struct DashboardView: View {
         .padding(.vertical, 4)
     }
 
-    // Tokens saved per day over the last week; today's bar is accented.
-    private var trend: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("최근 7일 추이")
-                .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-            let maxSaved = max(1, model.daily.map(\.saved).max() ?? 1)
-            HStack(alignment: .bottom, spacing: 6) {
-                ForEach(model.daily) { d in
-                    VStack(spacing: 4) {
-                        ZStack(alignment: .bottom) {
-                            Color.clear.frame(height: 40)
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(d.isToday ? Brand.accent : Color.secondary.opacity(0.35))
-                                .frame(height: max(3, 40 * CGFloat(d.saved) / CGFloat(maxSaved)))
-                        }
-                        Text(d.label)
-                            .font(.system(size: 9, weight: d.isToday ? .semibold : .regular))
-                            .foregroundStyle(d.isToday ? .primary : .secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .help("\(d.day) · \(TokenEstimator.korean(d.saved)) 아낌")
-                }
+    // This month's AI token usage, one cell per day. Replaces the old 7-day bar
+    // chart, which showed strictly less of the same thing.
+    private var calendar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(CalendarGrid.title(Date()))
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Text(TokenEstimator.korean(CalendarGrid.total(Date(), model.tokensByDay)) + " 토큰")
+                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
             }
+            MonthCalendarView(month: Date(), tokensByDay: model.tokensByDay)
         }
+    }
+
+    // The week in code — the answer to "what did I actually ship?". Opens the
+    // full journal, which is far too much to fit in a menu-bar panel.
+    private var weekStrip: some View {
+        Button {
+            BuildLogWindow.show()
+        } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("이번 주")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text("+\(model.week.added.formatted())")
+                            .foregroundStyle(.green)
+                        Text("−\(model.week.deleted.formatted())")
+                            .foregroundStyle(.red)
+                        Text("커밋 \(model.week.commits)")
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                }
+                Spacer()
+                Text("빌드 로그")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
     }
 
     // A macOS-style segmented summary strip.
@@ -441,12 +470,18 @@ private struct VisualEffectBackground: NSViewRepresentable {
 /// a gooey neck (a Canvas metaball: blur + alpha-threshold). After settling it
 /// bobs gently; while ContextOS is optimizing it bobs faster.
 struct MeltingMascot: View {
-    /// MCP just optimized — a sharp, energetic burst.
-    var active: Bool
-    /// A Claude Code session is alive (Claude is thinking/working) — a gentle
-    /// but noticeably livelier bob than the resting idle state.
-    var working: Bool = false
+    /// Chew state, shared with the menu-bar 뭉치 so both eat the same bite at
+    /// the same instant.
+    @ObservedObject var state: MascotState
+    /// When this view's melt-in began. Only the *entrance* is timed from here —
+    /// the chew itself runs off the absolute clock, so re-opening the popover
+    /// replays the drop without knocking the two mascots out of step.
     @State private var start = Date()
+    /// NSPopover keeps its hosted view alive after dismissal, so this view is
+    /// never torn down — it just stops being on screen. Nothing tells SwiftUI
+    /// that, so the timeline has to be paused by hand or it keeps redrawing a
+    /// blurred metaball 30 times a second at a panel nobody is looking at.
+    @State private var hidden = false
 
     // Brand gradient (icon colors, appearance-adaptive) filling the metaball.
     private let grad = LinearGradient(
@@ -460,17 +495,23 @@ struct MeltingMascot: View {
     private var impactTime: CGFloat { .pi / (2 * omega) }   // when cos() first hits 0
     private let settleTime: CGFloat = 2.6
 
-    // "File gobble" while optimizing: little file cards fly into 뭉치 and get
-    // eaten, one every `fileCycle`, staggered across `fileCount` lanes.
-    private let fileCycle: Double = 0.85
-    private let fileCount = 3
-
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation) { tl in
+            // 20fps rather than the display's rate. Each frame re-renders a
+            // Canvas that blurs and alpha-thresholds a metaball, and measured
+            // against the panel: 30fps costs ~15% of a core, 20fps ~11%, 15fps
+            // ~10% — below 20 the savings stop, because what is left is Core
+            // Animation compositing the blurred layer, which no frame rate
+            // avoids. The menu bar runs at 16fps and stays in step regardless:
+            // both read the same absolute clock rather than counting frames.
+            //
+            // `.animation(paused:)` and not `.periodic`: a periodic schedule
+            // keeps firing at a dismissed popover, which pinned the app at ~22%
+            // of a core forever after the panel was opened once.
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: hidden)) { tl in
                 let t = tl.date.timeIntervalSince(start)
-                let c = blobCenter(t, geo.size)
-                let files = fileStates(t, center: c)
+                let c = blobCenter(t, at: tl.date, geo.size)
+                let files = fileStates(t, at: tl.date, center: c)
                 ZStack {
                     // Files being consumed (drawn behind the blob so they vanish
                     // *into* it), only while actively optimizing.
@@ -481,7 +522,7 @@ struct MeltingMascot: View {
                             .opacity(f.opacity)
                             .position(f.pos)
                     }
-                    grad.mask(metaball(t))
+                    grad.mask(metaball(t, at: tl.date))
                     // Eyes track the blob and fade in as it settles.
                     let eyeOpacity = min(1, max(0, (meltProgress(t) - 0.6) / 0.4))
                     Group {
@@ -497,6 +538,10 @@ struct MeltingMascot: View {
         // reused, so onAppear alone won't fire again).
         .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
             start = Date()
+            hidden = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { _ in
+            hidden = true
         }
     }
 
@@ -524,26 +569,28 @@ struct MeltingMascot: View {
     }
 
     // Per-file position/scale/opacity as it flies in from a side and is absorbed.
-    private func fileStates(_ t: TimeInterval, center c: CGPoint)
+    // Timed off the absolute clock, so this bite is the same bite the menu bar
+    // is chewing right now.
+    private func fileStates(_ t: TimeInterval, at now: Date, center c: CGPoint)
         -> [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] {
-        guard active || working, t >= Double(settleTime) else { return [] }
+        let fade = state.intensity(at: now)
+        guard fade > 0.02, t >= Double(settleTime) else { return [] }
         var out: [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] = []
-        for i in 0..<fileCount {
-            let phase = ((t / fileCycle) + Double(i) / Double(fileCount))
-                .truncatingRemainder(dividingBy: 1)
-            let dir: CGFloat = (i % 2 == 0) ? 1 : -1        // alternate sides
+        for lane in 0..<MascotBeat.lanes {
+            let phase = MascotBeat.foodPhase(now, lane: lane)
+            let dir: CGFloat = lane == 0 ? -1 : 1           // one bite per side
             let startDist: CGFloat = 52
             let x = c.x + dir * startDist * CGFloat(1 - phase)
             let y = c.y - 2 - sin(CGFloat(phase) * .pi) * 4 // gentle arc
-            let opacity: CGFloat = phase < 0.12 ? CGFloat(phase / 0.12)
-                : (phase > 0.82 ? max(0, CGFloat((1 - phase) / 0.18)) : 1)
-            let scale: CGFloat = phase > 0.82 ? max(0.1, CGFloat((1 - phase) / 0.18)) : 1
-            out.append((CGPoint(x: x, y: y), scale, opacity))
+            let fadeScale = MascotBeat.foodFade(phase)
+            out.append((CGPoint(x: x, y: y),
+                        max(0.1, CGFloat(fadeScale.scale)),
+                        CGFloat(fadeScale.opacity * fade)))
         }
         return out
     }
 
-    private func metaball(_ t: TimeInterval) -> some View {
+    private func metaball(_ t: TimeInterval, at now: Date) -> some View {
         Canvas { ctx, size in
             ctx.addFilter(.alphaThreshold(min: 0.5))
             // A larger blur stretches the gooey neck over a longer gap, so the
@@ -556,8 +603,8 @@ struct MeltingMascot: View {
                 layer.fill(Path(roundedRect: base, cornerRadius: 13), with: .color(.white))
                 // The droplet body — an ellipse so it can stretch while falling
                 // and squash-wobble on impact.
-                let c = blobCenter(t, size)
-                let (rx, ry) = blobRadii(t)
+                let c = blobCenter(t, at: now, size)
+                let (rx, ry) = blobRadii(t, at: now)
                 layer.fill(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - ry, width: rx * 2, height: ry * 2)),
                            with: .color(.white))
             }
@@ -571,39 +618,101 @@ struct MeltingMascot: View {
         return 1 - exp(-decay * x) * cos(omega * x)
     }
 
-    private func blobCenter(_ t: TimeInterval, _ size: CGSize) -> CGPoint {
+    private func blobCenter(_ t: TimeInterval, at now: Date, _ size: CGSize) -> CGPoint {
         let p = meltProgress(t)
         let startY: CGFloat = 3          // starts high, right under the arrow
         let restY = size.height - 26
         var y = startY + (restY - startY) * min(p, 1.18)
         if t >= Double(settleTime) {
-            // Eating (agent working) → a lively bob under the flying food cards;
-            // idle → a calm breathing bob.
-            let eating = active || working
-            let speed: Double = eating ? 4.6 : 2.0
-            let amp: Double = eating ? 2.2 : 1.4
-            y += sin((t - Double(settleTime)) * speed) * amp
+            // Blend the calm resting breath into the livelier chewing bob by the
+            // same eased intensity the menu bar uses, off the same clock.
+            let k = state.intensity(at: now)
+            let idle = MascotBeat.breath(now) * 1.4
+            let eating = -MascotBeat.chomp(now) * 2.2
+            y += CGFloat(idle * (1 - k) + eating * k)
         }
         return CGPoint(x: size.width / 2, y: y)
     }
 
     // Bigger droplet that elongates as it falls and jelly-wobbles on impact.
-    private func blobRadii(_ t: TimeInterval) -> (CGFloat, CGFloat) {
+    private func blobRadii(_ t: TimeInterval, at now: Date) -> (CGFloat, CGFloat) {
         let r = 11 + 4 * min(meltProgress(t), 1)      // grows 11 → 15
         let x = CGFloat(max(0, t))
         if x < impactTime {
             let f = x / impactTime                    // 0 → 1 during the fall
             return (r * (1 - 0.16 * f), r * (1 + 0.36 * f))   // teardrop stretch
         }
-        // While gobbling, chomp: widen + flatten in sharp pulses timed to the
-        // files being eaten, instead of the plain settling wobble.
-        if active || working, x >= CGFloat(settleTime) {
-            let f = 2 * Double.pi * Double(fileCount) / fileCycle
-            let chomp = CGFloat(pow((cos(t * f) + 1) / 2, 4))
+        // Settled: squash-and-stretch on the same chomp the menu bar draws,
+        // scaled by the same eased intensity, so both mouths close together.
+        if x >= CGFloat(settleTime) {
+            let k = CGFloat(state.intensity(at: now))
+            let chomp = CGFloat(MascotBeat.chomp(now)) * k
             return (r * (1 + 0.30 * chomp), r * (1 - 0.26 * chomp))
         }
         let dt = x - impactTime
         let wobble = exp(-3.2 * dt) * sin(2 * .pi * 2.4 * dt)  // decaying jelly
         return (r * (1 + 0.36 * wobble), r * (1 - 0.36 * wobble))
+    }
+}
+
+/// Hosts the popover's two SwiftUI trees side by side: the dashboard, and 뭉치
+/// laid over the strip the dashboard leaves for it.
+///
+/// They are deliberately separate `NSHostingView`s. In one tree, each of the
+/// mascot's 30 frames a second invalidated the shared view graph, and SwiftUI
+/// answered by re-running layout and `ViewGraph.updateOutputs` for the entire
+/// panel — the profile put ~250 of 550 working samples in `NSHostingView.layout`
+/// while the Canvas blur everyone would suspect was 30. Two trees means the
+/// mascot's ticks cannot reach the dashboard's graph at all.
+@MainActor
+final class PopoverContentController: NSViewController {
+
+    private let model: DashboardModel
+    private let mascotHost: NSHostingView<MeltingMascot>
+    private let dashboardHost: NSHostingView<AnyView>
+    /// Height of the strip 뭉치 melts into, matching the placeholder the
+    /// dashboard reserves for it.
+    private static let mascotHeight: CGFloat = 62
+
+    init(model: DashboardModel) {
+        self.model = model
+        self.mascotHost = NSHostingView(rootView: MeltingMascot(state: model.mascot))
+        self.dashboardHost = NSHostingView(
+            rootView: AnyView(DashboardView().environmentObject(model)))
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func loadView() {
+        let container = NSView()
+        dashboardHost.translatesAutoresizingMaskIntoConstraints = false
+        mascotHost.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(dashboardHost)
+        container.addSubview(mascotHost)      // over the strip the dashboard left
+
+        NSLayoutConstraint.activate([
+            dashboardHost.topAnchor.constraint(equalTo: container.topAnchor),
+            dashboardHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            dashboardHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            dashboardHost.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            mascotHost.topAnchor.constraint(equalTo: container.topAnchor),
+            mascotHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            mascotHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            mascotHost.heightAnchor.constraint(equalToConstant: Self.mascotHeight)
+        ])
+        view = container
+    }
+
+    /// The size the popover should be, driven by the dashboard alone — 뭉치 sits
+    /// inside the space the dashboard already reserves.
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let fitting = dashboardHost.fittingSize
+        if fitting.width > 0, preferredContentSize != fitting {
+            preferredContentSize = fitting
+        }
     }
 }

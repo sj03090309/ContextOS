@@ -16,17 +16,28 @@ final class DashboardModel: ObservableObject {
     @Published var connected = false
     /// Token usage grouped by project, broken down per AI agent.
     @Published var projectUsage: [ProjectAIUsage] = []
-    /// Tokens saved per day for the last 7 days (oldest → today).
-    @Published var daily: [DayPoint] = []
+    /// AI tokens per local day (`yyyy-MM-dd`), for the calendar.
+    @Published var tokensByDay: [String: Int] = [:]
+    /// Code shipped over the last 7 days.
+    @Published var week = BuildSummary()
     /// Most recent optimization events, newest first.
     @Published var recent: [UsageEvent] = []
+    /// Chew state, shared by the menu-bar glyph and the dashboard blob so the
+    /// two 뭉치 move as one. Both derive their motion from this plus the
+    /// absolute clock; neither keeps its own timeline.
+    let mascot = MascotState()
+
     /// Brief highlight when MCP just handled an optimization (energetic burst).
-    @Published var flashing = false
+    @Published var flashing = false { didSet { syncMascot() } }
     /// An AI agent is actively processing a command *right now* — from the
     /// moment the user hits enter until the response settles. Detected two
     /// ways: session-log writes (Claude Code/Codex, catches the very first
     /// keystroke of a turn) and MCP request heartbeats (any agent).
-    @Published var working = false
+    @Published var working = false { didSet { syncMascot() } }
+
+    /// One place decides whether 뭉치 is eating, so the two renderers can never
+    /// disagree about it.
+    private func syncMascot() { mascot.set(eating: flashing || working) }
 
     private let activityMonitor = AgentActivityMonitor()
     /// Last MCP heartbeat / activity signal (posted by contextos-mcp and the
@@ -91,8 +102,9 @@ final class DashboardModel: ObservableObject {
         refreshFast()
     }
 
-    /// Manual refresh (e.g. from the ↻ button): do everything now.
-    func refresh() { refreshFast(); refreshSlow() }
+    /// Manual refresh (the ↻ button): rebuild everything from disk now, rather
+    /// than serving whatever the memo last computed.
+    func refresh() { refreshFast(); refreshSlow(force: true) }
 
     private func onTick() {
         tick += 1
@@ -108,15 +120,26 @@ final class DashboardModel: ObservableObject {
     private func refreshWorking() {
         // Explicit turn boundary from the hooks takes precedence.
         if lastStop > lastActivity {
-            working = false          // finished — stay stopped until the next turn
+            set(&working, false)     // finished — stay stopped until the next turn
             return
         }
         let monitor = activityMonitor
         Task {
             let logsFresh = await Self.checkLogs(monitor)   // stat off the main actor
-            if lastStop > lastActivity { working = false; return }
-            working = logsFresh || Date().timeIntervalSince(lastActivity) <= 20
+            if lastStop > lastActivity { set(&working, false); return }
+            set(&working, logsFresh || Date().timeIntervalSince(lastActivity) <= 20)
         }
+    }
+
+    /// Assign only when the value actually changed.
+    ///
+    /// `@Published` fires on every assignment, equal or not, and each fire
+    /// re-runs the whole panel's SwiftUI body. These pollers rewrite the same
+    /// numbers every 2/4/32 seconds — almost always identical — so writing
+    /// unconditionally meant re-laying out the dashboard for nothing.
+    private func set<T: Equatable>(_ property: inout T, _ value: T) {
+        guard property != value else { return }
+        property = value
     }
 
     private nonisolated static func checkLogs(_ monitor: AgentActivityMonitor) async -> Bool {
@@ -127,25 +150,26 @@ final class DashboardModel: ObservableObject {
     private func refreshFast() {
         Task {
             let s = await Self.loadSavings()
-            todaySaved = s.todaySaved
-            totalSaved = s.totalSaved
-            daily = s.daily
-            recent = s.recent
+            set(&todaySaved, s.todaySaved)
+            set(&totalSaved, s.totalSaved)
+            set(&recent, s.recent)
             if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
             lastQueryCount = s.queryCount
-            queryCount = s.queryCount
+            set(&queryCount, s.queryCount)
         }
     }
 
     // Heavier: AI token usage (parses session logs) + agent detection + per-file
     // token breakdown.
-    private func refreshSlow() {
+    private func refreshSlow(force: Bool = false) {
         Task {
-            let a = await Self.loadAgentsAndUsage()
-            aiTokens = a.aiTokens
-            agents = a.agents
-            connected = a.connected
-            projectUsage = a.projectUsage
+            let a = await Self.loadAgentsAndUsage(force: force)
+            set(&aiTokens, a.aiTokens)
+            set(&agents, a.agents)
+            set(&connected, a.connected)
+            set(&projectUsage, a.projectUsage)
+            set(&tokensByDay, a.tokensByDay)
+            set(&week, a.week)
         }
     }
 
@@ -161,17 +185,8 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    struct DayPoint: Sendable, Identifiable {
-        var day: String     // yyyy-MM-dd
-        var saved: Int
-        var label: String   // Korean weekday, e.g. "월"
-        var isToday: Bool
-        var id: String { day }
-    }
-
     struct Savings: Sendable {
         var todaySaved = 0, totalSaved = 0, queryCount = 0
-        var daily: [DayPoint] = []
         var recent: [UsageEvent] = []
     }
     struct AgentsUsage: Sendable {
@@ -179,43 +194,35 @@ final class DashboardModel: ObservableObject {
         var agents: [DetectedAgent] = []
         var connected = false
         var projectUsage: [ProjectAIUsage] = []
+        var tokensByDay: [String: Int] = [:]
+        var week = BuildSummary()
     }
-
-    // DateFormatter construction is expensive; build once, not on every 4s tick.
-    private nonisolated static let dayParser: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-    private nonisolated static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "ko_KR")
-        f.dateFormat = "EEEEE"     // narrow: 월/화/수/목/금/토/일
-        return f
-    }()
 
     private nonisolated static func loadSavings() async -> Savings {
         guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
         let s = store.summary()
-
-        let todayKey = dayParser.string(from: Date())
-        let daily = store.dailySaved(days: 7).map { point in
-            DayPoint(day: point.day, saved: point.saved,
-                     label: dayParser.date(from: point.day).map { weekdayFormatter.string(from: $0) } ?? "",
-                     isToday: point.day == todayKey)
-        }
-
         return Savings(todaySaved: store.todaySaved(), totalSaved: s.totalSaved,
-                       queryCount: s.queryCount, daily: daily,
-                       recent: store.recentEvents(limit: 6))
+                       queryCount: s.queryCount, recent: store.recentEvents(limit: 6))
     }
 
-    private nonisolated static func loadAgentsAndUsage() async -> AgentsUsage {
-        let ai = ClaudeUsageReader.totalUsageAllProjects()
-        return AgentsUsage(aiTokens: ai.tokens,
+    private nonisolated static func loadAgentsAndUsage(force: Bool = false) async -> AgentsUsage {
+        if force {
+            AgentSessionReader.invalidate()
+            BuildLogReader.invalidate()
+            ProjectAITokenReader.invalidate()
+        }
+        // One transcript pass feeds the headline figure, the per-project cards,
+        // the calendar, and the week strip; they used to walk ~/.claude/projects
+        // independently.
+        let usage = AgentSessionReader.snapshot(force: force)
+        let week = BuildLogReader.log(
+            since: TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 6 * 86_400),
+            snapshot: usage).summary
+        return AgentsUsage(aiTokens: usage.totalTokens,
                            agents: AgentDetector.detect(),
                            connected: ClaudeIntegration.isGloballyInstalled(),
-                           projectUsage: ProjectAITokenReader.topProjects())
+                           projectUsage: ProjectAITokenReader.topProjects(snapshot: usage),
+                           tokensByDay: usage.byDay,
+                           week: week)
     }
 }

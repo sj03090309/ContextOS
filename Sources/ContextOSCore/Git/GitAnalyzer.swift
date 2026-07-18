@@ -20,11 +20,53 @@ public struct GitSignals: Sendable {
     public var isEmpty: Bool { changedPaths.isEmpty && recentPaths.isEmpty }
 }
 
-/// Reads Git state by shelling out to the system `git`.
+/// Runs the system `git`.
 ///
 /// No libgit2 dependency: `git` is already on every dev machine, and this keeps
-/// ContextOS's promise of no heavyweight third-party code. All calls degrade
-/// gracefully (return nil/empty) outside a repository.
+/// ContextOS's promise of no heavyweight third-party code.
+public enum GitRunner {
+
+    /// Standard git location, resolved once. Prefer the absolute path over a
+    /// PATH lookup so a malicious `git` earlier in PATH can't be invoked.
+    static let executable: URL = {
+        for candidate in ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+        where FileManager.default.isExecutableFile(atPath: candidate) {
+            return URL(fileURLWithPath: candidate)
+        }
+        return URL(fileURLWithPath: "/usr/bin/git")
+    }()
+
+    /// Run `git <args>` in `root`, returning stdout, or nil on failure.
+    public static func run(_ args: [String], in root: URL) -> String? {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = args
+        process.currentDirectoryURL = root
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        // Read before waiting: a commit-heavy `git log` can fill the pipe buffer,
+        // and git would block on write while we block on exit.
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        // Drain stderr too, for the same reason.
+        _ = try? stderr.fileHandleForReading.readToEnd()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+/// Reads Git state by shelling out to the system `git`.
+///
+/// All calls degrade gracefully (return nil/empty) outside a repository.
 public struct GitAnalyzer: Sendable {
 
     /// Field separator unlikely to appear in commit text.
@@ -98,36 +140,7 @@ public struct GitAnalyzer: Sendable {
 
     // MARK: - Process runner
 
-    /// Standard git location, resolved once. Prefer the absolute path over a
-    /// PATH lookup so a malicious `git` earlier in PATH can't be invoked.
-    private static let gitExecutable: URL = {
-        for candidate in ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return URL(fileURLWithPath: candidate)
-        }
-        return URL(fileURLWithPath: "/usr/bin/git")
-    }()
-
-    /// Run `git <args>` in `root`, returning stdout, or nil on failure.
     private func run(_ args: [String], in root: URL) -> String? {
-        let process = Process()
-        process.executableURL = Self.gitExecutable
-        process.arguments = args
-        process.currentDirectoryURL = root
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return String(data: data, encoding: .utf8)
+        GitRunner.run(args, in: root)
     }
 }
