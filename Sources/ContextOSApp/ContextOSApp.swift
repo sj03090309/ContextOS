@@ -46,7 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             // skips all of it: the same animation costs ~1%.
             let host = NSView(frame: NSRect(x: 0, y: 0, width: 30, height: 24))
             host.wantsLayer = true
-            host.layer?.contentsGravity = .center
+            // `.resizeAspect`, not `.center`: with `.center` a layer sizes its
+            // contents as `pixels / contentsScale` and crops the overflow, so the
+            // glyph is only the right size while the bitmap's scale and the
+            // layer's agree. They don't have to — the frames are rasterized for
+            // one screen and the layer's scale comes from whichever screen the
+            // menu bar is on. On a 2x built-in + 1x external that mismatch drew
+            // 뭉치 at half size and cropped it to the band across its eyes.
+            // `.resizeAspect` fits the bitmap to the layer's 30×24, so the glyph
+            // is always the right size and the scale only decides sharpness.
+            host.layer?.contentsGravity = .resizeAspect
             button.addSubview(host)
             glyphLayerHost = host
             // An empty image of the right size still reserves the layout space
@@ -70,8 +79,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         // the answer is published, so it can just be listened to.
         mascot.$image
             .sink { [weak self] image in
-                guard let host = self?.glyphLayerHost else { return }
-                host.layer?.contents = image
+                guard let layer = self?.glyphLayerHost?.layer else { return }
+                // Hand the layer the bitmap's own scale so it isn't resampled on
+                // the way in; `.resizeAspect` has already made the *size* right,
+                // this is only about staying sharp.
+                if let rep = image.representations.first, image.size.width > 0 {
+                    let dpr = CGFloat(rep.pixelsWide) / image.size.width
+                    if dpr > 0 && layer.contentsScale != dpr { layer.contentsScale = dpr }
+                }
+                layer.contents = image
             }
             .store(in: &subscriptions)
         model.$todaySaved
@@ -180,7 +196,7 @@ final class MascotRenderer: ObservableObject {
 
     private func tick() {
         let now = Date()
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let scale = menuBarScale
         let dark = menuBarIsDark
         if scale != loopScale || dark != loopIsDark { rebuildLoops(scale: scale, dark: dark) }
 
@@ -213,6 +229,18 @@ final class MascotRenderer: ObservableObject {
         guard key != lastIndex else { return }
         lastIndex = key
         image = loop[index]
+    }
+
+    /// The backing scale of the screen the menu bar is on.
+    ///
+    /// Not `NSScreen.main` — that is the *focused* screen, which is a different
+    /// one whenever the menu bar with 뭉치 in it isn't the screen you're typing
+    /// on. Read every tick like the appearance, so moving the bar between a
+    /// Retina and a 1x display re-renders the loops at the new scale by itself.
+    private var menuBarScale: CGFloat {
+        appearanceSource?.window?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor
+            ?? 2
     }
 
     /// Whether the menu bar is currently dark.
