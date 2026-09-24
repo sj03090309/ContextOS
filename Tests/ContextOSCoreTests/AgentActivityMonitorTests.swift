@@ -166,4 +166,104 @@ final class AgentActivityMonitorTests: XCTestCase {
                      lines: [codexCallLine], mtime: Date(timeIntervalSinceNow: -120))
         XCTAssertTrue(AgentActivityMonitor(home: home).isActive(within: 20))
     }
+
+    // MARK: - Event-driven updates
+
+    func testNoteWriteTracksTheNewestSessionLog() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let monitor = AgentActivityMonitor(home: home)
+        let older = ".claude/projects/-Users-me-app/a.jsonl"
+        let newer = ".codex/sessions/2026/07/13/rollout-b.jsonl"
+        try write(home, older, mtime: Date(timeIntervalSinceNow: -60))
+        try write(home, newer, mtime: Date(timeIntervalSinceNow: -5))
+
+        XCTAssertTrue(monitor.noteWrite(atPath: home.appendingPathComponent(newer).path))
+        XCTAssertTrue(monitor.noteWrite(atPath: home.appendingPathComponent(older).path))
+        // The older write arriving second does not unseat the newer log.
+        XCTAssertEqual(monitor.newestLog?.url.lastPathComponent, "rollout-b.jsonl")
+
+        // Written again: now it is the newest.
+        try write(home, older)
+        monitor.noteWrite(atPath: home.appendingPathComponent(older).path)
+        XCTAssertEqual(monitor.newestLog?.url.lastPathComponent, "a.jsonl")
+    }
+
+    func testNoteWriteIgnoresWhatTheScanWouldIgnore() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let monitor = AgentActivityMonitor(home: home)
+        for relative in [".claude/projects/-Users-me-app/session/subagents/agent-1.jsonl",
+                         ".claude/projects/-Users-me-app/notes.txt",
+                         ".claude/todos/x.jsonl"] {
+            try write(home, relative)
+            XCTAssertFalse(monitor.noteWrite(atPath: home.appendingPathComponent(relative).path),
+                           relative)
+        }
+        XCTAssertNil(monitor.newestLog)
+        // A path that no longer exists (deleted between the event and the stat).
+        XCTAssertFalse(monitor.noteWrite(
+            atPath: home.appendingPathComponent(".claude/projects/-x/gone.jsonl").path))
+    }
+
+    func testRescanFindsTheNewestLogForEvents() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try write(home, ".claude/projects/-Users-me-app/a.jsonl", mtime: Date(timeIntervalSinceNow: -30))
+        try write(home, ".claude/projects/-Users-me-app/b.jsonl", mtime: Date(timeIntervalSinceNow: -3))
+        let monitor = AgentActivityMonitor(home: home)
+        XCTAssertNil(monitor.newestLog)
+        monitor.rescan()
+        XCTAssertEqual(monitor.newestLog?.url.lastPathComponent, "b.jsonl")
+    }
+
+    func testPendingToolCallSurvivesATailCutMidCharacter() throws {
+        // The tail read starts at an arbitrary byte. Cutting a multi-byte
+        // character in half used to make the whole tail undecodable, so a
+        // Korean-heavy log reported no pending call at all.
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let url = home.appendingPathComponent("korean.jsonl")
+        let chatter = #"{"type":"user","message":{"role":"user","content":"한글 한글 한글 한글"}}"#
+        let body = Array(repeating: chatter, count: 50).joined(separator: "\n") + "\n" + toolUseLine + "\n"
+        try body.write(to: url, atomically: true, encoding: .utf8)
+        let size = body.utf8.count
+        // A tail length whose first byte falls inside a 3-byte Hangul character.
+        var tail = size - 40
+        while tail > 0 {
+            let first = Array(body.utf8)[size - tail]
+            if first & 0xC0 == 0x80 { break }       // a continuation byte
+            tail -= 1
+        }
+        XCTAssertTrue(AgentActivityMonitor.hasPendingToolCall(url, tailBytes: tail))
+    }
+
+    func testFileEventStreamReportsSessionLogWrites() throws {
+        // End to end through real FSEvents: a write to a session log reaches the
+        // monitor as its newest log, with no scan. The temp dir sits behind the
+        // /var → /private/var symlink, so this also covers the stream reporting
+        // real paths that don't textually match `home`.
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(".claude/projects/-Users-me-app"),
+            withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(".codex/sessions"), withIntermediateDirectories: true)
+        let monitor = AgentActivityMonitor(home: home)
+
+        let seen = expectation(description: "session log write reported")
+        seen.assertForOverFulfill = false
+        let stream = FileEventStream(paths: monitor.watchRoots.map(\.path), latency: 0.1) { events in
+            for event in events where monitor.noteWrite(atPath: event.path) { seen.fulfill() }
+        }
+        XCTAssertTrue(stream.start())
+        defer { stream.stop() }
+
+        // Give the stream a moment to arm, then write.
+        Thread.sleep(forTimeInterval: 0.3)
+        try write(home, ".claude/projects/-Users-me-app/live.jsonl")
+        wait(for: [seen], timeout: 10)
+        XCTAssertEqual(monitor.newestLog?.url.lastPathComponent, "live.jsonl")
+    }
 }

@@ -5,6 +5,16 @@ import ContextOSCore
 /// Drives the menu-bar **monitor**. Optimization itself runs automatically via
 /// the MCP server inside Claude Code — this panel just shows the results:
 /// tokens saved, connected AI tools, and AI token usage.
+///
+/// This object lives for as long as the Mac is on, so nothing in it polls:
+/// - Whether an agent is working comes from the hook and heartbeat
+///   notifications plus a file-event stream on the session logs. A single
+///   one-shot timer covers the moment a quiet window closes.
+/// - Savings come from the MCP server's notification; a slow poll is only a
+///   safety net, and what rolls "today" over at midnight.
+/// - AI usage, agents and the week in code are only ever on screen inside the
+///   panel, so they refresh when it opens and while it stays open. Closed, the
+///   transcript cache is topped up every few minutes so opening stays instant.
 @MainActor
 final class DashboardModel: ObservableObject {
 
@@ -28,37 +38,73 @@ final class DashboardModel: ObservableObject {
     let mascot = MascotState()
 
     /// Brief highlight when MCP just handled an optimization (energetic burst).
-    @Published var flashing = false { didSet { syncMascot() } }
+    ///
+    /// Not `@Published`, and neither is `working`: only 뭉치 reads them, through
+    /// `syncMascot`. Publishing them re-ran the whole dashboard's body — calendar,
+    /// project cards and all — on every turn start and stop, with the panel shut.
+    private var flashing = false { didSet { syncMascot() } }
     /// An AI agent is actively processing a command *right now* — from the
     /// moment the user hits enter until the response settles. Detected two
     /// ways: session-log writes (Claude Code/Codex, catches the very first
     /// keystroke of a turn) and MCP request heartbeats (any agent).
-    @Published var working = false { didSet { syncMascot() } }
+    private var working = false { didSet { syncMascot() } }
 
     /// One place decides whether 뭉치 is eating, so the two renderers can never
     /// disagree about it.
     private func syncMascot() { mascot.set(eating: flashing || working) }
 
     private let activityMonitor = AgentActivityMonitor()
+    private var logEvents: FileEventStream?
+    /// The roots `logEvents` was started on, to notice a new one (Codex
+    /// installed after launch) and restart the stream.
+    private var watchedPaths: [String] = []
+    /// Only used when the event stream can't be started: the old rescan poll.
+    private var pollTimer: Timer?
     /// Last MCP heartbeat / activity signal (posted by contextos-mcp and the
     /// UserPromptSubmit hook). Also the "turn start" time.
     private var lastActivity = Date.distantPast
     /// Last "turn ended" signal (the Stop hook). When this is newer than
     /// `lastActivity`, the agent finished and the mascot should stop *now*.
     private var lastStop = Date.distantPast
+    /// Fires when the current verdict's quiet window closes — the only way
+    /// `working` can change without an event.
+    private var recheckTimer: Timer?
+    /// Bumped by every evaluation, so a tail read that finishes after a newer
+    /// evaluation has started can't overwrite it.
+    private var evaluation = 0
+    /// The last "does the newest log end on an unanswered tool call?" answer,
+    /// and the log state it was read from, so the tail is read once per write
+    /// rather than once per evaluation.
+    private var pendingAnswer: (path: String, mtime: Date, pending: Bool)?
+
     private var lastQueryCount = -1
-    private var timer: Timer?
-    private var tick = 0
+    private var savingsTimer: Timer?
+    private var usageTimer: Timer?
+    private var panelOpen = false
+    private var usageRefreshInFlight = false
+    /// A refresh asked for while another was running, run as soon as it ends —
+    /// so opening the panel mid-way through a background top-up still gets the
+    /// week in code, which the background pass skips.
+    private var queuedUsageRefresh: (includeWeek: Bool, priority: TaskPriority)?
     private var flashTask: Task<Void, Never>?
     nonisolated(unsafe) private var optimizedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var activityObserver: NSObjectProtocol?
     nonisolated(unsafe) private var startObserver: NSObjectProtocol?
     nonisolated(unsafe) private var stopObserver: NSObjectProtocol?
 
+    /// Usage refresh cadence while the panel is open — its numbers stay live.
+    private static let openUsageInterval: TimeInterval = 32
+    /// Cadence while it is closed. Nothing on screen depends on it: it only
+    /// keeps the transcript parse caught up, so the panel opens on fresh numbers
+    /// without having hours of logs to read first.
+    private static let closedUsageInterval: TimeInterval = 10 * 60
+    /// The savings safety net. Every recorded optimization posts a notification,
+    /// which is the real trigger.
+    private static let savingsInterval: TimeInterval = 60
+
     init() {
         refreshFast()
-        refreshSlow()
-        refreshWorking()
+        refreshSlow(includeWeek: true, priority: .utility)
         let center = DistributedNotificationCenter.default()
         // Real-time: the MCP server posts this the instant it records an
         // optimization, so the mascot reacts with no polling lag.
@@ -70,29 +116,71 @@ final class DashboardModel: ObservableObject {
         // enter. Start eating immediately.
         startObserver = center.addObserver(
             forName: UsageStore.turnStartNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.lastActivity = Date(); self?.working = true }
+            Task { @MainActor in self?.noteActivity() }
         }
         // Turn STOP — the Stop hook fires the instant the agent finishes. Stop now.
         stopObserver = center.addObserver(
             forName: UsageStore.turnStopNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.lastStop = Date(); self?.working = false }
+            Task { @MainActor in
+                self?.lastStop = Date()
+                self?.evaluateWorking()
+            }
         }
         // MCP heartbeat on every request: keeps a hook-less agent's turn alive.
         activityObserver = center.addObserver(
             forName: UsageStore.activityNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.lastActivity = Date(); self?.working = true }
+            Task { @MainActor in self?.noteActivity() }
         }
-        // Poll: working state every 2s (fallback for agents without our hooks),
-        // savings every 4s, the heavier AI-usage scan every ~32s.
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.onTick() }
+
+        watchSessionLogs()
+        let monitor = activityMonitor
+        Task.detached(priority: .utility) { [weak self] in
+            monitor.rescan()
+            await self?.evaluateWorking()
         }
+        savingsTimer = Self.repeating(every: Self.savingsInterval) { [weak self] in
+            self?.refreshFast()
+        }
+        scheduleUsageRefresh()
     }
 
     deinit {
         let center = DistributedNotificationCenter.default()
         [optimizedObserver, activityObserver, startObserver, stopObserver]
             .compactMap { $0 }.forEach { center.removeObserver($0) }
+    }
+
+    // MARK: - Panel lifecycle
+
+    /// The panel just opened: bring everything on it up to date now, then keep
+    /// it live while it stays open.
+    func panelDidOpen() {
+        panelOpen = true
+        refreshFast()
+        refreshSlow(includeWeek: true, priority: .userInitiated)
+        scheduleUsageRefresh()
+    }
+
+    /// The panel closed: nothing on it is visible, so drop to the slow cadence.
+    func panelDidClose() {
+        panelOpen = false
+        scheduleUsageRefresh()
+    }
+
+    private func scheduleUsageRefresh() {
+        usageTimer?.invalidate()
+        let interval = panelOpen ? Self.openUsageInterval : Self.closedUsageInterval
+        usageTimer = Self.repeating(every: interval) { [weak self] in
+            guard let self else { return }
+            if self.panelOpen {
+                self.refreshSlow(includeWeek: true, priority: .userInitiated)
+            } else {
+                // Utility, not background: a panel opened mid-way waits for this
+                // pass to finish, and background work can be throttled for long.
+                self.refreshSlow(includeWeek: false, priority: .utility)
+                self.watchSessionLogs()     // a log root may have appeared since launch
+            }
+        }
     }
 
     // Instant reaction to a just-recorded optimization: light up now, refresh the
@@ -104,79 +192,167 @@ final class DashboardModel: ObservableObject {
 
     /// Manual refresh (the ↻ button): rebuild everything from disk now, rather
     /// than serving whatever the memo last computed.
-    func refresh() { refreshFast(); refreshSlow(force: true) }
-
-    private func onTick() {
-        tick += 1
-        refreshWorking()
-        if tick % 2 == 0 { refreshFast() }
-        if tick % 16 == 0 { refreshSlow() }
+    func refresh() {
+        refreshFast()
+        refreshSlow(force: true, includeWeek: true, priority: .userInitiated)
     }
 
-    // Fallback poll (every 2s) for agents without our Stop hook — e.g. Codex.
-    // The hooks give Claude Code exact, instant start/stop; this only fills in
-    // when they're absent. Crucially, an explicit Stop wins: once the turn ended
-    // we do NOT let the 20s session-log tail resurrect "working".
-    private func refreshWorking() {
-        // Explicit turn boundary from the hooks takes precedence: once a Stop
-        // has landed, nothing reopens the turn until the next real activity
-        // (a UserPromptSubmit or a tool-call heartbeat) arrives *after* it.
-        if lastStop > lastActivity {
-            set(&working, false)     // finished — stay stopped until the next turn
+    // MARK: - Working detection
+
+    /// A turn start or an MCP tool call: the agent is working as of now.
+    private func noteActivity() {
+        lastActivity = Date()
+        evaluateWorking()
+    }
+
+    /// Watch the session-log trees for writes. Each one tells the monitor which
+    /// log is hottest, replacing the directory rescan the old 2s poll did every
+    /// few seconds for as long as the app ran.
+    private func watchSessionLogs() {
+        let fm = FileManager.default
+        // A root that doesn't exist yet is watched through its parent, so the
+        // agent's first session after install is seen too.
+        let paths = activityMonitor.watchRoots.compactMap { root -> String? in
+            if fm.fileExists(atPath: root.path) { return root.path }
+            let parent = root.deletingLastPathComponent().path
+            return fm.fileExists(atPath: parent) ? parent : nil
+        }
+        guard paths != watchedPaths || (logEvents == nil && pollTimer == nil) else { return }
+        watchedPaths = paths
+        logEvents?.stop()
+        logEvents = nil
+        pollTimer?.invalidate()
+        pollTimer = nil
+        // No agent installed at all: nothing to watch, and nothing to poll either.
+        // The closed-panel refresh calls back in here, so a later install is seen.
+        guard !paths.isEmpty else { return }
+
+        let monitor = activityMonitor
+        let stream = FileEventStream(paths: paths) { [weak self] events in
+            var wrote = false
+            var lost = false
+            for event in events {
+                if event.requiresRescan {
+                    lost = true
+                } else if monitor.noteWrite(atPath: event.path) {
+                    wrote = true
+                }
+            }
+            if lost { monitor.rescan() }
+            guard wrote || lost else { return }
+            Task { @MainActor in self?.evaluateWorking() }
+        }
+        if stream.start() {
+            logEvents = stream
+        } else {
+            // No event stream: fall back to rescanning on a timer, like before.
+            pollTimer = Self.repeating(every: 4) { [weak self] in
+                Task.detached(priority: .utility) {
+                    monitor.rescan()
+                    await self?.evaluateWorking()
+                }
+            }
+        }
+    }
+
+    /// Re-decide whether an agent is working, and arm a timer for the moment
+    /// that answer next changes on its own.
+    private func evaluateWorking() {
+        evaluation += 1
+        let ticket = evaluation
+        recheckTimer?.invalidate()
+        recheckTimer = nil
+
+        let newest = activityMonitor.newestLog
+        var pending: Bool?
+        if let newest, let answer = pendingAnswer,
+           answer.path == newest.url.path, answer.mtime == newest.mtime {
+            pending = answer.pending
+        }
+        let verdict = TurnActivity.evaluate(now: Date(), lastActivity: lastActivity,
+                                            lastStop: lastStop, lastLogWrite: newest?.mtime,
+                                            pendingToolCall: pending)
+        if verdict.needsPendingCheck, let newest {
+            // The log has gone quiet: is it waiting on a long tool? That is a
+            // tail read — off the main thread, once per write. `working` keeps
+            // its value until the answer is in, so 뭉치 doesn't blink.
+            Task.detached(priority: .utility) { [weak self] in
+                let answer = AgentActivityMonitor.hasPendingToolCall(newest.url)
+                await self?.pendingChecked(ticket: ticket, log: newest, pending: answer)
+            }
             return
         }
-        let monitor = activityMonitor
-        Task {
-            let logsFresh = await Self.checkLogs(monitor)   // stat off the main actor
-            // Re-check after the await: a Stop may have arrived while we were
-            // statting. The 20s session-log tail must not revive a turn the
-            // Stop hook already closed — Claude Code keeps touching the log for
-            // a moment after it finishes, which is exactly what used to keep the
-            // mascot eating with nothing being asked.
-            guard lastStop <= lastActivity else { set(&working, false); return }
-            set(&working, logsFresh || Date().timeIntervalSince(lastActivity) <= 20)
+        update(\.working, verdict.working)
+        if let at = verdict.recheckAt {
+            let timer = Timer(fire: at, interval: 0, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.evaluateWorking() }
+            }
+            timer.tolerance = 0.5
+            RunLoop.main.add(timer, forMode: .common)
+            recheckTimer = timer
         }
     }
+
+    private func pendingChecked(ticket: Int, log: (url: URL, mtime: Date), pending: Bool) {
+        pendingAnswer = (log.url.path, log.mtime, pending)
+        // A newer evaluation is already under way; it will pick the answer up
+        // if it's still about the same write.
+        guard ticket == evaluation else { return }
+        evaluateWorking()
+    }
+
+    // MARK: - Data
 
     /// Assign only when the value actually changed.
     ///
     /// `@Published` fires on every assignment, equal or not, and each fire
-    /// re-runs the whole panel's SwiftUI body. These pollers rewrite the same
-    /// numbers every 2/4/32 seconds — almost always identical — so writing
-    /// unconditionally meant re-laying out the dashboard for nothing.
-    private func set<T: Equatable>(_ property: inout T, _ value: T) {
-        guard property != value else { return }
-        property = value
-    }
-
-    private nonisolated static func checkLogs(_ monitor: AgentActivityMonitor) async -> Bool {
-        monitor.isActive(within: 20)
+    /// re-runs the whole panel's SwiftUI body. Through a key path the old value
+    /// is read first and the setter is skipped outright; the `inout` helper this
+    /// replaces could not do that — Swift writes an `inout` property back through
+    /// its setter whether or not it changed, so every poll published anyway.
+    private func update<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<DashboardModel, T>, _ value: T) {
+        guard self[keyPath: keyPath] != value else { return }
+        self[keyPath: keyPath] = value
     }
 
     // Cheap: savings counters from the local usage DB.
     private func refreshFast() {
-        Task {
+        Task(priority: .utility) {
             let s = await Self.loadSavings()
-            set(&todaySaved, s.todaySaved)
-            set(&totalSaved, s.totalSaved)
-            set(&recent, s.recent)
+            update(\.todaySaved, s.todaySaved)
+            update(\.totalSaved, s.totalSaved)
+            update(\.recent, s.recent)
             if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
             lastQueryCount = s.queryCount
-            set(&queryCount, s.queryCount)
+            update(\.queryCount, s.queryCount)
         }
     }
 
-    // Heavier: AI token usage (parses session logs) + agent detection + per-file
-    // token breakdown.
-    private func refreshSlow(force: Bool = false) {
-        Task {
-            let a = await Self.loadAgentsAndUsage(force: force)
-            set(&aiTokens, a.aiTokens)
-            set(&agents, a.agents)
-            set(&connected, a.connected)
-            set(&projectUsage, a.projectUsage)
-            set(&tokensByDay, a.tokensByDay)
-            set(&week, a.week)
+    // Heavier: AI token usage (parses session logs) + agent detection, and — only
+    // when the panel will show it — the week in code, which shells out to git.
+    private func refreshSlow(force: Bool = false, includeWeek: Bool, priority: TaskPriority) {
+        // One at a time: a refresh that lands while another is still parsing
+        // would only wait on the same lock and redo its work. Remember it instead.
+        guard force || !usageRefreshInFlight else {
+            let queued = queuedUsageRefresh
+            queuedUsageRefresh = (includeWeek || queued?.includeWeek == true,
+                                  max(priority, queued?.priority ?? priority))
+            return
+        }
+        usageRefreshInFlight = true
+        Task(priority: priority) {
+            let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
+            usageRefreshInFlight = false
+            update(\.aiTokens, a.aiTokens)
+            update(\.agents, a.agents)
+            update(\.connected, a.connected)
+            update(\.projectUsage, a.projectUsage)
+            update(\.tokensByDay, a.tokensByDay)
+            if let week = a.week { update(\.week, week) }
+            if let next = queuedUsageRefresh {
+                queuedUsageRefresh = nil
+                refreshSlow(includeWeek: next.includeWeek, priority: next.priority)
+            }
         }
     }
 
@@ -192,6 +368,18 @@ final class DashboardModel: ObservableObject {
         }
     }
 
+    /// A repeating main-run-loop timer with enough tolerance for macOS to fold
+    /// its wakeups in with everyone else's.
+    private static func repeating(every interval: TimeInterval,
+                                  _ body: @escaping @MainActor () -> Void) -> Timer {
+        let timer = Timer(timeInterval: interval, repeats: true) { _ in
+            MainActor.assumeIsolated { body() }
+        }
+        timer.tolerance = interval * 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
+    }
+
     struct Savings: Sendable {
         var todaySaved = 0, totalSaved = 0, queryCount = 0
         var recent: [UsageEvent] = []
@@ -202,17 +390,19 @@ final class DashboardModel: ObservableObject {
         var connected = false
         var projectUsage: [ProjectAIUsage] = []
         var tokensByDay: [String: Int] = [:]
-        var week = BuildSummary()
+        /// Nil when this refresh skipped git.
+        var week: BuildSummary?
     }
 
     private nonisolated static func loadSavings() async -> Savings {
         guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
-        let s = store.summary()
-        return Savings(todaySaved: store.todaySaved(), totalSaved: s.totalSaved,
-                       queryCount: s.queryCount, recent: store.recentEvents(limit: 6))
+        let totals = store.savingsTotals(
+            since: Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        return Savings(todaySaved: totals.todaySaved, totalSaved: totals.totalSaved,
+                       queryCount: totals.queryCount, recent: store.recentEvents(limit: 6))
     }
 
-    private nonisolated static func loadAgentsAndUsage(force: Bool = false) async -> AgentsUsage {
+    private nonisolated static func loadAgentsAndUsage(force: Bool, includeWeek: Bool) async -> AgentsUsage {
         if force {
             AgentSessionReader.invalidate()
             BuildLogReader.invalidate()
@@ -221,10 +411,12 @@ final class DashboardModel: ObservableObject {
         // One transcript pass feeds the headline figure, the per-project cards,
         // the calendar, and the week strip; they used to walk ~/.claude/projects
         // independently.
-        let usage = AgentSessionReader.snapshot(force: force)
-        let week = BuildLogReader.log(
-            since: TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 6 * 86_400),
-            snapshot: usage).summary
+        let usage = AgentSessionReader.snapshot(maxAge: 5, force: force)
+        let week = includeWeek
+            ? BuildLogReader.log(
+                since: TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 6 * 86_400),
+                snapshot: usage).summary
+            : nil
         let agents = AgentDetector.detect(usage: usage)
         return AgentsUsage(aiTokens: usage.totalTokens,
                            agents: agents,

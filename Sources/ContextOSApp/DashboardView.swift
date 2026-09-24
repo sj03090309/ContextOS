@@ -36,18 +36,28 @@ enum Brand {
         light: NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1))  // cream
 }
 
+/// Which "screen" the segmented control shows — keeps the panel short by
+/// showing one system at a time instead of stacking every section.
+enum DashboardTab: Hashable { case files, activity, ai }
+
+/// What the panel was showing — the tab, and which project cards were open.
+///
+/// Kept outside the views so it outlives them: the panel's views are released
+/// while it stays closed (see `AppDelegate.schedulePanelRelease`) and rebuilt
+/// on the next open, which should come back exactly as it was left.
+@MainActor
+final class DashboardUIState: ObservableObject {
+    @Published var tab: DashboardTab = .files
+    @Published var expanded: Set<String> = []   // expanded project cards
+}
+
 /// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
 /// a translucent surface that adapts to the system light/dark appearance,
 /// with one hero number (cumulative savings) up top, a segmented summary,
 /// and a compact list of detected AI tools.
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
-
-    // Which "screen" the segmented control shows — keeps the panel short by
-    // showing one system at a time instead of stacking every section.
-    private enum Tab: Hashable { case files, activity, ai }
-    @State private var tab: Tab = .files
-    @State private var expanded: Set<String> = []   // expanded project cards
+    @EnvironmentObject private var ui: DashboardUIState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -65,10 +75,10 @@ struct DashboardView: View {
             segments
             calendar
             weekStrip
-            Picker("", selection: $tab) {
-                Text("프로젝트").tag(Tab.files)
-                Text("활동").tag(Tab.activity)
-                Text("AI 연결").tag(Tab.ai)
+            Picker("", selection: $ui.tab) {
+                Text("프로젝트").tag(DashboardTab.files)
+                Text("활동").tag(DashboardTab.activity)
+                Text("AI 연결").tag(DashboardTab.ai)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -79,7 +89,7 @@ struct DashboardView: View {
             // expansion animates smoothly inside and long lists just scroll.
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 8) {
-                    switch tab {
+                    switch ui.tab {
                     case .files: projects
                     case .activity: activity
                     case .ai: agents
@@ -220,11 +230,11 @@ struct DashboardView: View {
     }
 
     private func projectCard(_ p: ProjectAIUsage) -> some View {
-        let isOpen = expanded.contains(p.id)
+        let isOpen = ui.expanded.contains(p.id)
         return VStack(alignment: .leading, spacing: 8) {
             Button {
                 withAnimation(.easeInOut(duration: 0.18)) {
-                    if isOpen { expanded.remove(p.id) } else { expanded.insert(p.id) }
+                    if isOpen { ui.expanded.remove(p.id) } else { ui.expanded.insert(p.id) }
                 }
             } label: {
                 HStack(spacing: 8) {
@@ -465,22 +475,38 @@ struct DashboardView: View {
 /// Registration only works from a real .app bundle; a `swift run` build fails
 /// silently and the toggle snaps back to the actual state.
 private struct LaunchAtLoginToggle: View {
-    @State private var enabled = SMAppService.mainApp.status == .enabled
+    /// Read when the panel shows, not as the `@State` default: SwiftUI rebuilds
+    /// this struct on every dashboard update, and a default expression runs on
+    /// each rebuild even though only the first value is kept — and
+    /// `SMAppService.status` is an XPC round trip to the login-items daemon.
+    @State private var enabled: Bool?
 
     var body: some View {
-        Toggle("로그인 시 시작", isOn: $enabled)
+        Toggle("로그인 시 시작", isOn: Binding(
+            get: { enabled ?? false },
+            set: { on in
+                do {
+                    if on { try SMAppService.mainApp.register() }
+                    else { try SMAppService.mainApp.unregister() }
+                    enabled = on
+                } catch {
+                    enabled = SMAppService.mainApp.status == .enabled
+                }
+            }))
             .toggleStyle(.checkbox)
             .controlSize(.mini)
             .font(.system(size: 10))
             .foregroundStyle(.secondary)
-            .onChange(of: enabled) { _, on in
-                do {
-                    if on { try SMAppService.mainApp.register() }
-                    else { try SMAppService.mainApp.unregister() }
-                } catch {
-                    enabled = SMAppService.mainApp.status == .enabled
-                }
+            .onAppear { syncFromSystem() }
+            // The popover reuses this view, so onAppear only fires once; the
+            // setting can also be changed in System Settings meanwhile.
+            .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
+                syncFromSystem()
             }
+    }
+
+    private func syncFromSystem() {
+        enabled = SMAppService.mainApp.status == .enabled
     }
 }
 
@@ -709,11 +735,11 @@ final class PopoverContentController: NSViewController {
     /// dashboard reserves for it.
     private static let mascotHeight: CGFloat = 62
 
-    init(model: DashboardModel) {
+    init(model: DashboardModel, ui: DashboardUIState) {
         self.model = model
         self.mascotHost = NSHostingView(rootView: MeltingMascot(state: model.mascot))
         self.dashboardHost = NSHostingView(
-            rootView: AnyView(DashboardView().environmentObject(model)))
+            rootView: AnyView(DashboardView().environmentObject(model).environmentObject(ui)))
         super.init(nibName: nil, bundle: nil)
     }
 

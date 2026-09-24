@@ -101,40 +101,7 @@ public enum AgentSessionReader {
     private static func build() -> AgentUsageSnapshot {
         let files = claudeTranscripts().map { (url: $0, agent: "Claude Code") }
             + codexTranscripts().map { (url: $0, agent: "Codex") }
-
-        let store = try? UsageStore(path: UsageStore.defaultURL().path)
-        let cache = store?.sessionCache() ?? [:]
-
-        var rows: [SessionCacheRow] = []        // only the ones we (re)parsed
-        var live: Set<String> = []
-        var snapshot = AgentUsageSnapshot()
-
-        for file in files {
-            snapshot.availableAgents.insert(file.agent)
-            live.insert(file.url.path)
-            guard let row = row(for: file.url, agent: file.agent, cached: cache[file.url.path])
-            else { continue }
-            if cache[file.url.path]?.size != row.size {
-                rows.append(row)                // new, or grew on disk → write it back
-            }
-
-            // One transcript can span several directories, so each is folded in
-            // separately rather than the whole session landing on one project.
-            for (project, usage) in row.projects where usage.tokens > 0 {
-                snapshot.totalTokens += usage.tokens
-                snapshot.byAgent[row.agent, default: 0] += usage.tokens
-                snapshot.byProjectAgent[project, default: [:]][row.agent, default: 0] += usage.tokens
-                for (day, tokens) in usage.days { snapshot.byDay[day, default: 0] += tokens }
-                snapshot.sessions.append(AgentSession(
-                    agent: row.agent, project: project,
-                    start: usage.start == .greatestFiniteMagnitude ? usage.end : usage.start,
-                    end: usage.end, tokens: usage.tokens))
-            }
-        }
-
-        try? store?.upsertSessionCache(rows)
-        store?.pruneSessionCache(keeping: live)
-        return snapshot
+        return TranscriptCache.shared.snapshot(of: files)
     }
 
     // MARK: - Transcript discovery
@@ -219,13 +186,12 @@ public enum AgentSessionReader {
             ? decodeClaudeDir(URL(fileURLWithPath: row.path).deletingLastPathComponent().lastPathComponent)
             : row.lastProject
 
-        let consumed = LineReader.forEachLine(of: file, from: offset) { line in
-            // Cheap reject before paying for JSON parsing — most lines are user
-            // turns, tool results, and metadata with no usage block.
-            guard line.contains("\"usage\"") else { return }
-            guard let data = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { return }
+        // Only lines with a usage block are worth parsing — most are user turns,
+        // tool results, and metadata — and the reader rejects the rest on the raw
+        // bytes, before they are ever decoded.
+        let consumed = LineReader.forEachLine(of: file, from: offset,
+                                              containingAny: ["\"usage\""]) { line in
+            guard let obj = jsonObject(line) else { return }
 
             // The transcript records the cwd it ran in — more reliable than
             // decoding the directory name, which is lossy for any project whose
@@ -265,10 +231,9 @@ public enum AgentSessionReader {
         var previous = row.cursor          // last cumulative total we saw
         var cwd = row.lastProject          // set once, by session_meta
 
-        let consumed = LineReader.forEachLine(of: file, from: offset) { line in
-            guard line.contains("\"cwd\"") || line.contains("token_count") else { return }
-            guard let data = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let consumed = LineReader.forEachLine(of: file, from: offset,
+                                              containingAny: ["\"cwd\"", "token_count"]) { line in
+            guard let obj = jsonObject(line),
                   let payload = obj["payload"] as? [String: Any]
             else { return }
 
@@ -303,6 +268,13 @@ public enum AgentSessionReader {
         acc.lastProject = cwd
         row = acc
         return consumed
+    }
+
+    /// One JSONL line as a dictionary, straight from its bytes.
+    private static func jsonObject(_ line: UnsafeRawBufferPointer) -> [String: Any]? {
+        guard let base = line.baseAddress, !line.isEmpty else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(bytes: base, count: line.count))
+            as? [String: Any]
     }
 
     private static func int(_ dict: [String: Any], _ key: String) -> Int {

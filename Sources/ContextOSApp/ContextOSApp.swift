@@ -43,6 +43,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private lazy var mascot = MascotRenderer(state: model.mascot)
     private var subscriptions: Set<AnyCancellable> = []
     private var glyphLayerHost: NSView?
+    /// The panel's tab and open cards, which outlive its views.
+    private let dashboardUI = DashboardUIState()
+    /// Releases the panel's views once it has stayed shut for a while.
+    private var panelRelease: Timer?
+    private static let panelReleaseDelay: TimeInterval = 120
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon, no standalone window.
@@ -60,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             // per second, i.e. ~10% just to animate an 18px glyph. Swapping a
             // layer's `contents` hands Core Animation a different texture and
             // skips all of it: the same animation costs ~1%.
-            let host = NSView(frame: NSRect(x: 0, y: 0, width: 30, height: 24))
+            let host = MascotHostView(frame: NSRect(x: 0, y: 0, width: 30, height: 24))
             host.wantsLayer = true
             // `.resizeAspect`, not `.center`: with `.center` a layer sizes its
             // contents as `pixels / contentsScale` and crops the overflow, so the
@@ -72,6 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             // `.resizeAspect` fits the bitmap to the layer's 30×24, so the glyph
             // is always the right size and the scale only decides sharpness.
             host.layer?.contentsGravity = .resizeAspect
+            // AppKit tells the view when the menu bar turns light/dark or moves to
+            // a screen of another scale; the renderer used to ask on every frame.
+            host.onEnvironmentChange = { [weak self] in self?.mascot.environmentChanged() }
             button.addSubview(host)
             glyphLayerHost = host
             // An empty image of the right size still reserves the layout space
@@ -85,8 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         // through togglePopover — so the "it's hidden now" signal comes from the
         // popover itself rather than from our own button handler.
         popover.delegate = self
-        // Two hosting views, not one: see `PopoverContentController`.
-        popover.contentViewController = PopoverContentController(model: model)
+        // The panel's views are built the first time it opens, not at launch —
+        // see `schedulePanelRelease`.
 
         mascot.appearanceSource = statusItem.button
         mascot.start()
@@ -131,11 +139,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
 
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }
+        mascot.userInteracted()
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            panelRelease?.invalidate()
+            panelRelease = nil
+            if popover.contentViewController == nil {
+                // Two hosting views, not one: see `PopoverContentController`.
+                popover.contentViewController = PopoverContentController(model: model, ui: dashboardUI)
+            }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
+            // Usage, agents and git only refresh while someone can see them.
+            model.panelDidOpen()
             // NSPopover reuses its hosted view, so onAppear only fires once. Signal
             // the dashboard to replay the droplet melt-in on every open.
             NotificationCenter.default.post(name: .contextOSPopoverOpened, object: nil)
@@ -148,12 +165,56 @@ extension AppDelegate {
     /// has to be told to stop animating; nothing else will.
     func popoverDidClose(_ notification: Notification) {
         NotificationCenter.default.post(name: .contextOSPopoverClosed, object: nil)
+        model.panelDidClose()
+        schedulePanelRelease()
+    }
+
+    /// NSPopover holds on to its content view controller — and with it both
+    /// SwiftUI trees, the calendar, the cards and 뭉치's metaball — for as long
+    /// as the app runs, though the panel is on screen for seconds a day. Once
+    /// it has stayed shut for a couple of minutes, let it all go; opening it
+    /// again rebuilds it the way the very first open always did, and
+    /// `dashboardUI` brings back the tab and the cards that were open.
+    private func schedulePanelRelease() {
+        panelRelease?.invalidate()
+        let timer = Timer(timeInterval: Self.panelReleaseDelay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.popover.isShown else { return }
+                self.popover.contentViewController = nil
+                self.panelRelease = nil
+            }
+        }
+        timer.tolerance = 30
+        RunLoop.main.add(timer, forMode: .common)
+        panelRelease = timer
     }
 }
 
 extension Notification.Name {
     static let contextOSPopoverOpened = Notification.Name("contextOSPopoverOpened")
     static let contextOSPopoverClosed = Notification.Name("contextOSPopoverClosed")
+}
+
+/// Hosts 뭉치's layer inside the status button and passes on what AppKit tells
+/// it about the menu bar — its light/dark appearance, and the backing scale of
+/// the screen it is on — so the renderer never has to poll for either.
+final class MascotHostView: NSView {
+    var onEnvironmentChange: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        onEnvironmentChange?()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        onEnvironmentChange?()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onEnvironmentChange?()
+    }
 }
 
 /// Renders "뭉치" — the ContextOS blob mascot — to a bitmap on every animation
@@ -192,6 +253,27 @@ final class MascotRenderer: ObservableObject {
     private var loopIsDark: Bool?
     private var lastIndex = -1
 
+    /// What the timer is currently paced for.
+    ///
+    /// The timer used to tick at a flat 20Hz — above the fastest loop, so no
+    /// frame was missed — which woke the app 20 times a second for life, though
+    /// the breath it spends nearly all of that life in only changes frame ~4
+    /// times a second. Now it ticks exactly once per frame of whatever is
+    /// playing, and only the short ease between the two runs at the full rate.
+    private enum Pace: Equatable { case idle, eating, easing }
+    private var pace: Pace?
+    private static let easingFPS: Double = 20
+
+    /// Nothing is on screen to animate: the displays are asleep, the screen is
+    /// locked, or another user has the console. The timer is stopped outright
+    /// rather than ticking into the dark.
+    private var screensAsleep = false
+    private var screenLocked = false
+    private var sessionInactive = false
+    private var suspended: Bool { screensAsleep || screenLocked || sessionInactive }
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    private var eatingChange: AnyCancellable?
+
     /// The breath's period: `sin(t · 2)` repeats every π seconds.
     private static let idlePeriod = Double.pi
 
@@ -212,36 +294,147 @@ final class MascotRenderer: ObservableObject {
 
     init(state: MascotState) {
         self.state = state
+        // The notifications below only report changes. Launched (or relaunched
+        // by an update) behind a locked screen or with the displays off, start
+        // paused — and know it before the first tick, which AppKit can trigger
+        // as soon as the glyph's view lands in the menu bar.
+        let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+        screenLocked = (session?["CGSSessionScreenIsLocked"] as? Bool) ?? false
+        screensAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
     }
 
     func start() {
-        guard timer == nil else { return }
+        guard eatingChange == nil else { return }
+        // A start or stop is picked up the moment it happens rather than on the
+        // next tick. `@Published` announces a change *before* making it, so the
+        // tick is deferred until the new value is actually in.
+        eatingChange = state.$eating
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.tick() }
+        observeScreens()
+        environmentChanged()
         tick()
-        // Ticks a little above the fastest loop so no frame is missed, and so a
-        // start/stop is picked up promptly. A tick that finds the same frame
-        // costs an array index and nothing else.
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / (Self.eatFPS + 4),
-                                     repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
-        }
+    }
+
+    /// The menu bar may have changed appearance or scale — re-render the loops
+    /// if it did. Called by the view hosting the glyph, which AppKit notifies.
+    func environmentChanged() {
+        let scale = menuBarScale
+        let dark = menuBarIsDark
+        guard scale != loopScale || dark != loopIsDark else { return }
+        rebuildLoops(scale: scale, dark: dark)
+        // Paused or not, the status item always holds a glyph: started behind a
+        // locked screen, 뭉치 is still there, standing still, the moment it shows.
+        if suspended, let still = idleLoop.first { image = still }
+        tick()
+    }
+
+    /// Someone just clicked 뭉치, so the menu bar is plainly on screen — resume
+    /// even if a wake or unlock notification went astray.
+    func userInteracted() {
+        setSuspended(asleep: false, locked: false, inactive: false)
     }
 
     private func tick() {
-        let now = Date()
-        let scale = menuBarScale
-        let dark = menuBarIsDark
-        if scale != loopScale || dark != loopIsDark { rebuildLoops(scale: scale, dark: dark) }
-
-        let k = state.intensity(at: now)
-        if k <= 0.02 {
-            show(loop: idleLoop, phase: idlePhase(now), tag: 0)
-        } else if k >= 0.98 {
-            show(loop: eatLoop, phase: MascotBeat.foodPhase(now, lane: 0), tag: 1)
-        } else {
-            // Mid-ease: the blend is unique to this instant, so draw it.
-            lastIndex = -1
-            image = frame(at: now, intensity: k, scale: scale, dark: dark)
+        guard !suspended else {
+            // However it came to be running, a timer has nothing to draw now.
+            timer?.invalidate()
+            timer = nil
+            pace = nil
+            return
         }
+        let now = Date()
+        let k = state.intensity(at: now)
+        // Steady only once the ease has all but reached where it is heading;
+        // until then every frame is a unique blend and is drawn live.
+        let pace: Pace = state.eating
+            ? (k >= 0.98 ? .eating : .easing)
+            : (k <= 0.02 ? .idle : .easing)
+
+        switch pace {
+        case .idle:
+            show(loop: idleLoop, phase: idlePhase(now), tag: 0)
+        case .eating:
+            show(loop: eatLoop, phase: MascotBeat.foodPhase(now, lane: 0), tag: 1)
+        case .easing:
+            lastIndex = -1
+            image = frame(at: now, intensity: k, scale: loopScale, dark: loopIsDark ?? false)
+        }
+        if pace != self.pace {
+            self.pace = pace
+            // A start or stop is also the cheap moment to double-check the menu
+            // bar's appearance, in case a change slipped past the host view.
+            environmentChanged()
+            reschedule()
+        }
+    }
+
+    /// Re-arm the timer for the current pace.
+    private func reschedule() {
+        timer?.invalidate()
+        timer = nil
+        guard !suspended, let pace else { return }
+
+        let interval: TimeInterval
+        var fire = Date()
+        switch pace {
+        case .easing:
+            interval = 1 / Self.easingFPS
+            fire = fire.addingTimeInterval(interval)
+        case .idle, .eating:
+            let period = pace == .idle ? Self.idlePeriod : MascotBeat.cycle
+            interval = period / Double(pace == .idle ? Self.idleFrames : Self.eatFrames)
+            // `show` rounds the phase to the nearest frame, so frame j takes over
+            // half a frame before its own instant. Firing just after each of
+            // those points means every tick lands on a new frame: none skipped,
+            // none shown twice, and the timer stays locked to the same absolute
+            // clock the dashboard's 뭉치 reads.
+            let t = fire.timeIntervalSince1970 / interval
+            fire = Date(timeIntervalSince1970: (floor(t - 0.5) + 1.5) * interval + 0.001)
+        }
+        let timer = Timer(fire: fire, interval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        timer.tolerance = interval * 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func setSuspended(asleep: Bool? = nil, locked: Bool? = nil, inactive: Bool? = nil) {
+        let was = suspended
+        if let asleep { screensAsleep = asleep }
+        if let locked { screenLocked = locked }
+        if let inactive { sessionInactive = inactive }
+        guard suspended != was else { return }
+        if suspended {
+            timer?.invalidate()
+            timer = nil
+        } else {
+            // Back on screen: pick up wherever the clock is now.
+            pace = nil
+            lastIndex = -1
+            environmentChanged()
+            tick()
+        }
+    }
+
+    private func observeScreens() {
+        let workspace = NSWorkspace.shared.notificationCenter
+        let distributed = DistributedNotificationCenter.default()
+        func on(_ center: NotificationCenter, _ name: Notification.Name,
+                _ body: @escaping @MainActor (MascotRenderer) -> Void) {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { if let self { body(self) } }
+            }
+            observers.append((center, token))
+        }
+        on(workspace, NSWorkspace.screensDidSleepNotification) { $0.setSuspended(asleep: true) }
+        on(workspace, NSWorkspace.screensDidWakeNotification) { $0.setSuspended(asleep: false) }
+        on(distributed, Notification.Name("com.apple.screenIsLocked")) { $0.setSuspended(locked: true) }
+        on(distributed, Notification.Name("com.apple.screenIsUnlocked")) { $0.setSuspended(locked: false) }
+        on(workspace, NSWorkspace.sessionDidResignActiveNotification) { $0.setSuspended(inactive: true) }
+        on(workspace, NSWorkspace.sessionDidBecomeActiveNotification) { $0.setSuspended(inactive: false) }
     }
 
     /// 0…1 through one breath.
@@ -267,8 +460,8 @@ final class MascotRenderer: ObservableObject {
     ///
     /// Not `NSScreen.main` — that is the *focused* screen, which is a different
     /// one whenever the menu bar with 뭉치 in it isn't the screen you're typing
-    /// on. Read every tick like the appearance, so moving the bar between a
-    /// Retina and a 1x display re-renders the loops at the new scale by itself.
+    /// on. Re-read whenever the host view reports a backing change, so moving the
+    /// bar between a Retina and a 1x display re-renders the loops at the new scale.
     private var menuBarScale: CGFloat {
         appearanceSource?.window?.backingScaleFactor
             ?? NSScreen.main?.backingScaleFactor
@@ -277,10 +470,8 @@ final class MascotRenderer: ObservableObject {
 
     /// Whether the menu bar is currently dark.
     ///
-    /// Read every tick rather than observed: it is a property read, and polling
-    /// it means the colour self-corrects on a theme switch, a wallpaper change
-    /// behind the bar, or a move to another display — without a KVO observer to
-    /// forget to tear down.
+    /// Re-read whenever the host view reports an appearance change — a theme
+    /// switch, a wallpaper change behind the bar, or a move to another display.
     private var menuBarIsDark: Bool {
         // The status button reports `NSAppearanceNameVibrantDark` rather than
         // `darkAqua`, which is why the raw name is no use here — `bestMatch`

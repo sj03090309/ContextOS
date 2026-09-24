@@ -274,6 +274,25 @@ public final class UsageStore {
         return scalar("SELECT COALESCE(SUM(MAX(full - selected, 0)), 0) FROM usage WHERE ts >= \(startOfDay);")
     }
 
+    /// What the menu bar shows — the event count, all-time savings, and savings
+    /// since `startOfDay` — in a single pass over the table, rather than the four
+    /// full-table aggregates plus a GROUP BY that `summary()` runs.
+    public func savingsTotals(since startOfDay: Double) -> (queryCount: Int, totalSaved: Int, todaySaved: Int) {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, """
+        SELECT COUNT(*),
+               COALESCE(SUM(MAX(full - selected, 0)), 0),
+               COALESCE(SUM(CASE WHEN ts >= ? THEN MAX(full - selected, 0) ELSE 0 END), 0)
+        FROM usage;
+        """, -1, &stmt, nil) == SQLITE_OK else { return (0, 0, 0) }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, startOfDay)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return (0, 0, 0) }
+        return (Int(sqlite3_column_int64(stmt, 0)),
+                Int(sqlite3_column_int64(stmt, 1)),
+                Int(sqlite3_column_int64(stmt, 2)))
+    }
+
     public func summary() -> UsageSummary {
         let count = scalar("SELECT COUNT(*) FROM usage;")
         let totalSaved = scalar("SELECT COALESCE(SUM(MAX(full - selected, 0)), 0) FROM usage;")
@@ -388,13 +407,30 @@ public final class UsageStore {
     /// Drop cache rows for transcripts that no longer exist on disk, so the
     /// table can't grow forever as sessions are deleted or rotated away.
     public func pruneSessionCache(keeping live: Set<String>) {
-        let stale = sessionCache().keys.filter { !live.contains($0) }
-        guard !stale.isEmpty else { return }
+        deleteSessionCache(paths: sessionCachePaths().subtracting(live))
+    }
+
+    /// Every cached transcript's path — all a prune needs, without decoding the
+    /// per-project JSON of rows that are about to be thrown away.
+    public func sessionCachePaths() -> Set<String> {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT path FROM session_cache;", -1, &stmt, nil) == SQLITE_OK
+        else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        var paths: Set<String> = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            paths.insert(String(cString: sqlite3_column_text(stmt, 0)))
+        }
+        return paths
+    }
+
+    /// Remove the cached parses of these transcripts.
+    public func deleteSessionCache<S: Sequence>(paths: S) where S.Element == String {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, "DELETE FROM session_cache WHERE path = ?;",
                                  -1, &stmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(stmt) }
-        for path in stale {
+        for path in paths {
             sqlite3_reset(stmt)
             bindText(stmt, 1, path)
             _ = sqlite3_step(stmt)
