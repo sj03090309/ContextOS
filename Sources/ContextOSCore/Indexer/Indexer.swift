@@ -32,8 +32,13 @@ public struct Indexer: Sendable {
     /// dropped. The `contentHash` guards against mtime-only touches. This makes
     /// the watcher's per-save re-index cheap on large projects.
     @discardableResult
-    public func index(projectRoot: URL) throws -> IndexStats {
+    public func index(projectRoot: URL, force: Bool = false) throws -> IndexStats {
         let start = Date()
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: projectRoot.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw CocoaError(.fileReadNoSuchFile)
+        }
 
         let dbURL = Self.databaseURL(forProjectRoot: projectRoot)
         let indexDir = dbURL.deletingLastPathComponent()
@@ -49,6 +54,13 @@ public struct Indexer: Sendable {
 
         let store = try IndexStore(path: dbURL.path)
 
+        // Acquire the writer lock before reading the snapshot. Two MCP/hook
+        // processes must not both decide to insert the same new path from a
+        // snapshot taken before the other writer committed.
+        try store.beginImmediateTransaction()
+        var committed = false
+        defer { if !committed { try? store.rollback() } }
+
         // Snapshot of what's already indexed, keyed by path.
         var existing: [String: IndexedFile] = [:]
         for f in try store.allFiles() { existing[f.relativePath] = f }
@@ -57,7 +69,6 @@ public struct Indexer: Sendable {
         var seenPaths = Set<String>()
 
         var stats = IndexStats()
-        try store.beginTransaction()
 
         for scanned in files {
             seenPaths.insert(scanned.relativePath)
@@ -65,7 +76,7 @@ public struct Indexer: Sendable {
             stats.filesIndexed += 1
 
             // Fast path: unchanged size + mtime → skip entirely (no read/parse).
-            if let prior = existing[scanned.relativePath],
+            if !force, let prior = existing[scanned.relativePath],
                prior.byteSize == scanned.byteSize,
                prior.modifiedAt == scanned.modifiedAt {
                 continue
@@ -85,7 +96,7 @@ public struct Indexer: Sendable {
             let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 
             // Content identical (mtime-only touch): just refresh metadata.
-            if let prior = existing[scanned.relativePath], prior.contentHash == hash, let id = prior.id {
+            if !force, let prior = existing[scanned.relativePath], prior.contentHash == hash, let id = prior.id {
                 try store.updateFileMeta(id: id, byteSize: scanned.byteSize, modifiedAt: scanned.modifiedAt)
                 continue
             }
@@ -119,6 +130,7 @@ public struct Indexer: Sendable {
         }
 
         try store.commit()
+        committed = true
         stats.duration = Date().timeIntervalSince(start)
         return stats
     }

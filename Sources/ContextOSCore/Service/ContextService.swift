@@ -57,7 +57,8 @@ public struct ContextService: Sendable {
 
     /// Actively refine a raw query against a project's symbol vocabulary.
     public func refineQuery(_ query: String, projectRoot: URL) -> RefinedQuery {
-        let vocab = (try? Indexer.openStore(forProjectRoot: projectRoot).symbolNames()) ?? []
+        let store = try? Indexer.openStore(forProjectRoot: projectRoot)
+        let vocab = ((try? store?.symbolNames()) ?? []) + ((try? store?.allFiles().map(\.relativePath)) ?? [])
         return refiner.refine(query, vocabulary: vocab)
     }
 
@@ -79,13 +80,13 @@ public struct ContextService: Sendable {
     /// meant edits were silently invisible until a manual re-index).
     @discardableResult
     public func ensureIndexed(projectRoot: URL, forceReindex: Bool = false) throws -> Bool {
-        try indexer.index(projectRoot: projectRoot)
+        try indexer.index(projectRoot: projectRoot, force: forceReindex)
         return true
     }
 
-    /// Build the index unconditionally, returning stats.
+    /// Force a full reparse, including unchanged source (e.g. after a parser update).
     public func reindex(projectRoot: URL) throws -> IndexStats {
-        try indexer.index(projectRoot: projectRoot)
+        try indexer.index(projectRoot: projectRoot, force: true)
     }
 
     /// Rank the most relevant files for a query (auto-indexes if needed).
@@ -98,11 +99,15 @@ public struct ContextService: Sendable {
         let store = try Indexer.openStore(forProjectRoot: projectRoot)
         let signals = useGitSignals ? git.signals(projectRoot) : .empty
 
-        let refined = useRefiner ? refiner.refine(query, vocabulary: (try? store.symbolNames()) ?? []) : nil
+        let vocabulary = try store.symbolNames() + store.allFiles().map(\.relativePath)
+        let relativeQuery = query.replacingOccurrences(of: projectRoot.standardizedFileURL.path + "/", with: "")
+        var refined = useRefiner ? refiner.refine(TextTokens.withoutFileReferences(relativeQuery), vocabulary: vocabulary) : nil
+        refined?.original = query
         var selection = try optimizer.selectContext(
-            query: query, from: store, tokenBudget: tokenBudget,
+            query: relativeQuery, from: store, tokenBudget: tokenBudget,
             signals: signals, overrideTerms: refined?.terms
         )
+        selection.query = query
         selection.refinement = refined
         return selection
     }
@@ -168,18 +173,15 @@ public struct ContextService: Sendable {
         memory: SessionMemory? = nil
     ) throws -> (selection: ContextSelection, bundle: String, skippedUnchanged: Int,
                  deliveredFullTokens: Int, deliveredTokens: Int) {
-        let selection = try relevantContext(
-            query: query, projectRoot: projectRoot, tokenBudget: tokenBudget
+        // Rank first, then charge for what we actually send. Charging for whole
+        // files here excluded large files before their small slices could fit.
+        var selection = try relevantContext(
+            query: query, projectRoot: projectRoot, tokenBudget: Int.max
         )
-        var assembled = assembleBundle(selection, projectRoot: projectRoot, memory: memory)
-        // Measure the delivered file bodies *before* appending the over-budget
-        // signature outline — the outline is bonus context for OTHER files, not
-        // a cost against what we saved on the files we actually delivered.
-        let deliveredTokens = optimizer.estimator.estimate(text: assembled.bundle)
-        if !selection.excluded.isEmpty {
-            assembled.bundle += signatureOutline(for: selection.excluded, projectRoot: projectRoot)
-        }
-        return (selection, assembled.bundle, assembled.skipped, assembled.deliveredFull, deliveredTokens)
+        selection.tokenBudget = max(0, tokenBudget)
+        let assembled = assembleBundle(selection, projectRoot: projectRoot, memory: memory)
+        return (assembled.selection, assembled.bundle, assembled.skipped,
+                assembled.deliveredFull, assembled.selection.estimatedTokens)
     }
 
     /// Proactively build context from the files you're **currently editing**
@@ -193,11 +195,13 @@ public struct ContextService: Sendable {
         guard !signals.changedPaths.isEmpty else { return nil }
         try ensureIndexed(projectRoot: projectRoot)
         let store = try Indexer.openStore(forProjectRoot: projectRoot)
-        let selection = try optimizer.selectContext(
-            query: "", from: store, tokenBudget: tokenBudget, signals: signals
+        var selection = try optimizer.selectContext(
+            query: "", from: store, tokenBudget: Int.max, signals: signals
         )
         guard !selection.included.isEmpty else { return nil }
-        return (selection, assembleBundle(selection, projectRoot: projectRoot, memory: nil).bundle)
+        selection.tokenBudget = max(0, tokenBudget)
+        let assembled = assembleBundle(selection, projectRoot: projectRoot, memory: nil)
+        return (assembled.selection, assembled.bundle)
     }
 
     /// Concatenate the included files (sliced when a query narrowed them).
@@ -209,46 +213,78 @@ public struct ContextService: Sendable {
         _ selection: ContextSelection,
         projectRoot: URL,
         memory: SessionMemory?
-    ) -> (bundle: String, skipped: Int, deliveredFull: Int) {
+    ) -> (selection: ContextSelection, bundle: String, skipped: Int, deliveredFull: Int) {
+        var result = selection
+        result.included = []
+        result.excluded = []
         var bundle = ""
+        var fullCharacterCount = 0
         var skipped = 0
-        var deliveredFull = 0
-        let rootPath = projectRoot.standardizedFileURL.path
-        for file in selection.included {
-            let url = projectRoot.appendingPathComponent(file.path).standardizedFileURL
+        let rootPath = projectRoot.resolvingSymlinksInPath().standardizedFileURL.path
+        for file in selection.included + selection.excluded {
+            let marker = "// FILE: \(file.path) (이미 전달됨; fresh=true로 재요청)\n\n"
+            let emptySection = "// ===== FILE: \(file.path) =====\n\n"
+            let minimumFraming = marker.count < emptySection.count ? marker : emptySection
+            // Once even an empty section cannot fit, don't read and parse a
+            // potentially huge file just to reject it a second time.
+            guard optimizer.estimator.estimate(text: bundle + minimumFraming) <= selection.tokenBudget else {
+                result.excluded.append(file)
+                continue
+            }
+            let url = projectRoot.appendingPathComponent(file.path).resolvingSymlinksInPath().standardizedFileURL
             // Defense in depth: never read outside the project root.
-            guard url.path == rootPath || url.path.hasPrefix(rootPath + "/") else { continue }
-            guard let content = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            guard url.path.hasPrefix(rootPath == "/" ? "/" : rootPath + "/"),
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
+                  let content = try? String(contentsOf: url, encoding: .utf8)
+            else { result.excluded.append(file); continue }
 
             var body = content
             var note = ""
             if useSlicing, !selection.terms.isEmpty {
                 let result = slicer.slice(source: content, language: file.language, terms: selection.terms)
                 if result.sliced {
-                    body = result.content
                     note = "  (\(result.totalLines)줄 중 \(result.keptLines)줄, 관련 심볼만)"
+                    if result.content.count + note.count < content.count {
+                        body = result.content
+                    } else {
+                        note = ""
+                    }
                 }
             }
 
-            if let memory {
-                let hash = Self.bodyHash(body)
-                if memory.isUnchanged(project: rootPath, path: file.path, bodyHash: hash) {
-                    bundle += "// ===== FILE: \(file.path) — 변경 없음, 이 세션에서 이미 전달됨 (본문 생략; 다시 필요하면 fresh=true로 재요청) =====\n\n"
-                    skipped += 1
-                    continue
-                }
-                memory.markServed(project: rootPath, path: file.path, bodyHash: hash)
+            func section(_ content: String, note: String = "") -> String {
+                "// ===== FILE: \(file.path)\(note) =====\n" + content
+                    + (content.hasSuffix("\n") ? "\n" : "\n\n")
             }
-
-            // Delivered in full (sliced or whole): the counterfactual is the
-            // agent reading the whole file, so credit its full-file estimate.
-            deliveredFull += file.estimatedTokens
-            bundle += "// ===== FILE: \(file.path)\(note) =====\n"
-            bundle += body
-            if !body.hasSuffix("\n") { bundle += "\n" }
-            bundle += "\n"
+            let hash = memory == nil ? nil : Self.bodyHash(body)
+            let bodySection = section(body, note: note)
+            let unchanged = hash.map { memory?.isUnchanged(project: rootPath, path: file.path, bodyHash: $0) == true } ?? false
+            // Very small bodies can cost less than the dedup marker itself.
+            let dedup = unchanged && marker.count < bodySection.count
+            let addition = dedup ? marker : bodySection
+            guard optimizer.estimator.estimate(text: bundle + addition) <= selection.tokenBudget else {
+                result.excluded.append(file)
+                continue
+            }
+            bundle += addition
+            var delivered = file
+            delivered.estimatedTokens = optimizer.estimator.estimate(text: addition)
+            result.included.append(delivered)
+            if dedup {
+                skipped += 1
+            } else {
+                // Compare identical units and framing on both sides. Byte-size
+                // estimates inflated savings on Unicode and unsliced code.
+                fullCharacterCount += section(content).count
+                if let hash { memory?.markServed(project: rootPath, path: file.path, bodyHash: hash) }
+            }
         }
-        return (bundle, skipped, deliveredFull)
+        let remaining = max(0, selection.tokenBudget - optimizer.estimator.estimate(text: bundle))
+        bundle += signatureOutline(for: result.excluded, projectRoot: projectRoot, tokenBudget: remaining)
+        result.estimatedTokens = optimizer.estimator.estimate(text: bundle)
+        result.contextScore = ContextOptimizer.contextScore(included: result.included, excluded: result.excluded)
+        return (result, bundle, skipped,
+                optimizer.estimator.estimate(characterCount: fullCharacterCount, language: .unknown))
     }
 
     private static func bodyHash(_ body: String) -> String {
@@ -258,28 +294,34 @@ public struct ContextService: Sendable {
     /// A signatures-only outline of relevant files that didn't fit the budget,
     /// built from the index (no file reads). A few tokens buy the agent the
     /// structure of what else exists, and the line numbers to ask for it.
-    private func signatureOutline(for excluded: [ScoredFile], projectRoot: URL) -> String {
+    private func signatureOutline(for excluded: [ScoredFile], projectRoot: URL, tokenBudget: Int) -> String {
+        guard !excluded.isEmpty, tokenBudget > 0 else { return "" }
         let shown = Array(excluded.prefix(5))
         guard let store = try? Indexer.openStore(forProjectRoot: projectRoot),
               // Targeted: only the shown files' symbols, not the whole table.
               let symbolsByPath = try? store.symbols(forPaths: shown.map(\.path))
         else { return "" }
 
-        var out = "// ===== 관련도 높지만 예산 초과 — 시그니처 목차만 (필요하면 이 파일들을 지목해 다시 요청) =====\n"
+        var out = "// 시그니처 목차 (본문 예산 초과)\n"
+        var hasFile = false
         for file in shown {
-            out += "// \(file.path)  (~\(TokenEstimator.abbrev(file.estimatedTokens)) tokens)\n"
+            let heading = "// \(file.path)\n"
+            guard optimizer.estimator.estimate(text: out + heading) <= tokenBudget else { break }
+            out += heading
+            hasFile = true
             guard let symbols = symbolsByPath[file.path], !symbols.isEmpty else { continue }
             for sym in symbols.prefix(12) {
-                out += "//   L\(sym.line)  \(sym.kind.rawValue) \(sym.name)\n"
+                let line = "//   L\(sym.line)  \(sym.kind.rawValue) \(sym.name)\n"
+                guard optimizer.estimator.estimate(text: out + line) <= tokenBudget else { break }
+                out += line
             }
-            if symbols.count > 12 { out += "//   … 심볼 \(symbols.count - 12)개 더\n" }
         }
-        if excluded.count > 5 { out += "// … 그 외 \(excluded.count - 5)개 파일\n" }
-        return out
+        // Don't spend the last tokens on an empty outline heading.
+        return hasFile ? out : ""
     }
 
     /// Record the **delivery** saving: the full-file size of what ContextOS
-    /// actually delivered this call vs the sliced/deduped tokens it sent. This
+    /// actually delivered this call vs the complete response, outlines included. This
     /// is the honest measure — "you were going to read these files (fullTokens);
     /// ContextOS gave you deliveredTokens instead" — recorded once, at the
     /// read_optimized delivery point (not on planning calls or the hint hook, so

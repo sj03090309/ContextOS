@@ -125,11 +125,17 @@ final class TokenEfficiencyTests: XCTestCase {
     func testExcludedFilesGetSignatureOutline() throws {
         let root = try makeProject()
         defer { try? FileManager.default.removeItem(at: root) }
-        // A tiny budget forces at least one relevant file out.
+        // Make both bodies too large, leaving room for a useful outline.
+        // An outline is optional when delivered bodies exhaust the budget.
+        for path in ["src/login.py", "src/auth.py"] {
+            try ("def login():\n    return '" + String(repeating: "payload", count: 200) + "'\n")
+                .write(to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
+        }
         let (selection, bundle, _, _, _) = try ContextService().optimizedBundle(
-            query: "fix login", projectRoot: root, tokenBudget: 30)
+            query: "fix login", projectRoot: root, tokenBudget: 100)
         XCTAssertFalse(selection.excluded.isEmpty)
         XCTAssertTrue(bundle.contains("시그니처 목차"))
+        XCTAssertLessThanOrEqual(TokenEstimator().estimate(text: bundle), 100)
         // The outline names the excluded file and lists a symbol with its line.
         let excludedPath = selection.excluded[0].path
         XCTAssertTrue(bundle.contains(excludedPath))
@@ -214,6 +220,63 @@ final class AgentIntegrationTests: XCTestCase {
                        "re-running connect must update the block, not duplicate it")
         XCTAssertTrue(content.contains("command = \"/b\""))
         XCTAssertFalse(content.contains("command = \"/a\""))
+    }
+}
+
+/// Detection must report concrete configuration evidence and never turn an
+/// unobserved transcript into a made-up zero-token total.
+final class AgentDetectorTests: XCTestCase {
+
+    private func makeHome(dirs: [String]) throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("contextos-detector-\(UUID().uuidString)")
+        for dir in dirs {
+            try FileManager.default.createDirectory(
+                at: home.appendingPathComponent(dir), withIntermediateDirectories: true)
+        }
+        return home
+    }
+
+    private func agent(_ name: String, in agents: [DetectedAgent]) throws -> DetectedAgent {
+        try XCTUnwrap(agents.first { $0.name == name })
+    }
+
+    func testReportsOnlyExplicitContextOSConfigurationsAndRecordedUsage() throws {
+        let home = try makeHome(dirs: [".claude/projects", ".codex", ".gemini", ".cursor", ".continue"])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        try #"{"mcpServers":{"contextos":{"command":"/opt/contextos"}}}"#
+            .write(to: home.appendingPathComponent(".claude.json"), atomically: true, encoding: .utf8)
+        try "[mcp_servers.contextos]\ncommand = \"/opt/contextos\"\n"
+            .write(to: home.appendingPathComponent(".codex/config.toml"), atomically: true, encoding: .utf8)
+        try #"{"mcpServers":{"other":{}}}"#
+            .write(to: home.appendingPathComponent(".gemini/settings.json"), atomically: true, encoding: .utf8)
+        try #"{"mcpServers":{"contextos":{"command":"/opt/contextos"}}}"#
+            .write(to: home.appendingPathComponent(".cursor/mcp.json"), atomically: true, encoding: .utf8)
+
+        var usage = AgentUsageSnapshot()
+        usage.availableAgents = ["Claude Code", "Codex"]
+        usage.byAgent = ["Claude Code": 123, "Codex": 456]
+        let agents = AgentDetector.detect(home: home, usage: usage)
+
+        XCTAssertTrue(try agent("Claude Code", in: agents).connection.isConfigured)
+        XCTAssertEqual(try agent("Claude Code", in: agents).usage, .reported(tokens: 123))
+        XCTAssertTrue(try agent("Codex", in: agents).connection.isConfigured)
+        XCTAssertEqual(try agent("Codex", in: agents).usage, .reported(tokens: 456))
+        XCTAssertEqual(try agent("Gemini CLI", in: agents).connection,
+                       .notConfigured(path: home.appendingPathComponent(".gemini/settings.json").path))
+        XCTAssertTrue(try agent("Cursor", in: agents).connection.isConfigured)
+        XCTAssertEqual(try agent("Continue", in: agents).connection, .unsupported)
+    }
+
+    func testMissingTranscriptIsShownAsMissingRatherThanZero() throws {
+        let home = try makeHome(dirs: [".codex"])
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        var usage = AgentUsageSnapshot()
+        usage.availableAgents = ["Claude Code"] // Codex has no readable session file.
+        let codex = try agent("Codex", in: AgentDetector.detect(home: home, usage: usage))
+        XCTAssertEqual(codex.usage, .noLocalRecord)
     }
 }
 

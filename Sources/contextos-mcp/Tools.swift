@@ -27,7 +27,8 @@ enum Tools {
             "name": "read_optimized",
             "description": """
             Like get_relevant_context, but returns the actual concatenated contents \
-            of the selected files, already within the token budget — the minimal \
+            of the selected files, within a local estimated token budget \
+            including headings and outlines — the minimal \
             context to read for the task. Bodies identical to ones already sent in \
             this session are elided; pass fresh=true to force full resend (e.g. \
             after your context was compacted and earlier file contents were lost).

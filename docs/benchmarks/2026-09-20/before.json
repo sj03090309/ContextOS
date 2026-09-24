@@ -1,0 +1,60 @@
+{
+  "explicit_filename": {
+    "selected": [
+      "Tests/PackageTests.swift",
+      "Package.swift",
+      "Sources/Noise.swift"
+    ],
+    "cold_ms": 119.19,
+    "warm_median_ms": 77.57
+  },
+  "large_file_small_budget": {
+    "budget": 250,
+    "body_present": false,
+    "response_tokens": 10,
+    "whole_source_tokens": 4665,
+    "response_bytes": 41,
+    "elapsed_ms": 93.72
+  },
+  "session_dedup": {
+    "first_tokens": 46,
+    "repeat_tokens": 48,
+    "repeat_body_present": false,
+    "fresh_body_present": true
+  },
+  "complete_response_budgets": [
+    {
+      "budget": 1,
+      "response_tokens": 10
+    },
+    {
+      "budget": 30,
+      "response_tokens": 10
+    },
+    {
+      "budget": 100,
+      "response_tokens": 165
+    },
+    {
+      "budget": 250,
+      "response_tokens": 293
+    },
+    {
+      "budget": 500,
+      "response_tokens": 520
+    }
+  ],
+  "forced_reindex": {
+    "first": "files: 10 (skipped 0), symbols: 0, imports: 0",
+    "second": "files: 10 (skipped 0), symbols: 0, imports: 0"
+  },
+  "project_stats": {
+    "responded": true
+  },
+  "get_project_rules": {
+    "responded": true
+  },
+  "restore_session": {
+    "responded": true
+  }
+}

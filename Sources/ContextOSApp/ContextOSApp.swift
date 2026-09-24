@@ -8,10 +8,25 @@ struct ContextOSApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        // Menu-bar-only agent: the UI lives entirely in the status item + popover
-        // managed by AppDelegate. This empty Settings scene keeps SwiftUI happy
-        // without opening a window.
-        Settings { EmptyView() }
+        // SwiftUI requires one scene even though ContextOS is a menu-bar-only
+        // app. `Settings { EmptyView() }` made macOS open a blank “ContextOS
+        // Settings” window at launch. Keep an inert scene solely for the app
+        // lifecycle, hide it immediately, and remove the Settings menu command.
+        WindowGroup("ContextOS", id: "contextos-lifecycle") {
+            LifecycleSceneView()
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) { }
+        }
+    }
+}
+
+/// An invisible lifecycle host for the SwiftUI `App` protocol. The real UI is
+/// the AppKit status item and its popover, installed by `AppDelegate`.
+private struct LifecycleSceneView: View {
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
     }
 }
 
@@ -21,6 +36,7 @@ struct ContextOSApp: App {
 /// menu-bar icon, the way native status-bar apps do.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, ObservableObject {
+    private static let lifecycleWindowPrefix = "contextos-lifecycle-"
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private let model = DashboardModel()
@@ -95,6 +111,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             .removeDuplicates()
             .sink { [weak self] title in self?.statusItem.button?.title = title }
             .store(in: &subscriptions)
+        hideLifecycleWindow()
+    }
+
+    /// `WindowGroup` is required by SwiftUI's `App` lifecycle, but ContextOS
+    /// has no document window. Limit this to our scene identifier so project
+    /// windows opened from the dashboard remain visible.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        hideLifecycleWindow()
+    }
+
+    private func hideLifecycleWindow() {
+        DispatchQueue.main.async {
+            NSApp.windows
+                .filter { $0.identifier?.rawValue.hasPrefix(Self.lifecycleWindowPrefix) == true }
+                .forEach { $0.orderOut(nil) }
+        }
     }
 
     @objc private func togglePopover() {

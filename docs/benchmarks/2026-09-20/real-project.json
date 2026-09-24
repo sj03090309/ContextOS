@@ -1,0 +1,26 @@
+{
+  "before": {
+    "exact_file_selected": [
+      "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift",
+      "Tests/ContextOSCoreTests/OptimizerTests.swift",
+      "Sources/ContextOSCore/Optimizer/ContextSelection.swift",
+      "Sources/ContextOSCore/Optimizer/TextTokens.swift",
+      "Sources/ContextOSCore/Optimizer/CodeSlicer.swift",
+      "Tests/ContextOSCoreTests/IndexHygieneTests.swift",
+      "Sources/contextos-mcp/main.swift"
+    ],
+    "exact_file_ms": 344.09,
+    "bodyHash_definition_present": false,
+    "bundle_tokens": 1556,
+    "bundle_ms": 270.63
+  },
+  "after": {
+    "exact_file_selected": [
+      "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift"
+    ],
+    "exact_file_ms": 271.65,
+    "bodyHash_definition_present": true,
+    "bundle_tokens": 1200,
+    "bundle_ms": 372.49
+  }
+}

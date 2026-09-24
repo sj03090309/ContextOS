@@ -43,13 +43,24 @@ public struct ContextOptimizer: Sendable {
         overrideTerms: [String]? = nil
     ) throws -> ContextSelection {
         // Use actively-refined terms when provided, else derive from the query.
-        let terms = overrideTerms ?? TextTokens.queryTerms(query)
+        let terms = overrideTerms ?? TextTokens.queryTerms(TextTokens.withoutFileReferences(query))
         let files = try store.allFiles()
+        let references = TextTokens.fileReferences(in: query).map {
+            $0.hasPrefix("./") ? String($0.dropFirst(2)).lowercased() : $0.lowercased()
+        }
+        let explicitPaths = Set(files.filter { file in
+            let path = file.relativePath.lowercased()
+            return references.contains { reference in
+                path == reference || (reference.contains("/")
+                    ? path.hasSuffix("/" + reference)
+                    : path.split(separator: "/").last.map(String.init) == reference)
+            }
+        }.map(\.relativePath))
         let symbolsByFile = try store.symbolsByFile()
         let importsByFile = try store.importsByFile()
 
         // Proceed if there's *any* signal: query terms or Git recency.
-        guard !files.isEmpty, !terms.isEmpty || !signals.isEmpty else {
+        guard !files.isEmpty, !terms.isEmpty || !signals.isEmpty || !explicitPaths.isEmpty else {
             return ContextSelection(
                 query: query, terms: terms, included: [], excluded: [],
                 tokenBudget: tokenBudget, estimatedTokens: 0, contextScore: 0
@@ -151,11 +162,17 @@ public struct ContextOptimizer: Sendable {
                 scores[id] = fileScore * coverageBoost
                 reasons[id] = fileReasons
             }
+            if explicitPaths.contains(file.relativePath) {
+                scores[id] = max(scores[id] ?? 0, Self.symbolExactScore)
+                reasons[id, default: []].insert("requested file \(file.relativePath)", at: 0)
+            }
         }
 
         // 1b. Git recency: files you're editing (or recently committed) rise, and
         // become seeds for graph expansion below — the "Smart Context Builder".
-        if !signals.isEmpty {
+        // An explicit file request must not be padded with unrelated recent
+        // edits. Query-free proactive context still uses all Git signals.
+        if !signals.isEmpty && references.isEmpty {
             var idByPath: [String: Int64] = [:]
             for f in files { if let id = f.id { idByPath[f.relativePath] = id } }
             for path in signals.changedPaths {
@@ -209,7 +226,12 @@ public struct ContextOptimizer: Sendable {
             )
         }
         .sorted { lhs, rhs in
-            lhs.score != rhs.score ? lhs.score > rhs.score : lhs.estimatedTokens < rhs.estimatedTokens
+            let leftExplicit = explicitPaths.contains(lhs.path)
+            let rightExplicit = explicitPaths.contains(rhs.path)
+            if leftExplicit != rightExplicit { return leftExplicit }
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            if lhs.estimatedTokens != rhs.estimatedTokens { return lhs.estimatedTokens < rhs.estimatedTokens }
+            return lhs.path < rhs.path
         }
 
         var included: [ScoredFile] = []
@@ -265,7 +287,7 @@ public struct ContextOptimizer: Sendable {
 
     // MARK: - Context score (0–100)
 
-    private static func contextScore(included: [ScoredFile], excluded: [ScoredFile]) -> Int {
+    static func contextScore(included: [ScoredFile], excluded: [ScoredFile]) -> Int {
         guard let top = included.first else { return 0 }
         let includedMass = included.reduce(0) { $0 + $1.score }
         let excludedMass = excluded.reduce(0) { $0 + $1.score }

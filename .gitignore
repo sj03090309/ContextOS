@@ -16,3 +16,7 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Local tool output and per-machine agent config
+graphify-out/
+.codex/

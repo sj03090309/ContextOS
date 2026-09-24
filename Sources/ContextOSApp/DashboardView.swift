@@ -99,16 +99,18 @@ struct DashboardView: View {
         .background(VisualEffectBackground())
     }
 
-    // ContextOS + live connection state.
+    // The header deliberately describes configuration evidence, not a guessed
+    // live session. An MCP process starts only when its AI client needs it.
     private var header: some View {
-        HStack(spacing: 6) {
+        let configured = model.agents.filter { $0.connection.isConfigured }.count
+        return HStack(spacing: 6) {
             Text("ContextOS").font(.system(size: 13, weight: .semibold))
             Spacer()
             HStack(spacing: 4) {
                 Circle()
                     .fill(model.connected ? Color.green : Color.secondary)
                     .frame(width: 6, height: 6)
-                Text(model.connected ? "연결됨" : "연결 안 됨")
+                Text(configured > 0 ? "MCP 설정 \(configured)개" : "MCP 설정 없음")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
@@ -139,6 +141,8 @@ struct DashboardView: View {
                 Text(TokenEstimator.korean(CalendarGrid.total(Date(), model.tokensByDay)) + " 토큰")
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
             }
+            Text("Claude Code·Codex 로컬 기록 기준")
+                .font(.system(size: 9)).foregroundStyle(.secondary)
             MonthCalendarView(month: Date(), tokensByDay: model.tokensByDay)
         }
     }
@@ -184,7 +188,7 @@ struct DashboardView: View {
             Divider().frame(height: 26)
             segment("최적화", "\(model.queryCount)")
             Divider().frame(height: 26)
-            segment("AI 사용", TokenEstimator.korean(model.aiTokens))
+            segment("로컬 기록", TokenEstimator.korean(model.aiTokens))
         }
         .padding(.vertical, 8)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
@@ -205,7 +209,7 @@ struct DashboardView: View {
     private var projects: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.projectUsage.isEmpty {
-                Text("아직 AI 사용 기록이 없어요.")
+                Text("Claude Code 또는 Codex의 로컬 사용 기록이 없어요.")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
                 ForEach(model.projectUsage) { p in
@@ -377,7 +381,10 @@ struct DashboardView: View {
         }
     }
 
-    // Detected AI tools, one compact row each.
+    // Each row separates three distinct facts: tool presence, explicit MCP
+    // configuration, and locally readable usage. These must never be inferred
+    // from each other — an installed directory does not prove a connection,
+    // and an absent transcript is not zero usage.
     private var agents: some View {
         VStack(alignment: .leading, spacing: 6) {
             if model.agents.isEmpty {
@@ -385,22 +392,50 @@ struct DashboardView: View {
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             } else {
                 ForEach(model.agents) { agent in
-                    HStack(spacing: 8) {
-                        Circle().fill(Color.green).frame(width: 6, height: 6)
-                        Text(agent.name).font(.system(size: 12))
-                        if let d = agent.detail {
-                            Text(d).font(.system(size: 11)).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(Self.connectionColor(agent.connection))
+                                .frame(width: 7, height: 7)
+                            Text(agent.name).font(.system(size: 12, weight: .medium))
+                            if let d = agent.detail {
+                                Text(d).font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Text(agent.connection.summary)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Self.connectionColor(agent.connection))
                         }
-                        Spacer()
-                        if agent.name == "Claude Code" {
-                            Text(model.connected ? "연결됨" : "미연결")
-                                .font(.system(size: 11))
-                                .foregroundStyle(model.connected ? Color.green : Color.secondary)
+                        HStack(spacing: 4) {
+                            Image(systemName: "chart.bar")
+                                .font(.system(size: 9)).foregroundStyle(.secondary)
+                            Text(agent.usage.summary)
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        if let path = agent.connection.configPath {
+                            Text(Self.displayPath(path))
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                     }
+                    .padding(.vertical, 5)
                 }
             }
         }
+    }
+
+    private static func connectionColor(_ status: ContextOSConnectionStatus) -> Color {
+        switch status {
+        case .configured: return .green
+        case .notConfigured: return .orange
+        case .unsupported: return .secondary
+        }
+    }
+
+    private static func displayPath(_ path: String) -> String {
+        (path as NSString).abbreviatingWithTildeInPath
     }
 
     private var footer: some View {

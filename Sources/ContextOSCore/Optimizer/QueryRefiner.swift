@@ -264,12 +264,18 @@ public struct QueryRefiner: Sendable {
         let maxDist = term.count >= 6 ? 2 : 1
         var best: String?
         var bestDist = maxDist + 1
+        var ambiguous = false
         let termChars = Array(term)
         for word in vocab where abs(word.count - term.count) <= maxDist {
             let d = editDistance(termChars, Array(word))
-            if d > 0 && d < bestDist { bestDist = d; best = word }
+            if d > 0 && d < bestDist {
+                bestDist = d; best = word; ambiguous = false
+            } else if d == bestDist {
+                ambiguous = true
+            }
         }
-        return bestDist <= maxDist ? best : nil
+        // Set iteration order must not decide what the user meant.
+        return bestDist <= maxDist && !ambiguous ? best : nil
     }
 
     static func editDistance(_ a: [Character], _ b: [Character]) -> Int {

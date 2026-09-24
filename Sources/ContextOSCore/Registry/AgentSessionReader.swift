@@ -26,6 +26,11 @@ public struct AgentSession: Sendable {
 /// Everything the dashboard needs about local AI usage, from a single pass.
 public struct AgentUsageSnapshot: Sendable {
     public var totalTokens = 0
+    /// Agent → tokens, derived only from agent-authored local transcripts.
+    public var byAgent: [String: Int] = [:]
+    /// Agents for which at least one supported local transcript was found.
+    /// This distinguishes no record from a reported total of zero.
+    public var availableAgents: Set<String> = []
     /// project cwd → agent → tokens.
     public var byProjectAgent: [String: [String: Int]] = [:]
     /// local `yyyy-MM-dd` → tokens, across every agent.
@@ -105,6 +110,7 @@ public enum AgentSessionReader {
         var snapshot = AgentUsageSnapshot()
 
         for file in files {
+            snapshot.availableAgents.insert(file.agent)
             live.insert(file.url.path)
             guard let row = row(for: file.url, agent: file.agent, cached: cache[file.url.path])
             else { continue }
@@ -116,6 +122,7 @@ public enum AgentSessionReader {
             // separately rather than the whole session landing on one project.
             for (project, usage) in row.projects where usage.tokens > 0 {
                 snapshot.totalTokens += usage.tokens
+                snapshot.byAgent[row.agent, default: 0] += usage.tokens
                 snapshot.byProjectAgent[project, default: [:]][row.agent, default: 0] += usage.tokens
                 for (day, tokens) in usage.days { snapshot.byDay[day, default: 0] += tokens }
                 snapshot.sessions.append(AgentSession(

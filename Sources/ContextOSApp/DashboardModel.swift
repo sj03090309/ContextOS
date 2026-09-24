@@ -225,9 +225,10 @@ final class DashboardModel: ObservableObject {
         let week = BuildLogReader.log(
             since: TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 6 * 86_400),
             snapshot: usage).summary
+        let agents = AgentDetector.detect(usage: usage)
         return AgentsUsage(aiTokens: usage.totalTokens,
-                           agents: AgentDetector.detect(),
-                           connected: ClaudeIntegration.isGloballyInstalled(),
+                           agents: agents,
+                           connected: agents.contains { $0.connection.isConfigured },
                            projectUsage: ProjectAITokenReader.topProjects(snapshot: usage),
                            tokensByDay: usage.byDay,
                            week: week)

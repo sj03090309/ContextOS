@@ -2,10 +2,9 @@ import Foundation
 
 /// Local, **approximate** token counter.
 ///
-/// Anthropic ships no local tokenizer for current Claude models, and the
-/// `count_tokens` API would violate ContextOS's no-network rule. So this is a
-/// calibrated character-density estimate — good to roughly ±5-8% for typical
-/// source, and always shown to users with a `~` prefix (never as exact).
+/// Uses a character-density heuristic without network calls. Accuracy varies
+/// with language and model; this is not a provider tokenizer or a billing
+/// measurement. Estimates are shown with a `~` prefix (never as exact).
 ///
 /// The heart of it: token count correlates with character count, but code packs
 /// more distinct tokens per character than prose (punctuation, short idents), so
@@ -31,8 +30,8 @@ public struct TokenEstimator: Sendable {
         estimate(characterCount: text.count, language: language)
     }
 
-    /// Estimate tokens directly from a byte/char count — lets the optimizer rank
-    /// files using only their indexed size, without re-reading them.
+    /// Estimate from a character count. Planning may use indexed byte sizes as
+    /// a rough proxy; delivery accounting must count the actual text on both sides.
     public func estimate(characterCount: Int, language: Language) -> Int {
         guard characterCount > 0 else { return 0 }
         return Int((Double(characterCount) / divisor(for: language)).rounded(.up))

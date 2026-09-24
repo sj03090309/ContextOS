@@ -27,7 +27,8 @@ public struct ContextSelection: Sendable {
     /// Relevant files that did NOT fit the token budget (surfaced, not silently dropped).
     public var excluded: [ScoredFile]
     public var tokenBudget: Int
-    /// Sum of estimated tokens across `included`.
+    /// Planning: sum of whole-file estimates. Delivery: the complete rendered
+    /// response, including file headings, dedup markers and any outline.
     public var estimatedTokens: Int
     /// 0–100 quality score for the resulting context.
     public var contextScore: Int

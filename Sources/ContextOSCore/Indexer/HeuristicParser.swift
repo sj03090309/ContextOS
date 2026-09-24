@@ -60,25 +60,66 @@ public struct HeuristicParser: LanguageParser {
             // indentation heuristic reads its blocks about as well as Python's.
             return pythonBlockEnd(lines: lines, startIndex: startIndex)
         default:
-            return braceBlockEnd(lines: lines, startIndex: startIndex)
+            return braceBlockEnd(lines: lines, startIndex: startIndex, language: language)
         }
     }
 
-    private static func braceBlockEnd(lines: [String], startIndex: Int) -> Int {
+    private static func braceBlockEnd(lines: [String], startIndex: Int, language: Language) -> Int {
         var depth = 0
         var sawBrace = false
+        var quote: Character?
+        var escaped = false
+        var commentDepth = 0
         let limit = min(lines.count, startIndex + 4000)
         for i in startIndex..<limit {
-            for ch in lines[i] {
+            let characters = Array(lines[i])
+            var offset = 0
+            while offset < characters.count {
+                let ch = characters[offset]
+                let next: Character? = offset + 1 < characters.count ? characters[offset + 1] : nil
+                if commentDepth > 0 {
+                    if ch == "/", next == "*" { commentDepth += 1; offset += 2; continue }
+                    if ch == "*", next == "/" { commentDepth -= 1; offset += 2; continue }
+                    offset += 1
+                    continue
+                }
+                if let delimiter = quote {
+                    // Nested expressions inside interpolated strings need a
+                    // full lexer. Preserve context when this heuristic cannot
+                    // establish the boundary confidently.
+                    if !escaped, language == .swift, ch == "\\", next == "(" { return lines.count }
+                    if delimiter == "`", ch == "$", next == "{" { return lines.count }
+                    if escaped { escaped = false }
+                    else if ch == "\\" { escaped = true }
+                    else if ch == delimiter { quote = nil }
+                    offset += 1
+                    continue
+                }
+                if ch == "/", next == "/" { break }
+                if ch == "/", next == "*" { commentDepth = 1; offset += 2; continue }
+                if language == .rust, ch == "'", let next, next.isLetter || next == "_",
+                   offset + 2 >= characters.count || characters[offset + 2] != "'" {
+                    offset += 1 // lifetime ('a), not a character literal ('a')
+                    continue
+                }
+                if ch == "\"" || ch == "'" || ch == "`" {
+                    quote = ch
+                    offset += 1
+                    continue
+                }
                 if ch == "{" { depth += 1; sawBrace = true }
                 else if ch == "}" { depth -= 1 }
+                if sawBrace && depth <= 0 { return i + 1 }
+                offset += 1
             }
-            if sawBrace && depth <= 0 { return i + 1 }
+            escaped = false
             // Declaration with no body brace within a few lines (e.g. a protocol
             // requirement or an interface method): treat as a single line.
             if !sawBrace && i >= startIndex + 3 { break }
         }
-        return startIndex + 1
+        // An unterminated/very long block is uncertain. Preserve the remainder
+        // rather than telling the slicer that only its declaration is needed.
+        return sawBrace ? lines.count : startIndex + 1
     }
 
     private static func pythonBlockEnd(lines: [String], startIndex: Int) -> Int {

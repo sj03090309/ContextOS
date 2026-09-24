@@ -38,18 +38,24 @@ public struct ProjectScanner: Sendable {
                 // drop .git). Hidden-dir pruning happens in `shouldSkipDirectory`.
                 entries = try fm.contentsOfDirectory(
                     at: dir,
-                    includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey],
+                    includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+                                                .fileSizeKey, .contentModificationDateKey],
                     options: []
                 )
             } catch {
+                if dir.standardizedFileURL == root.standardizedFileURL { throw error }
                 continue // unreadable directory — skip, don't abort the whole scan
             }
 
             for entry in entries {
                 let values = try? entry.resourceValues(
-                    forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
+                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey,
+                              .fileSizeKey, .contentModificationDateKey]
                 )
-                let isDir = values?.isDirectory ?? false
+                // Avoid reading outside the root, directory cycles, duplicate
+                // aliases, and special files whose reads could block forever.
+                guard let values, values.isSymbolicLink != true else { continue }
+                let isDir = values.isDirectory ?? false
                 let name = entry.lastPathComponent
 
                 // Standardize the entry the same way as the root, so /tmp vs
@@ -63,16 +69,18 @@ public struct ProjectScanner: Sendable {
                     continue
                 }
 
+                guard values.isRegularFile == true else { continue }
+
                 if filter.shouldSkipFile(named: name) { continue }
                 if let gitignore, gitignore.isIgnored(relative, isDirectory: false) { continue }
 
-                let size = values?.fileSize ?? 0
+                let size = values.fileSize ?? 0
                 if size > filter.maxFileSize { continue }
 
                 let ext = entry.pathExtension
                 let language = Language.detect(fromExtension: ext)
 
-                let mtime = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
+                let mtime = values.contentModificationDate?.timeIntervalSince1970 ?? 0
 
                 results.append(
                     ScannedFile(

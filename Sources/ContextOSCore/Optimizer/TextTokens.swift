@@ -26,6 +26,28 @@ enum TextTokens {
         return result
     }
 
+    /// Keep explicit file references intact instead of letting extensions such
+    /// as `swift` match every source file. Also accepts quoted relative paths.
+    static func fileReferences(in text: String) -> [String] {
+        let pattern = #"[\p{L}\p{N}_./-]+\.[\p{L}\p{N}_-]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            guard let range = Range($0.range, in: text) else { return nil }
+            let reference = String(text[range])
+            let ext = (reference as NSString).pathExtension.lowercased()
+            // Dotted symbol names (e.g. SessionMemory.isUnchanged) aren't file
+            // paths. Keep those terms available to ordinary symbol matching.
+            guard reference.contains("/") || Language.detect(fromExtension: ext) != .unknown
+                    || ["md", "txt", "json", "yaml", "yml", "toml", "xml", "html", "css", "sql", "sh"].contains(ext)
+            else { return nil }
+            return reference
+        }
+    }
+
+    static func withoutFileReferences(_ text: String) -> String {
+        fileReferences(in: text).reduce(text) { $0.replacingOccurrences(of: $1, with: " ") }
+    }
+
     /// Split any identifier / path / phrase into lowercased subwords.
     ///
     /// `"LoginService"` → `["login", "service"]`,
@@ -38,11 +60,15 @@ enum TextTokens {
             if !current.isEmpty { tokens.append(current.lowercased()); current = "" }
         }
 
+        let characters = Array(text)
         var previous: Character? = nil
-        for ch in text {
+        for (index, ch) in characters.enumerated() {
             if ch.isLetter || ch.isNumber {
-                // camelCase / PascalCase boundary: lower→Upper.
-                if let prev = previous, prev.isLowercase, ch.isUppercase {
+                // Split both loginService and HTTPClient, retaining HTTP as
+                // one term instead of silently turning it into "httpclient".
+                let nextIsLower = index + 1 < characters.count && characters[index + 1].isLowercase
+                if let prev = previous, ch.isUppercase,
+                   prev.isLowercase || (prev.isUppercase && nextIsLower) {
                     flush()
                 }
                 current.append(ch)

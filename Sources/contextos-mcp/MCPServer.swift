@@ -167,23 +167,21 @@ struct MCPServer {
         // fresh=true bypasses the session dedup — the agent lost earlier
         // context (compaction) and needs the bodies again.
         let fresh = (args["fresh"] as? Bool) ?? false
-        let (selection, bundle, skipped, deliveredFull, deliveredTokens) = try service.optimizedBundle(
+        let (selection, bundle, _, deliveredFull, deliveredTokens) = try service.optimizedBundle(
             query: query, projectRoot: root, tokenBudget: budget, memory: fresh ? nil : memory
         )
-        guard !selection.included.isEmpty else {
+        guard !selection.isEmpty else {
             return "No relevant files found for “\(query)”."
         }
         // Honest delivery saving: full size of the files actually delivered vs
-        // the sliced/deduped tokens we sent (outline excluded from the tally).
+        // the complete sliced/deduped response, including any outline.
         service.recordDelivery(
             query: query, projectRoot: root,
             fullTokens: deliveredFull, deliveredTokens: deliveredTokens,
             contextScore: selection.contextScore, fileCount: selection.included.count)
-        var header = "// ContextOS: \(selection.included.count) files, \(TokenEstimator.humanReadable(selection.estimatedTokens)) (budget \(TokenEstimator.humanReadable(budget))), score \(selection.contextScore)/100\n"
-        if skipped > 0 {
-            header += "// \(skipped)개 파일은 이 세션에서 이미 전달된 것과 동일 — 본문 생략으로 토큰 절약\n"
-        }
-        return header + "\n" + bundle
+        // Bundle framing and per-file dedup markers are already included in
+        // its budget. Adding another header here would exceed small budgets.
+        return bundle
     }
 
     private func toolProjectStats(_ args: [String: Any]) throws -> String {

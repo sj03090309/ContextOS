@@ -240,7 +240,7 @@ struct Watch: ParsableCommand {
         print("👀 감시 중: \(root.path)  (Ctrl+C로 종료)")
 
         let watcher = FileWatcher(paths: [root.path]) {
-            if let stats = try? service.reindex(projectRoot: root) {
+            if let stats = try? service.indexer.index(projectRoot: root) {
                 let ts = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
                 print("♻️  [\(ts)] 다시 읽음: 파일 \(stats.filesIndexed)개")
             }

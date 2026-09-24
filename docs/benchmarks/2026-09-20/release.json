@@ -1,0 +1,58 @@
+{
+  "explicit_filename": {
+    "selected": [
+      "Package.swift"
+    ],
+    "cold_ms": 140.57,
+    "warm_median_ms": 81.83
+  },
+  "large_file_small_budget": {
+    "budget": 250,
+    "body_present": true,
+    "response_tokens": 31,
+    "whole_source_tokens": 4665,
+    "response_bytes": 147,
+    "elapsed_ms": 102.99
+  },
+  "session_dedup": {
+    "first_tokens": 31,
+    "repeat_tokens": 12,
+    "repeat_body_present": false,
+    "fresh_body_present": true
+  },
+  "complete_response_budgets": [
+    {
+      "budget": 1,
+      "response_tokens": 0
+    },
+    {
+      "budget": 30,
+      "response_tokens": 29
+    },
+    {
+      "budget": 100,
+      "response_tokens": 99
+    },
+    {
+      "budget": 250,
+      "response_tokens": 247
+    },
+    {
+      "budget": 500,
+      "response_tokens": 485
+    }
+  ],
+  "forced_reindex": {
+    "first": "files: 10 (skipped 0), symbols: 10, imports: 0",
+    "second": "files: 10 (skipped 0), symbols: 10, imports: 0"
+  },
+  "project_stats": {
+    "responded": true
+  },
+  "get_project_rules": {
+    "responded": true
+  },
+  "restore_session": {
+    "responded": true
+  }
+}
