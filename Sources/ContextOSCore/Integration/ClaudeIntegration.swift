@@ -148,6 +148,29 @@ public enum ClaudeIntegration {
         "claude mcp add --scope user contextos -- \"\(mcpBinaryPath)\""
     }
 
+    /// Wire ContextOS into Claude Code the way `contextos connect` does: the
+    /// instruction in the global memory file, the auto-inject prompt hook, and
+    /// the MCP server registered for every project through Claude's own CLI.
+    ///
+    /// The CLI runs through a login shell: an app launched from Finder gets a
+    /// bare PATH, and `claude` usually lives somewhere only the user's shell
+    /// profile adds (npm, Homebrew, `~/.local/bin`).
+    ///
+    /// - Returns: whether the MCP server got registered. False means the user
+    ///   has to run `mcpAddCommand` themselves.
+    public static func connect(mcpBinaryPath: String, cliBinaryPath: String) -> Bool {
+        _ = try? installInstruction(at: globalMemoryURL())
+        _ = try? installPromptHook(at: settingsURL(), contextosBinaryPath: cliBinaryPath)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-lc", mcpAddCommand(mcpBinaryPath: mcpBinaryPath)]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
     /// Write a project-local `.mcp.json` pointing at the MCP server.
     public static func writeProjectMCPConfig(projectRoot: URL, mcpBinaryPath: String) throws {
         let config: [String: Any] = [

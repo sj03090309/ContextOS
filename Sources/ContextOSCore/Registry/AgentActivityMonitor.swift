@@ -131,6 +131,14 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         return true
     }
 
+    /// Which agent writes the session log at `url`.
+    public func agent(ofLog url: URL) -> String? {
+        let path = url.path
+        if claudePrefixes.contains(where: { path.hasPrefix($0) }) { return "Claude Code" }
+        if codexPrefixes.contains(where: { path.hasPrefix($0) }) { return "Codex" }
+        return nil
+    }
+
     /// Whether `path` is one of the logs the scan would find: a Claude Code
     /// transcript directly inside a project directory, or any Codex rollout.
     private func isSessionLog(_ path: String) -> Bool {

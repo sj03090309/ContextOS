@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import ServiceManagement
 import ContextOSCore
 
 /// The ContextOS brand palette — the ink + cream of the app icon (뭉치 in cream
@@ -10,17 +9,21 @@ enum Brand {
     static let ink = Color(red: 0.090, green: 0.090, blue: 0.106)        // #17171B
 
     /// An appearance-adaptive color: `dark` in dark mode, `light` in light mode.
-    private static func adaptive(dark: NSColor, light: NSColor) -> Color {
+    static func adaptive(dark: NSColor, light: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
         })
     }
 
+    private static let creamNS = NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1)
+    private static let inkNS = NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1)
+
     /// Monochrome accent that reads on both appearances: cream on dark, ink on
     /// light — literally the two icon colors, so contrast is always high.
-    static let accent = adaptive(
-        dark: NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1),   // cream
-        light: NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1))  // ink
+    static let accent = adaptive(dark: creamNS, light: inkNS)
+
+    /// Whatever sits on an `accent` fill: ink on cream, cream on ink.
+    static let onAccent = adaptive(dark: inkNS, light: creamNS)
 
     /// The mascot inverts with the appearance like the accent does — a static
     /// cream blob would vanish on the light popover material. Dark: cream blob
@@ -30,17 +33,57 @@ enum Brand {
         light: NSColor(calibratedRed: 0.180, green: 0.180, blue: 0.212, alpha: 1))  // #2E2E36
     static let blobBottom = adaptive(
         dark: NSColor(calibratedRed: 0.894, green: 0.851, blue: 0.765, alpha: 1),   // #E4D9C3
-        light: NSColor(calibratedRed: 0.090, green: 0.090, blue: 0.106, alpha: 1))  // #17171B
+        light: inkNS)                                                                // #17171B
     static let mascotEye = adaptive(
         dark: NSColor(calibratedWhite: 0.12, alpha: 1),
-        light: NSColor(calibratedRed: 0.937, green: 0.906, blue: 0.839, alpha: 1))  // cream
+        light: creamNS)
+    /// The warmth around 뭉치 while it eats: a cream aura on the dark panel, and
+    /// only a faint shade on the light one, where a dark glow reads as a smudge.
+    static let mascotGlow = adaptive(
+        dark: NSColor(calibratedRed: 0.953, green: 0.925, blue: 0.867, alpha: 1),
+        light: NSColor(calibratedWhite: 0.1, alpha: 0.35))
+
+    /// Claude Code's share in every bar and dot — Anthropic's clay.
+    static let claude = Color(red: 0.851, green: 0.467, blue: 0.341)    // #D97757
+    /// Codex's share: a clear blue, a step deeper on the light panel.
+    static let codex = adaptive(
+        dark: NSColor(calibratedRed: 0.478, green: 0.655, blue: 1.0, alpha: 1),     // #7AA7FF
+        light: NSColor(calibratedRed: 0.231, green: 0.482, blue: 0.918, alpha: 1))  // #3B7BEA
+    /// "Configured", "saved", "working" — a soft green that stays legible.
+    static let positive = adaptive(
+        dark: NSColor(calibratedRed: 0.651, green: 0.902, blue: 0.718, alpha: 1),   // #A6E6B7
+        light: NSColor(calibratedRed: 0.118, green: 0.557, blue: 0.243, alpha: 1))  // #1E8E3E
+    static let positiveDot = Color(red: 0.490, green: 0.863, blue: 0.588)          // #7DDC96
+    /// Deleted lines — a muted red that reads on both appearances.
+    static let negative = adaptive(
+        dark: NSColor(calibratedRed: 1.0, green: 0.541, blue: 0.502, alpha: 1),     // #FF8A80
+        light: NSColor(calibratedRed: 0.788, green: 0.196, blue: 0.180, alpha: 1))  // #C9322E
+
+    static func color(forAgent agent: String) -> Color {
+        switch agent {
+        case "Claude Code": return claude
+        case "Codex": return codex
+        default: return .secondary
+        }
+    }
 }
 
 /// Which "screen" the segmented control shows — keeps the panel short by
 /// showing one system at a time instead of stacking every section.
-enum DashboardTab: Hashable { case files, activity, ai }
+enum DashboardTab: Hashable, CaseIterable {
+    case files, activity, ai
 
-/// What the panel was showing — the tab, and which project cards were open.
+    var label: String {
+        switch self {
+        case .files: return "프로젝트"
+        case .activity: return "활동"
+        case .ai: return "AI 연결"
+        }
+    }
+}
+
+/// What the panel was showing — the tab, the cards that were open, the month
+/// and day picked on the calendar.
 ///
 /// Kept outside the views so it outlives them: the panel's views are released
 /// while it stays closed (see `AppDelegate.schedulePanelRelease`) and rebuilt
@@ -49,471 +92,98 @@ enum DashboardTab: Hashable { case files, activity, ai }
 final class DashboardUIState: ObservableObject {
     @Published var tab: DashboardTab = .files
     @Published var expanded: Set<String> = []   // expanded project cards
+    /// Months back from the current one.
+    @Published var monthOffset = 0
+    @Published var selectedDay: String?
+    @Published var showSettings = false
 }
 
-/// The menu-bar monitor, styled as a native macOS "clean vibrancy" panel:
-/// a translucent surface that adapts to the system light/dark appearance,
-/// with one hero number (cumulative savings) up top, a segmented summary,
-/// and a compact list of detected AI tools.
+/// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a
+/// live line saying who is working where, the savings hero, the month in AI
+/// tokens, and three tabs — projects, activity, AI connections.
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject private var ui: DashboardUIState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
             // 뭉치 is *not* in this tree — it is a sibling hosting view laid over
             // this space by `PopoverContentController`. Sharing one SwiftUI tree
-            // with a 30fps animation made every mascot frame re-run the whole
+            // with a 20fps animation made every mascot frame re-run the whole
             // panel's view graph (calendar cells, project cards and all), which
             // cost 16% of a core; split apart, each redraws on its own.
-            Color.clear
-                .frame(height: 62)
-                .padding(.horizontal, -14) // reserve the strip 뭉치 melts into
-                .padding(.top, -14)
-            header
-            hero
-            segments
-            calendar
-            weekStrip
-            Picker("", selection: $ui.tab) {
-                Text("프로젝트").tag(DashboardTab.files)
-                Text("활동").tag(DashboardTab.activity)
-                Text("AI 연결").tag(DashboardTab.ai)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            // Fixed-height, scrollable tab area. Expanding a project card (or
-            // switching tabs) previously changed the SwiftUI content height,
-            // which made NSPopover resize the whole window — an abrupt,
-            // unanimated jump. With a constant height the window never moves;
-            // expansion animates smoothly inside and long lists just scroll.
+            Color.clear.frame(height: PopoverContentController.mascotHeight)
+
+            LiveHeader(live: model.live,
+                       configured: model.agents.filter { $0.connection.isConfigured }.count)
+                .padding(.horizontal, 18)
+
+            HeroSection()
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+
+            CalendarCard()
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+
+            PanelTabBar(selection: $ui.tab)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+
+            // Fixed height: a card expanding or a tab switching must not change
+            // the content height, or NSPopover resizes the whole window in an
+            // unanimated jump. Long lists scroll inside instead.
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 8) {
+                Group {
                     switch ui.tab {
-                    case .files: projects
-                    case .activity: activity
-                    case .ai: agents
+                    case .files: ProjectsList()
+                    case .activity: ActivityList()
+                    case .ai: AgentsList()
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 2)
             }
-            .frame(height: 200)
-            footer
+            .frame(height: 188)
+            .padding(.top, 8)
+
+            FooterBar()
         }
-        .padding(14)
-        .frame(width: 300)
-        // Brand accent: picker selection, borderless buttons, folder icons.
+        .frame(width: 340)
         .tint(Brand.accent)
         // Pin the background to a single, constant vibrancy so its color doesn't
         // deepen when the popover becomes key (e.g. after a click).
         .background(VisualEffectBackground())
-    }
-
-    // The header deliberately describes configuration evidence, not a guessed
-    // live session. An MCP process starts only when its AI client needs it.
-    private var header: some View {
-        let configured = model.agents.filter { $0.connection.isConfigured }.count
-        return HStack(spacing: 6) {
-            Text("ContextOS").font(.system(size: 13, weight: .semibold))
-            Spacer()
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(model.connected ? Color.green : Color.secondary)
-                    .frame(width: 6, height: 6)
-                Text(configured > 0 ? "MCP 설정 \(configured)개" : "MCP 설정 없음")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+        .overlay {
+            if ui.showSettings {
+                SettingsOverlay()
+                    .transition(.opacity)
             }
         }
-    }
-
-    // The one number that matters at a glance: cumulative tokens saved.
-    private var hero: some View {
-        VStack(spacing: 2) {
-            Text(TokenEstimator.korean(model.totalSaved))
-                .font(.system(size: 30, weight: .semibold).monospacedDigit())
-                .contentTransition(.numericText())
-                .animation(.default, value: model.totalSaved)
-            Text("누적 아낀 토큰")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 4)
-    }
-
-    // This month's AI token usage, one cell per day. Replaces the old 7-day bar
-    // chart, which showed strictly less of the same thing.
-    private var calendar: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(CalendarGrid.title(Date()))
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Spacer()
-                Text(TokenEstimator.korean(CalendarGrid.total(Date(), model.tokensByDay)) + " 토큰")
-                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
-            }
-            Text("Claude Code·Codex 로컬 기록 기준")
-                .font(.system(size: 9)).foregroundStyle(.secondary)
-            MonthCalendarView(month: Date(), tokensByDay: model.tokensByDay)
-        }
-    }
-
-    // The week in code — the answer to "what did I actually ship?". Opens the
-    // full journal, which is far too much to fit in a menu-bar panel.
-    private var weekStrip: some View {
-        Button {
-            BuildLogWindow.show()
-        } label: {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("이번 주")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        Text("+\(model.week.added.formatted())")
-                            .foregroundStyle(.green)
-                        Text("−\(model.week.deleted.formatted())")
-                            .foregroundStyle(.red)
-                        Text("커밋 \(model.week.commits)")
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                }
-                Spacer()
-                Text("빌드 로그")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
-    }
-
-    // A macOS-style segmented summary strip.
-    private var segments: some View {
-        HStack(spacing: 0) {
-            segment("오늘", TokenEstimator.korean(model.todaySaved))
-            Divider().frame(height: 26)
-            segment("최적화", "\(model.queryCount)")
-            Divider().frame(height: 26)
-            segment("로컬 기록", TokenEstimator.korean(model.aiTokens))
-        }
-        .padding(.vertical, 8)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 9))
-    }
-
-    private func segment(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 1) {
-            Text(value)
-                .font(.system(size: 15, weight: .medium).monospacedDigit())
-                .contentTransition(.numericText())
-            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    // One card per project: total tokens + a stacked bar split by AI; expand to
-    // see each AI's exact token total.
-    private var projects: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.projectUsage.isEmpty {
-                Text("Claude Code 또는 Codex의 로컬 사용 기록이 없어요.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            } else {
-                ForEach(model.projectUsage) { p in
-                    projectCard(p)
-                }
-            }
-        }
-    }
-
-    private func projectCard(_ p: ProjectAIUsage) -> some View {
-        let isOpen = ui.expanded.contains(p.id)
-        return VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    if isOpen { ui.expanded.remove(p.id) } else { ui.expanded.insert(p.id) }
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "folder.fill").font(.system(size: 12)).foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(p.name).font(.system(size: 13, weight: .semibold))
-                        Text(p.path).font(.system(size: 10)).foregroundStyle(.secondary)
-                            .lineLimit(1).truncationMode(.middle)
-                    }
-                    Spacer(minLength: 6)
-                    Text(TokenEstimator.korean(p.total))
-                        .font(.system(size: 14, weight: .semibold).monospacedDigit())
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(isOpen ? 180 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            stackedBar(p)
-
-            if isOpen {
-                let maxAgent = max(1, p.byAgent.map(\.tokens).max() ?? 1)
-                VStack(spacing: 6) {
-                    ForEach(p.byAgent) { a in
-                        agentRow(a, fraction: CGFloat(a.tokens) / CGFloat(maxAgent))
-                    }
-                }
-                .padding(.top, 2)
-
-                // Quick actions — only for projects that still exist on disk.
-                if FileManager.default.fileExists(atPath: p.path) {
-                    HStack(spacing: 8) {
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting(
-                                [URL(fileURLWithPath: p.path)])
-                        } label: {
-                            Label("Finder", systemImage: "folder")
-                        }
-                        Button {
-                            Self.openTerminal(at: p.path)
-                        } label: {
-                            Label("터미널", systemImage: "terminal")
-                        }
-                        Spacer()
-                    }
-                    .buttonStyle(.borderless)
-                    .controlSize(.small)
-                    .font(.system(size: 11))
-                }
-            }
-        }
-        .padding(10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    /// Open Terminal.app at the given directory.
-    private static func openTerminal(at path: String) {
-        let url = URL(fileURLWithPath: path)
-        let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
-        let config = NSWorkspace.OpenConfiguration()
-        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: config)
-    }
-
-    // Recent optimization events, newest first: what was optimized where, how
-    // many tokens it saved, and how long ago.
-    private var activity: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.recent.isEmpty {
-                Text("아직 활동 기록이 없어요.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            } else {
-                ForEach(model.recent, id: \.timestamp) { e in
-                    activityRow(e)
-                }
-            }
-        }
-    }
-
-    private func activityRow(_ e: UsageEvent) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 10)).foregroundStyle(.tint)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(e.query.isEmpty ? "컨텍스트 최적화" : e.query)
-                    .font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
-                Text("\((e.project as NSString).lastPathComponent) · 파일 \(e.fileCount)개 · \(Self.timeAgo(e.timestamp))")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 6)
-            Text("-\(TokenEstimator.korean(e.savedTokens))")
-                .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                .foregroundStyle(.green)
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// Compact Korean relative time, e.g. "3분 전".
-    private static func timeAgo(_ ts: Double) -> String {
-        let s = Int(Date().timeIntervalSince1970 - ts)
-        if s < 60 { return "방금" }
-        if s < 3600 { return "\(s / 60)분 전" }
-        if s < 86_400 { return "\(s / 3600)시간 전" }
-        return "\(s / 86_400)일 전"
-    }
-
-    // A single horizontal bar split into per-AI segments (widths ∝ tokens).
-    private func stackedBar(_ p: ProjectAIUsage) -> some View {
-        GeometryReader { geo in
-            let total = CGFloat(max(1, p.total))
-            HStack(spacing: 1.5) {
-                ForEach(p.byAgent) { a in
-                    Capsule().fill(Self.agentColor(a.agent))
-                        .frame(width: max(3, geo.size.width * CGFloat(a.tokens) / total))
-                }
-            }
-        }
-        .frame(height: 6)
-    }
-
-    // One AI's row inside an expanded card: dot + name + bar + exact tokens.
-    private func agentRow(_ a: AgentTokens, fraction: CGFloat) -> some View {
-        let color = Self.agentColor(a.agent)
-        return HStack(spacing: 8) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(Self.agentShort(a.agent)).font(.system(size: 12))
-                .frame(width: 52, alignment: .leading)
-            GeometryReader { geo in
-                Capsule().fill(color).frame(width: max(3, geo.size.width * min(1, fraction)))
-                    .frame(maxHeight: .infinity, alignment: .center)
-            }
-            .frame(height: 5)
-            Text(TokenEstimator.korean(a.tokens))
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .frame(minWidth: 44, alignment: .trailing)
-        }
-    }
-
-    private static func agentShort(_ agent: String) -> String {
-        agent == "Claude Code" ? "Claude" : agent
-    }
-
-    private static func agentColor(_ agent: String) -> Color {
-        switch agent {
-        // Claude Code — the primary agent — wears the brand accent; the rest
-        // keep distinct hues so the per-agent split stays readable.
-        case "Claude Code": return Brand.accent
-        case "Codex":       return .blue
-        case "Copilot":     return .green
-        case "Gemini":      return .purple
-        default:            return .secondary
-        }
-    }
-
-    // Each row separates three distinct facts: tool presence, explicit MCP
-    // configuration, and locally readable usage. These must never be inferred
-    // from each other — an installed directory does not prove a connection,
-    // and an absent transcript is not zero usage.
-    private var agents: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if model.agents.isEmpty {
-                Text("찾은 AI 도구가 없어요.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            } else {
-                ForEach(model.agents) { agent in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 7) {
-                            Circle()
-                                .fill(Self.connectionColor(agent.connection))
-                                .frame(width: 7, height: 7)
-                            Text(agent.name).font(.system(size: 12, weight: .medium))
-                            if let d = agent.detail {
-                                Text(d).font(.system(size: 10)).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 4)
-                            Text(agent.connection.summary)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Self.connectionColor(agent.connection))
-                        }
-                        HStack(spacing: 4) {
-                            Image(systemName: "chart.bar")
-                                .font(.system(size: 9)).foregroundStyle(.secondary)
-                            Text(agent.usage.summary)
-                                .font(.system(size: 10)).foregroundStyle(.secondary)
-                        }
-                        if let path = agent.connection.configPath {
-                            Text(Self.displayPath(path))
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                    .padding(.vertical, 5)
-                }
-            }
-        }
-    }
-
-    private static func connectionColor(_ status: ContextOSConnectionStatus) -> Color {
-        switch status {
-        case .configured: return .green
-        case .notConfigured: return .orange
-        case .unsupported: return .secondary
-        }
-    }
-
-    private static func displayPath(_ path: String) -> String {
-        (path as NSString).abbreviatingWithTildeInPath
-    }
-
-    private var footer: some View {
-        VStack(spacing: 8) {
-            Divider()
-            HStack {
-                LaunchAtLoginToggle()
-                Spacer()
-                Button(action: model.refresh) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("새로고침")
-                Button {
-                    NSApplication.shared.terminate(nil)
-                } label: {
-                    Image(systemName: "power")
-                }
-                .buttonStyle(.borderless)
-                .help("종료")
-            }
-        }
+        .animation(.snappy(duration: 0.22), value: ui.showSettings)
     }
 }
 
-/// "로그인 시 시작" — registers the app as a login item via SMAppService.
-/// Registration only works from a real .app bundle; a `swift run` build fails
-/// silently and the toggle snaps back to the actual state.
-private struct LaunchAtLoginToggle: View {
-    /// Read when the panel shows, not as the `@State` default: SwiftUI rebuilds
-    /// this struct on every dashboard update, and a default expression runs on
-    /// each rebuild even though only the first value is kept — and
-    /// `SMAppService.status` is an XPC round trip to the login-items daemon.
-    @State private var enabled: Bool?
+// MARK: - Shared surfaces
 
-    var body: some View {
-        Toggle("로그인 시 시작", isOn: Binding(
-            get: { enabled ?? false },
-            set: { on in
-                do {
-                    if on { try SMAppService.mainApp.register() }
-                    else { try SMAppService.mainApp.unregister() }
-                    enabled = on
-                } catch {
-                    enabled = SMAppService.mainApp.status == .enabled
-                }
-            }))
-            .toggleStyle(.checkbox)
-            .controlSize(.mini)
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-            .onAppear { syncFromSystem() }
-            // The popover reuses this view, so onAppear only fires once; the
-            // setting can also be changed in System Settings meanwhile.
-            .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
-                syncFromSystem()
-            }
-    }
-
-    private func syncFromSystem() {
-        enabled = SMAppService.mainApp.status == .enabled
+extension View {
+    /// A content card: a faint fill and a hairline on the panel's own vibrancy.
+    /// `Color.primary` flips with the appearance, so one recipe serves both.
+    func dashboardCard(radius: CGFloat = 16, padding: CGFloat = 12) -> some View {
+        self
+            .padding(padding)
+            .background(Color.primary.opacity(0.045),
+                        in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
     }
 }
 
 /// A translucent panel background pinned to the `.active` state, so its color
 /// stays constant instead of deepening when the popover window gains/loses key
 /// focus (which is what made a click "darken" the dashboard).
-private struct VisualEffectBackground: NSViewRepresentable {
+struct VisualEffectBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .popover
@@ -523,257 +193,5 @@ private struct VisualEffectBackground: NSViewRepresentable {
     }
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.state = .active
-    }
-}
-
-/// The 뭉치 mascot melting into the top of the panel. On open it drops in as a
-/// droplet and fuses into a base strip along the panel's top edge, connected by
-/// a gooey neck (a Canvas metaball: blur + alpha-threshold). After settling it
-/// bobs gently; while ContextOS is optimizing it bobs faster.
-struct MeltingMascot: View {
-    /// Chew state, shared with the menu-bar 뭉치 so both eat the same bite at
-    /// the same instant.
-    @ObservedObject var state: MascotState
-    /// When this view's melt-in began. Only the *entrance* is timed from here —
-    /// the chew itself runs off the absolute clock, so re-opening the popover
-    /// replays the drop without knocking the two mascots out of step.
-    @State private var start = Date()
-    /// NSPopover keeps its hosted view alive after dismissal, so this view is
-    /// never torn down — it just stops being on screen. Nothing tells SwiftUI
-    /// that, so the timeline has to be paused by hand or it keeps redrawing a
-    /// blurred metaball 30 times a second at a panel nobody is looking at.
-    @State private var hidden = false
-
-    // Brand gradient (icon colors, appearance-adaptive) filling the metaball.
-    private let grad = LinearGradient(
-        colors: [Brand.blobTop, Brand.blobBottom],
-        startPoint: .topLeading, endPoint: .bottomTrailing)
-
-    // Damped-bounce constants. The droplet first touches down at `impactTime`,
-    // then jiggles with a decaying wobble.
-    private let decay: CGFloat = 2.6
-    private let omega: CGFloat = 4.2
-    private var impactTime: CGFloat { .pi / (2 * omega) }   // when cos() first hits 0
-    private let settleTime: CGFloat = 2.6
-
-    var body: some View {
-        GeometryReader { geo in
-            // 20fps rather than the display's rate. Each frame re-renders a
-            // Canvas that blurs and alpha-thresholds a metaball, and measured
-            // against the panel: 30fps costs ~15% of a core, 20fps ~11%, 15fps
-            // ~10% — below 20 the savings stop, because what is left is Core
-            // Animation compositing the blurred layer, which no frame rate
-            // avoids. The menu bar runs at 16fps and stays in step regardless:
-            // both read the same absolute clock rather than counting frames.
-            //
-            // `.animation(paused:)` and not `.periodic`: a periodic schedule
-            // keeps firing at a dismissed popover, which pinned the app at ~22%
-            // of a core forever after the panel was opened once.
-            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: hidden)) { tl in
-                let t = tl.date.timeIntervalSince(start)
-                let c = blobCenter(t, at: tl.date, geo.size)
-                let files = fileStates(t, at: tl.date, center: c)
-                ZStack {
-                    // Files being consumed (drawn behind the blob so they vanish
-                    // *into* it), only while actively optimizing.
-                    ForEach(files.indices, id: \.self) { i in
-                        let f = files[i]
-                        fileCard
-                            .scaleEffect(f.scale)
-                            .opacity(f.opacity)
-                            .position(f.pos)
-                    }
-                    grad.mask(metaball(t, at: tl.date))
-                    // Eyes track the blob and fade in as it settles.
-                    let eyeOpacity = min(1, max(0, (meltProgress(t) - 0.6) / 0.4))
-                    Group {
-                        eye.position(x: c.x - 5.2, y: c.y - 1.5)
-                        eye.position(x: c.x + 5.2, y: c.y - 1.5)
-                    }
-                    .opacity(eyeOpacity)
-                }
-            }
-        }
-        .onAppear { start = Date() }
-        // Replay the melt-in each time the popover is opened (the hosted view is
-        // reused, so onAppear alone won't fire again).
-        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
-            start = Date()
-            hidden = false
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { _ in
-            hidden = true
-        }
-    }
-
-    private var eye: some View {
-        Circle().fill(Brand.mascotEye).frame(width: 4.5, height: 4.5)
-    }
-
-    // A tiny document ("file/context being eaten") — an ink card with cream
-    // text lines and a soft glow, so it reads against both the dark panel it
-    // flies over and the cream blob it vanishes into.
-    private var fileCard: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 1.6)
-                .fill(Brand.ink)
-                .overlay(RoundedRectangle(cornerRadius: 1.6).strokeBorder(Brand.cream.opacity(0.5), lineWidth: 0.5))
-            VStack(spacing: 1.4) {
-                Capsule().fill(Brand.cream.opacity(0.85)).frame(height: 1)
-                Capsule().fill(Brand.cream.opacity(0.85)).frame(height: 1)
-            }
-            .padding(.horizontal, 1.8)
-            .padding(.vertical, 2.2)
-        }
-        .frame(width: 8, height: 10)
-        .shadow(color: Brand.cream.opacity(0.25), radius: 1.5)
-    }
-
-    // Per-file position/scale/opacity as it flies in from a side and is absorbed.
-    // Timed off the absolute clock, so this bite is the same bite the menu bar
-    // is chewing right now.
-    private func fileStates(_ t: TimeInterval, at now: Date, center c: CGPoint)
-        -> [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] {
-        let fade = state.intensity(at: now)
-        guard fade > 0.02, t >= Double(settleTime) else { return [] }
-        var out: [(pos: CGPoint, scale: CGFloat, opacity: CGFloat)] = []
-        for lane in 0..<MascotBeat.lanes {
-            let phase = MascotBeat.foodPhase(now, lane: lane)
-            let dir: CGFloat = lane == 0 ? -1 : 1           // one bite per side
-            let startDist: CGFloat = 52
-            let x = c.x + dir * startDist * CGFloat(1 - phase)
-            let y = c.y - 2 - sin(CGFloat(phase) * .pi) * 4 // gentle arc
-            let fadeScale = MascotBeat.foodFade(phase)
-            out.append((CGPoint(x: x, y: y),
-                        max(0.1, CGFloat(fadeScale.scale)),
-                        CGFloat(fadeScale.opacity * fade)))
-        }
-        return out
-    }
-
-    private func metaball(_ t: TimeInterval, at now: Date) -> some View {
-        Canvas { ctx, size in
-            ctx.addFilter(.alphaThreshold(min: 0.5))
-            // A larger blur stretches the gooey neck over a longer gap, so the
-            // "soaking in" reads clearly.
-            ctx.addFilter(.blur(radius: 10))
-            ctx.drawLayer { layer in
-                // The surface the droplet soaks into, fused to the panel top.
-                let baseH: CGFloat = 22
-                let base = CGRect(x: 0, y: size.height - baseH, width: size.width, height: baseH + 14)
-                layer.fill(Path(roundedRect: base, cornerRadius: 13), with: .color(.white))
-                // The droplet body — an ellipse so it can stretch while falling
-                // and squash-wobble on impact.
-                let c = blobCenter(t, at: now, size)
-                let (rx, ry) = blobRadii(t, at: now)
-                layer.fill(Path(ellipseIn: CGRect(x: c.x - rx, y: c.y - ry, width: rx * 2, height: ry * 2)),
-                           with: .color(.white))
-            }
-        }
-    }
-
-    // 0 → ~1 with a slow, visible damped bounce (two settling hops).
-    private func meltProgress(_ t: TimeInterval) -> CGFloat {
-        let x = max(0, CGFloat(t))
-        if x >= settleTime { return 1 }
-        return 1 - exp(-decay * x) * cos(omega * x)
-    }
-
-    private func blobCenter(_ t: TimeInterval, at now: Date, _ size: CGSize) -> CGPoint {
-        let p = meltProgress(t)
-        let startY: CGFloat = 3          // starts high, right under the arrow
-        let restY = size.height - 26
-        var y = startY + (restY - startY) * min(p, 1.18)
-        if t >= Double(settleTime) {
-            // Blend the calm resting breath into the livelier chewing bob by the
-            // same eased intensity the menu bar uses, off the same clock.
-            let k = state.intensity(at: now)
-            let idle = MascotBeat.breath(now) * 1.4
-            let eating = -MascotBeat.chomp(now) * 2.2
-            y += CGFloat(idle * (1 - k) + eating * k)
-        }
-        return CGPoint(x: size.width / 2, y: y)
-    }
-
-    // Bigger droplet that elongates as it falls and jelly-wobbles on impact.
-    private func blobRadii(_ t: TimeInterval, at now: Date) -> (CGFloat, CGFloat) {
-        let r = 11 + 4 * min(meltProgress(t), 1)      // grows 11 → 15
-        let x = CGFloat(max(0, t))
-        if x < impactTime {
-            let f = x / impactTime                    // 0 → 1 during the fall
-            return (r * (1 - 0.16 * f), r * (1 + 0.36 * f))   // teardrop stretch
-        }
-        // Settled: squash-and-stretch on the same chomp the menu bar draws,
-        // scaled by the same eased intensity, so both mouths close together.
-        if x >= CGFloat(settleTime) {
-            let k = CGFloat(state.intensity(at: now))
-            let chomp = CGFloat(MascotBeat.chomp(now)) * k
-            return (r * (1 + 0.30 * chomp), r * (1 - 0.26 * chomp))
-        }
-        let dt = x - impactTime
-        let wobble = exp(-3.2 * dt) * sin(2 * .pi * 2.4 * dt)  // decaying jelly
-        return (r * (1 + 0.36 * wobble), r * (1 - 0.36 * wobble))
-    }
-}
-
-/// Hosts the popover's two SwiftUI trees side by side: the dashboard, and 뭉치
-/// laid over the strip the dashboard leaves for it.
-///
-/// They are deliberately separate `NSHostingView`s. In one tree, each of the
-/// mascot's 30 frames a second invalidated the shared view graph, and SwiftUI
-/// answered by re-running layout and `ViewGraph.updateOutputs` for the entire
-/// panel — the profile put ~250 of 550 working samples in `NSHostingView.layout`
-/// while the Canvas blur everyone would suspect was 30. Two trees means the
-/// mascot's ticks cannot reach the dashboard's graph at all.
-@MainActor
-final class PopoverContentController: NSViewController {
-
-    private let model: DashboardModel
-    private let mascotHost: NSHostingView<MeltingMascot>
-    private let dashboardHost: NSHostingView<AnyView>
-    /// Height of the strip 뭉치 melts into, matching the placeholder the
-    /// dashboard reserves for it.
-    private static let mascotHeight: CGFloat = 62
-
-    init(model: DashboardModel, ui: DashboardUIState) {
-        self.model = model
-        self.mascotHost = NSHostingView(rootView: MeltingMascot(state: model.mascot))
-        self.dashboardHost = NSHostingView(
-            rootView: AnyView(DashboardView().environmentObject(model).environmentObject(ui)))
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not used") }
-
-    override func loadView() {
-        let container = NSView()
-        dashboardHost.translatesAutoresizingMaskIntoConstraints = false
-        mascotHost.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(dashboardHost)
-        container.addSubview(mascotHost)      // over the strip the dashboard left
-
-        NSLayoutConstraint.activate([
-            dashboardHost.topAnchor.constraint(equalTo: container.topAnchor),
-            dashboardHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            dashboardHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            dashboardHost.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            mascotHost.topAnchor.constraint(equalTo: container.topAnchor),
-            mascotHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            mascotHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            mascotHost.heightAnchor.constraint(equalToConstant: Self.mascotHeight)
-        ])
-        view = container
-    }
-
-    /// The size the popover should be, driven by the dashboard alone — 뭉치 sits
-    /// inside the space the dashboard already reserves.
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        let fitting = dashboardHost.fittingSize
-        if fitting.width > 0, preferredContentSize != fitting {
-            preferredContentSize = fitting
-        }
     }
 }

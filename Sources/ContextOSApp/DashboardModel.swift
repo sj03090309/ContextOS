@@ -32,6 +32,20 @@ final class DashboardModel: ObservableObject {
     @Published var week = BuildSummary()
     /// Most recent optimization events, newest first.
     @Published var recent: [UsageEvent] = []
+    /// Tokens saved per local day over the last two weeks, for the trend line.
+    @Published var savingsByDay: [String: Int] = [:]
+    /// agent → local day → tokens, for the calendar's per-agent split.
+    @Published var agentDayTokens: [String: [String: Int]] = [:]
+    /// Commits and lines for days picked on the calendar, loaded on demand.
+    @Published var dayDetails: [String: DayDetail] = [:]
+    /// When the panel's numbers were last brought up to date.
+    @Published var lastUpdated: Date?
+    /// Agents being connected right now, and what the last attempt said.
+    @Published var connecting: Set<String> = []
+    @Published var notice: String?
+    /// What an agent is doing this minute, for the header. An object of its own
+    /// so a turn starting or stopping redraws the header, not the whole panel.
+    let live = LiveStatus()
     /// Chew state, shared by the menu-bar glyph and the dashboard blob so the
     /// two 뭉치 move as one. Both derive their motion from this plus the
     /// absolute clock; neither keeps its own timeline.
@@ -156,6 +170,7 @@ final class DashboardModel: ObservableObject {
     /// it live while it stays open.
     func panelDidOpen() {
         panelOpen = true
+        dayDetails = [:]
         refreshFast()
         refreshSlow(includeWeek: true, priority: .userInitiated)
         scheduleUsageRefresh()
@@ -283,6 +298,7 @@ final class DashboardModel: ObservableObject {
             return
         }
         update(\.working, verdict.working)
+        updateLive(working: verdict.working, newest: newest)
         if let at = verdict.recheckAt {
             let timer = Timer(fire: at, interval: 0, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.evaluateWorking() }
@@ -291,6 +307,25 @@ final class DashboardModel: ObservableObject {
             RunLoop.main.add(timer, forMode: .common)
             recheckTimer = timer
         }
+    }
+
+    /// Tell the header who is working where. The agent and project come from
+    /// the newest session log, but only while that log is fresh: a heartbeat
+    /// from some other MCP client says nothing about whose log went quiet an
+    /// hour ago.
+    private func updateLive(working: Bool, newest: (url: URL, mtime: Date)?) {
+        var agent: String?
+        var project: String?
+        if let newest {
+            let fresh = Date().timeIntervalSince(newest.mtime) < 120
+            if fresh || !working {
+                agent = activityMonitor.agent(ofLog: newest.url)
+                project = AgentSessionReader.project(ofTranscript: newest.url.path)
+                    .map { ($0 as NSString).lastPathComponent }
+            }
+        }
+        live.update(working: working, agent: agent, project: project,
+                    lastWrite: newest?.mtime)
     }
 
     private func pendingChecked(ticket: Int, log: (url: URL, mtime: Date), pending: Bool) {
@@ -322,6 +357,8 @@ final class DashboardModel: ObservableObject {
             update(\.todaySaved, s.todaySaved)
             update(\.totalSaved, s.totalSaved)
             update(\.recent, s.recent)
+            update(\.savingsByDay, s.savingsByDay)
+            lastUpdated = Date()
             if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
             lastQueryCount = s.queryCount
             update(\.queryCount, s.queryCount)
@@ -348,12 +385,118 @@ final class DashboardModel: ObservableObject {
             update(\.connected, a.connected)
             update(\.projectUsage, a.projectUsage)
             update(\.tokensByDay, a.tokensByDay)
+            update(\.agentDayTokens, a.agentDayTokens)
             if let week = a.week { update(\.week, week) }
+            lastUpdated = Date()
             if let next = queuedUsageRefresh {
                 queuedUsageRefresh = nil
                 refreshSlow(includeWeek: next.includeWeek, priority: next.priority)
             }
         }
+    }
+
+    // MARK: - Calendar days
+
+    /// Load a picked day's commits and lines, unless they are already known.
+    func loadDetail(for day: String) {
+        guard dayDetails[day] == nil else { return }
+        Task(priority: .userInitiated) {
+            dayDetails[day] = await Self.loadDayDetail(day)
+        }
+    }
+
+    private nonisolated static func loadDayDetail(_ day: String) async -> DayDetail {
+        let usage = AgentSessionReader.snapshot()
+        let log = BuildLogReader.log(since: BuildLogReader.dayStart(day), snapshot: usage)
+        guard let entry = log.days.first(where: { $0.day == day }) else { return DayDetail() }
+        return DayDetail(commits: entry.commits.count, added: entry.added, deleted: entry.deleted)
+    }
+
+    // MARK: - Connecting agents
+
+    /// Register ContextOS with one agent that isn't connected yet.
+    func connect(agent name: String) { connect([name]) }
+
+    /// Every detected agent ContextOS can wire in but hasn't yet.
+    func connectAll() {
+        let names = agents.filter {
+            if case .notConfigured = $0.connection { return true }
+            return false
+        }.map(\.name)
+        guard !names.isEmpty else {
+            showNotice("더 연결할 AI 도구가 없어요.")
+            return
+        }
+        connect(names)
+    }
+
+    private func connect(_ names: [String]) {
+        let pending = names.filter { !connecting.contains($0) }
+        guard !pending.isEmpty else { return }
+        connecting.formUnion(pending)
+        Task(priority: .userInitiated) {
+            let result = await Self.performConnect(pending)
+            connecting.subtract(pending)
+            if let command = result.manualCommand {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(command, forType: .string)
+            }
+            showNotice(result.message)
+            refreshSlow(includeWeek: false, priority: .userInitiated)
+        }
+    }
+
+    private var noticeTask: Task<Void, Never>?
+
+    private func showNotice(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            if !Task.isCancelled { self?.notice = nil }
+        }
+    }
+
+    private struct ConnectResult: Sendable {
+        var message: String
+        /// A command the user has to run themselves, already on the clipboard.
+        var manualCommand: String?
+    }
+
+    private nonisolated static func performConnect(_ names: [String]) async -> ConnectResult {
+        guard let mcp = bundledBinary("contextos-mcp") else {
+            return ConnectResult(message: "연결에 필요한 contextos-mcp 를 찾지 못했어요.")
+        }
+        let cli = bundledBinary("contextos") ?? mcp
+        var connected: [String] = []
+        var manual: String?
+        for name in names {
+            if name == "Claude Code" {
+                if ClaudeIntegration.connect(mcpBinaryPath: mcp, cliBinaryPath: cli) {
+                    connected.append(name)
+                } else {
+                    manual = ClaudeIntegration.mcpAddCommand(mcpBinaryPath: mcp)
+                }
+            } else if (try? AgentIntegration.connect(agent: name, mcpBinaryPath: mcp)) != nil {
+                connected.append(name)
+            }
+        }
+        if let manual {
+            return ConnectResult(message: "Claude Code는 터미널에서 등록해야 해요. 명령어를 복사해 뒀어요.",
+                                 manualCommand: manual)
+        }
+        guard !connected.isEmpty else {
+            return ConnectResult(message: "연결하지 못했어요. 설정 파일을 확인해 주세요.")
+        }
+        return ConnectResult(message: connected.joined(separator: ", ") + " 연결됨 · 다시 시작하면 적용돼요")
+    }
+
+    /// A binary shipped with the app: in the bundle's Resources, or beside the
+    /// executable for a `swift run` build.
+    private nonisolated static func bundledBinary(_ name: String) -> String? {
+        let candidates = [Bundle.main.resourceURL?.appendingPathComponent(name),
+                          Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(name)]
+        return candidates.compactMap { $0?.path }.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     // Show the bolt while ContextOS is actively working. Each new optimization
@@ -383,6 +526,13 @@ final class DashboardModel: ObservableObject {
     struct Savings: Sendable {
         var todaySaved = 0, totalSaved = 0, queryCount = 0
         var recent: [UsageEvent] = []
+        var savingsByDay: [String: Int] = [:]
+    }
+    /// One calendar day's work in Git.
+    struct DayDetail: Sendable, Equatable {
+        var commits = 0
+        var added = 0
+        var deleted = 0
     }
     struct AgentsUsage: Sendable {
         var aiTokens = 0
@@ -390,6 +540,7 @@ final class DashboardModel: ObservableObject {
         var connected = false
         var projectUsage: [ProjectAIUsage] = []
         var tokensByDay: [String: Int] = [:]
+        var agentDayTokens: [String: [String: Int]] = [:]
         /// Nil when this refresh skipped git.
         var week: BuildSummary?
     }
@@ -398,8 +549,10 @@ final class DashboardModel: ObservableObject {
         guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
         let totals = store.savingsTotals(
             since: Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
+        let twoWeeks = TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 13 * 86_400)
         return Savings(todaySaved: totals.todaySaved, totalSaved: totals.totalSaved,
-                       queryCount: totals.queryCount, recent: store.recentEvents(limit: 6))
+                       queryCount: totals.queryCount, recent: store.recentEvents(limit: 30),
+                       savingsByDay: store.savingsByDay(since: twoWeeks))
     }
 
     private nonisolated static func loadAgentsAndUsage(force: Bool, includeWeek: Bool) async -> AgentsUsage {
@@ -423,6 +576,31 @@ final class DashboardModel: ObservableObject {
                            connected: agents.contains { $0.connection.isConfigured },
                            projectUsage: ProjectAITokenReader.topProjects(snapshot: usage),
                            tokensByDay: usage.byDay,
+                           agentDayTokens: usage.byAgentDay,
                            week: week)
+    }
+}
+
+/// Who is working where, right now — the dashboard header's live line.
+@MainActor
+final class LiveStatus: ObservableObject {
+    @Published private(set) var working = false
+    /// The agent and project of the newest session log, when known.
+    @Published private(set) var agent: String?
+    @Published private(set) var project: String?
+    /// When the current turn started — or, while idle, when the last one ended.
+    @Published private(set) var since: Date?
+
+    func update(working: Bool, agent: String?, project: String?, lastWrite: Date?, now: Date = Date()) {
+        if working != self.working {
+            self.working = working
+            since = now
+        } else if since == nil {
+            // The first word since launch: an idle agent was last active when
+            // its log was last written.
+            since = working ? now : lastWrite
+        }
+        if let agent, agent != self.agent { self.agent = agent }
+        if let project, project != self.project { self.project = project }
     }
 }

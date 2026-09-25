@@ -33,6 +33,23 @@ public enum AgentIntegration {
         return results
     }
 
+    /// Connect one agent, by the name `AgentDetector` reports for it. Nil when
+    /// it isn't installed here or ContextOS has no adapter for it. Claude Code is
+    /// `ClaudeIntegration.connect`.
+    public static func connect(
+        agent: String,
+        mcpBinaryPath: String,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) throws -> ConnectionResult? {
+        switch agent {
+        case "Codex": return try connectCodex(home: home, mcpBinaryPath: mcpBinaryPath)
+        case "Gemini CLI": return try connectGemini(home: home, mcpBinaryPath: mcpBinaryPath)
+        case "Cursor": return try connectCursor(home: home, mcpBinaryPath: mcpBinaryPath)
+        case "Windsurf": return try connectWindsurf(home: home, mcpBinaryPath: mcpBinaryPath)
+        default: return nil
+        }
+    }
+
     // MARK: - Per-agent wiring
 
     /// Codex CLI: `~/.codex/config.toml` ([mcp_servers.contextos]) + `~/.codex/AGENTS.md`.

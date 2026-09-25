@@ -65,7 +65,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             // per second, i.e. ~10% just to animate an 18px glyph. Swapping a
             // layer's `contents` hands Core Animation a different texture and
             // skips all of it: the same animation costs ~1%.
-            let host = MascotHostView(frame: NSRect(x: 0, y: 0, width: 30, height: 24))
+            let host = MascotHostView(frame: NSRect(x: 0, y: 0,
+                                                    width: MascotRenderer.glyphWidth, height: 24))
             host.wantsLayer = true
             // `.resizeAspect`, not `.center`: with `.center` a layer sizes its
             // contents as `pixels / contentsScale` and crops the overflow, so the
@@ -84,7 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             glyphLayerHost = host
             // An empty image of the right size still reserves the layout space
             // the glyph occupies, without ever being drawn into.
-            button.image = NSImage(size: NSSize(width: 30, height: 24))
+            button.image = NSImage(size: NSSize(width: MascotRenderer.glyphWidth, height: 24))
+            // The number sits right against 뭉치 rather than a full space away.
+            button.imageHugsTitle = true
         }
 
         popover.behavior = .transient        // closes when you click away
@@ -114,12 +117,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
                 layer.contents = image
             }
             .store(in: &subscriptions)
-        model.$todaySaved
-            .map { $0 > 0 ? " " + TokenEstimator.korean($0) : "" }
+        Publishers.CombineLatest(model.$todaySaved, AppSettings.shared.$showMenuBarSavings)
+            .map { saved, show in show && saved > 0 ? TokenEstimator.korean(saved) : "" }
             .removeDuplicates()
-            .sink { [weak self] title in self?.statusItem.button?.title = title }
+            .sink { [weak self] title in self?.statusItem.button?.attributedTitle = Self.menuBarTitle(title) }
             .store(in: &subscriptions)
         hideLifecycleWindow()
+    }
+
+    /// Today's savings as the menu bar shows it: a notch smaller and a weight
+    /// heavier than the bar's own text, so it reads as a figure beside 뭉치
+    /// instead of a sentence, and takes less of a crowded bar.
+    private static func menuBarTitle(_ text: String) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 12.5, weight: .medium),
+            .kern: -0.1
+        ])
     }
 
     /// `WindowGroup` is required by SwiftUI's `App` lifecycle, but ContextOS
@@ -165,6 +178,7 @@ extension AppDelegate {
     /// has to be told to stop animating; nothing else will.
     func popoverDidClose(_ notification: Notification) {
         NotificationCenter.default.post(name: .contextOSPopoverClosed, object: nil)
+        dashboardUI.showSettings = false
         model.panelDidClose()
         schedulePanelRelease()
     }
@@ -260,7 +274,7 @@ final class MascotRenderer: ObservableObject {
     /// the breath it spends nearly all of that life in only changes frame ~4
     /// times a second. Now it ticks exactly once per frame of whatever is
     /// playing, and only the short ease between the two runs at the full rate.
-    private enum Pace: Equatable { case idle, eating, easing }
+    private enum Pace: Equatable { case idle, eating, easing, still }
     private var pace: Pace?
     private static let easingFPS: Double = 20
 
@@ -273,6 +287,8 @@ final class MascotRenderer: ObservableObject {
     private var suspended: Bool { screensAsleep || screenLocked || sessionInactive }
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var eatingChange: AnyCancellable?
+    private var motionChange: AnyCancellable?
+    private let settings = AppSettings.shared
 
     /// The breath's period: `sin(t · 2)` repeats every π seconds.
     private static let idlePeriod = Double.pi
@@ -289,6 +305,12 @@ final class MascotRenderer: ObservableObject {
     // 1.6px bob needs nothing more.
     private static let idleFPS: Double = 4
     private static let eatFPS: Double = 16
+
+    /// Width of the glyph in the menu bar: the blob's own 18pt, plus just
+    /// enough for its chew to widen it. It used to be 30, to leave room for food
+    /// flying in from both sides — at 18px those bits read as a stray speck
+    /// between 뭉치 and its number, and the room made the item needlessly wide.
+    static let glyphWidth: CGFloat = 20
     private static var idleFrames: Int { Int(idlePeriod * idleFPS) }
     private static var eatFrames: Int { Int(MascotBeat.cycle * eatFPS) }
 
@@ -312,6 +334,15 @@ final class MascotRenderer: ObservableObject {
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.tick() }
+        // The settings menu's "뭉치 움직임": re-pace at once.
+        motionChange = settings.$mascotMotion
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.pace = nil
+                self?.lastIndex = -1
+                self?.tick()
+            }
         observeScreens()
         environmentChanged()
         tick()
@@ -345,16 +376,22 @@ final class MascotRenderer: ObservableObject {
             return
         }
         let now = Date()
-        let k = state.intensity(at: now)
+        let motion = settings.mascotMotion
+        // Set never to chew, 뭉치 ignores the chew state entirely.
+        let eating = motion.chews && state.eating
+        let k = motion.chews ? state.intensity(at: now) : 0
         // Steady only once the ease has all but reached where it is heading;
-        // until then every frame is a unique blend and is drawn live.
-        let pace: Pace = state.eating
+        // until then every frame is a unique blend and is drawn live. At rest
+        // and set not to breathe, it stands still on the first frame.
+        let pace: Pace = eating
             ? (k >= 0.98 ? .eating : .easing)
-            : (k <= 0.02 ? .idle : .easing)
+            : (k <= 0.02 ? (motion.breathes ? .idle : .still) : .easing)
 
         switch pace {
         case .idle:
             show(loop: idleLoop, phase: idlePhase(now), tag: 0)
+        case .still:
+            show(loop: idleLoop, phase: 0, tag: 0)
         case .eating:
             show(loop: eatLoop, phase: MascotBeat.foodPhase(now, lane: 0), tag: 1)
         case .easing:
@@ -379,6 +416,8 @@ final class MascotRenderer: ObservableObject {
         let interval: TimeInterval
         var fire = Date()
         switch pace {
+        case .still:
+            return                      // nothing moves, so nothing ticks
         case .easing:
             interval = 1 / Self.easingFPS
             fire = fire.addingTimeInterval(interval)
@@ -510,8 +549,8 @@ final class MascotRenderer: ObservableObject {
         // Eating chomp, timed to each bite arriving.
         let chomp = MascotBeat.chomp(now)
         let eatBob = -chomp * 1.4
-        let eatSX = 1.0 + 0.34 * chomp
-        let eatSY = 1.0 - 0.28 * chomp
+        let eatSX = 1.0 + 0.24 * chomp
+        let eatSY = 1.0 - 0.2 * chomp
 
         // Blend idle → eating by the eased intensity.
         let bob = idleBob * (1 - blend) + eatBob * blend
@@ -530,39 +569,14 @@ final class MascotRenderer: ObservableObject {
             .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
             .offset(y: bob)
 
-        // The food bits, behind the blob so they vanish *into* it. A constant
-        // 30-wide frame (vs the blob's 18) gives them travel room and keeps the
-        // status-item width from jumping when eating starts/stops. Their opacity
-        // rides the intensity, so they fade in/out with the ramp.
-        let glyph = ZStack {
-            if blend > 0.02 {
-                ForEach(0..<MascotBeat.lanes, id: \.self) { lane in
-                    self.foodBit(lane: lane, now: now, fade: blend, tint: tint)
-                }
-            }
-            blob
-        }
-        .frame(width: 30, height: 24)
+        // In the menu bar the chew alone says "eating"; the food is the
+        // dashboard's to show, where there is room for it.
+        let glyph = blob
+            .frame(width: Self.glyphWidth, height: 24)
 
         let renderer = ImageRenderer(content: glyph)
         renderer.scale = scale
         return renderer.nsImage ?? image
-    }
-
-    /// One food bit flying in from a side toward 뭉치 and being absorbed.
-    /// Lane 0 comes from the left, lane 1 from the right, staggered half a cycle.
-    @ViewBuilder
-    private func foodBit(lane: Int, now: Date, fade: CGFloat, tint: Color) -> some View {
-        let phase = MascotBeat.foodPhase(now, lane: lane)
-        let fadeScale = MascotBeat.foodFade(phase)
-        let dir: CGFloat = lane == 0 ? -1 : 1
-        let x = dir * 16 * CGFloat(1 - phase)     // edge (±16) → center (0)
-        RoundedRectangle(cornerRadius: 1.2)
-            .fill(tint)
-            .frame(width: 5, height: 6)
-            .scaleEffect(max(0.2, CGFloat(fadeScale.scale)))
-            .opacity(fadeScale.opacity * fade)
-            .offset(x: x, y: -1)
     }
 }
 

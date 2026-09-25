@@ -63,6 +63,6 @@ public struct TokenEstimator: Sendable {
         let n = Double(tokens)
         if n >= 100_000_000 { return unit(n / 100_000_000, "억") }
         if n >= 10_000 { return unit(n / 10_000, "만") }
-        return "\(tokens)"
+        return tokens.formatted(.number.grouping(.automatic))     // 5,670
     }
 }

@@ -293,6 +293,23 @@ public final class UsageStore {
                 Int(sqlite3_column_int64(stmt, 2)))
     }
 
+    /// Tokens saved per local day (`yyyy-MM-dd`) since `since` — the
+    /// dashboard's trend line. Days with nothing saved are absent.
+    public func savingsByDay(since: Double) -> [String: Int] {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, """
+        SELECT date(ts, 'unixepoch', 'localtime') AS day, COALESCE(SUM(MAX(full - selected, 0)), 0)
+        FROM usage WHERE ts >= ? GROUP BY day;
+        """, -1, &stmt, nil) == SQLITE_OK else { return [:] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, since)
+        var out: [String: Int] = [:]
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            out[String(cString: sqlite3_column_text(stmt, 0))] = Int(sqlite3_column_int64(stmt, 1))
+        }
+        return out
+    }
+
     public func summary() -> UsageSummary {
         let count = scalar("SELECT COUNT(*) FROM usage;")
         let totalSaved = scalar("SELECT COALESCE(SUM(MAX(full - selected, 0)), 0) FROM usage;")

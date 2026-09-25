@@ -21,7 +21,11 @@ import Foundation
 public enum MascotBeat {
 
     /// Seconds for one full chew cycle: two bites, one per side.
-    public static let cycle: Double = 0.55
+    ///
+    /// 0.8s rather than the old 0.55: at 3.6 bites a second 뭉치 read as frantic,
+    /// and a bite now has time to be seen flying in, softening into a droplet
+    /// and being swallowed.
+    public static let cycle: Double = 0.8
 
     /// Bites in flight at once — one flying in from each side.
     public static let lanes = 2

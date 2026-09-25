@@ -89,7 +89,10 @@ struct MascotBeatTests {
         let instant = Date(timeIntervalSince1970: 1_782_000_000.137)
         // Two bites per cycle, so the chomp's period is half the cycle.
         let later = instant.addingTimeInterval(MascotBeat.cycle / 2)
-        #expect(abs(MascotBeat.chomp(instant) - MascotBeat.chomp(later)) < 1e-9)
+        // A timestamp this size carries ~1e-7s of rounding, which the chomp's
+        // steep slope turns into up to ~1e-6 — exact to 1e-9 only by the luck
+        // of the cycle length. 1e-5 is still far below anything drawable.
+        #expect(abs(MascotBeat.chomp(instant) - MascotBeat.chomp(later)) < 1e-5)
     }
 
     @Test("a bite fades in on launch and vanishes on being swallowed")

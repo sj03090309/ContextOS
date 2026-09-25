@@ -24,6 +24,15 @@ final class TranscriptCache: @unchecked Sendable {
         self.storePath = storePath
     }
 
+    /// The working directory a transcript last recorded, if parsed. Returns nil
+    /// rather than waiting while a pass holds the lock — the caller is the UI.
+    func lastProject(forPath path: String) -> String? {
+        guard lock.try() else { return nil }
+        defer { lock.unlock() }
+        guard let project = rows?[path]?.lastProject, !project.isEmpty else { return nil }
+        return project
+    }
+
     /// Bring every transcript's parse up to date and fold them into a snapshot.
     func snapshot(of files: [(url: URL, agent: String)]) -> AgentUsageSnapshot {
         lock.lock()
@@ -67,7 +76,10 @@ final class TranscriptCache: @unchecked Sendable {
                 snapshot.totalTokens += usage.tokens
                 snapshot.byAgent[row.agent, default: 0] += usage.tokens
                 snapshot.byProjectAgent[project, default: [:]][row.agent, default: 0] += usage.tokens
-                for (day, tokens) in usage.days { snapshot.byDay[day, default: 0] += tokens }
+                for (day, tokens) in usage.days {
+                    snapshot.byDay[day, default: 0] += tokens
+                    snapshot.byAgentDay[row.agent, default: [:]][day, default: 0] += tokens
+                }
                 snapshot.sessions.append(AgentSession(
                     agent: row.agent, project: project,
                     start: usage.start == .greatestFiniteMagnitude ? usage.end : usage.start,

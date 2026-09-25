@@ -35,6 +35,8 @@ public struct AgentUsageSnapshot: Sendable {
     public var byProjectAgent: [String: [String: Int]] = [:]
     /// local `yyyy-MM-dd` → tokens, across every agent.
     public var byDay: [String: Int] = [:]
+    /// agent → local `yyyy-MM-dd` → tokens, for a per-agent split of any range.
+    public var byAgentDay: [String: [String: Int]] = [:]
     public var sessions: [AgentSession] = []
 
     public init() {}
@@ -89,6 +91,18 @@ public enum AgentSessionReader {
         memo = Memo(snapshot: fresh, at: now)
         memoLock.unlock()
         return fresh
+    }
+
+    /// The working directory a transcript last recorded, if it has been parsed;
+    /// for a Claude Code log not parsed yet, the directory decoded from its
+    /// folder name (lossy for names with a "-", so only a fallback). Never
+    /// waits on a refresh that is parsing right now.
+    public static func project(ofTranscript path: String) -> String? {
+        if let recorded = TranscriptCache.shared.lastProject(forPath: path) { return recorded }
+        let url = URL(fileURLWithPath: path)
+        guard url.deletingLastPathComponent().deletingLastPathComponent().path == claudeProjectsDir.path
+        else { return nil }
+        return decodeClaudeDir(url.deletingLastPathComponent().lastPathComponent)
     }
 
     /// Forget the memoized snapshot (tests, or an explicit refresh).

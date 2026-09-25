@@ -55,6 +55,13 @@ final class BuildLogModel: ObservableObject {
         }
     }
 
+    /// Show one day: select it — never toggle it off — and turn the calendar
+    /// to its month.
+    func focus(day: String) {
+        if selectedDay != day { select(day: day) }
+        month = Date(timeIntervalSince1970: BuildLogReader.dayStart(day) + 43_200)
+    }
+
     func step(months: Int) {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
@@ -89,6 +96,14 @@ enum ProjectWindowMemory {
     static var period: BuildPeriod = .week
     static var debtProject: String?
     static var debtKind: DebtKind = .untested
+    /// Asked for from elsewhere (the dashboard) and not yet shown.
+    static var pendingDay: String?
+    static var pendingDebtProject: String?
+}
+
+extension Notification.Name {
+    /// The project window has a pending request to act on.
+    static let contextOSProjectWindowRequest = Notification.Name("contextOSProjectWindowRequest")
 }
 
 /// The project window: what was built (history), and what it owes (debt).
@@ -116,8 +131,14 @@ struct BuildLogView: View {
         }
         .frame(minWidth: 760, minHeight: 560)
         .tint(Brand.accent)
-        .onAppear { model.reload() }
+        .onAppear {
+            model.reload()
+            applyPending()
+        }
         .onChange(of: tab) { _, now in ProjectWindowMemory.tab = now }
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSProjectWindowRequest)) { _ in
+            applyPending()
+        }
     }
 
     // MARK: - Toolbar
@@ -156,6 +177,20 @@ struct BuildLogView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// A day or a project the dashboard asked this window to show.
+    private func applyPending() {
+        if let day = ProjectWindowMemory.pendingDay {
+            ProjectWindowMemory.pendingDay = nil
+            tab = .buildLog
+            model.focus(day: day)
+        }
+        if let project = ProjectWindowMemory.pendingDebtProject {
+            ProjectWindowMemory.pendingDebtProject = nil
+            tab = .debt
+            debtModel.selected = project
+        }
     }
 
     private func refresh() {
@@ -408,10 +443,21 @@ enum BuildLogWindow {
     private static var release: Timer?
     private static let releaseDelay: TimeInterval = 120
 
-    static func show() {
+    /// Open the window — on one calendar day, or on one project's code debt.
+    static func show(day: String? = nil, debtProject: String? = nil) {
         release?.invalidate()
         release = nil
+        if let day { ProjectWindowMemory.pendingDay = day }
+        if let debtProject {
+            ProjectWindowMemory.pendingDebtProject = debtProject
+            // A window built fresh starts where it is told to.
+            ProjectWindowMemory.tab = .debt
+            ProjectWindowMemory.debtProject = debtProject
+        }
         if let controller, let window = controller.window {
+            if day != nil || debtProject != nil {
+                NotificationCenter.default.post(name: .contextOSProjectWindowRequest, object: nil)
+            }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
