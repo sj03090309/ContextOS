@@ -6,7 +6,12 @@ import ContextOSCore
 @MainActor
 final class BuildLogModel: ObservableObject {
 
-    @Published var period: BuildPeriod = .week { didSet { reload() } }
+    @Published var period: BuildPeriod = ProjectWindowMemory.period {
+        didSet {
+            ProjectWindowMemory.period = period
+            reload()
+        }
+    }
     @Published var log = BuildLog()
     @Published var tokensByDay: [String: Int] = [:]
     @Published var month = Date()
@@ -75,11 +80,22 @@ enum ProjectTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// What the project window was showing. Its views are released a while after
+/// it closes (see `BuildLogWindow`); this is what brings it back the way it was
+/// left — the same tab, period, project and kind of debt.
+@MainActor
+enum ProjectWindowMemory {
+    static var tab: ProjectTab = .buildLog
+    static var period: BuildPeriod = .week
+    static var debtProject: String?
+    static var debtKind: DebtKind = .untested
+}
+
 /// The project window: what was built (history), and what it owes (debt).
 struct BuildLogView: View {
     @StateObject private var model = BuildLogModel()
     @StateObject private var debtModel = CodeDebtModel()
-    @State private var tab: ProjectTab = .buildLog
+    @State private var tab: ProjectTab = ProjectWindowMemory.tab
 
     var body: some View {
         VStack(spacing: 0) {
@@ -101,6 +117,7 @@ struct BuildLogView: View {
         .frame(minWidth: 760, minHeight: 560)
         .tint(Brand.accent)
         .onAppear { model.reload() }
+        .onChange(of: tab) { _, now in ProjectWindowMemory.tab = now }
     }
 
     // MARK: - Toolbar
@@ -386,8 +403,14 @@ struct BuildLogView: View {
 @MainActor
 enum BuildLogWindow {
     private static var controller: NSWindowController?
+    private static var closeObserver: NSObjectProtocol?
+    /// Releases the window once it has stayed closed for a while.
+    private static var release: Timer?
+    private static let releaseDelay: TimeInterval = 120
 
     static func show() {
+        release?.invalidate()
+        release = nil
         if let controller, let window = controller.window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -402,10 +425,38 @@ enum BuildLogWindow {
         window.contentViewController = NSHostingController(rootView: BuildLogView())
         window.center()
         window.isReleasedWhenClosed = false      // we hold it; AppKit must not free it
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+            MainActor.assumeIsolated { scheduleRelease() }
+        }
 
         let holder = NSWindowController(window: window)
         controller = holder
         holder.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Holding the window is what makes "show it again" re-focus instead of
+    /// duplicating it — but it also kept every commit, the calendar and the
+    /// code-debt analysis in memory for the rest of the app's life after a
+    /// single look. Once the window has stayed closed for a couple of minutes,
+    /// let all of it go: `show()` then builds a fresh one, as the first open
+    /// always did, and `ProjectWindowMemory` puts it back the way it was left.
+    private static func scheduleRelease() {
+        release?.invalidate()
+        let timer = Timer(timeInterval: releaseDelay, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                release = nil
+                guard let window = controller?.window,
+                      !window.isVisible, !window.isMiniaturized else { return }
+                if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
+                closeObserver = nil
+                window.contentViewController = nil
+                controller = nil
+            }
+        }
+        timer.tolerance = 30
+        RunLoop.main.add(timer, forMode: .common)
+        release = timer
     }
 }

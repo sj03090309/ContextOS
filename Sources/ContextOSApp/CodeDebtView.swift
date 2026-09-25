@@ -7,9 +7,16 @@ import ContextOSCore
 final class CodeDebtModel: ObservableObject {
     /// Repos with local AI history, for the picker.
     @Published var projects: [ProjectAITokenReader.ProjectIdentity] = []
-    @Published var selected: String? { didSet { if oldValue != selected { reload() } } }
+    @Published var selected: String? = ProjectWindowMemory.debtProject {
+        didSet {
+            ProjectWindowMemory.debtProject = selected
+            if oldValue != selected { reload() }
+        }
+    }
     @Published var debt = CodeDebt()
-    @Published var kind: DebtKind = .untested
+    @Published var kind: DebtKind = ProjectWindowMemory.debtKind {
+        didSet { ProjectWindowMemory.debtKind = kind }
+    }
     @Published var loading = false
     /// The analyzer ran and found nothing at all, vs. hasn't run yet.
     @Published var analyzed = false
@@ -18,7 +25,13 @@ final class CodeDebtModel: ObservableObject {
         Task {
             let found = await Self.discover()
             self.projects = found
-            if self.selected == nil { self.selected = found.first?.path }
+            // A project remembered from before the window was last released
+            // is analyzed now; otherwise start on the first one.
+            if let selected = self.selected, found.contains(where: { $0.path == selected }) {
+                if !self.analyzed { self.reload() }
+            } else {
+                self.selected = found.first?.path
+            }
         }
     }
 
