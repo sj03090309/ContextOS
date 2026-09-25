@@ -208,6 +208,7 @@ final class DashboardModel: ObservableObject {
     /// Manual refresh (the ↻ button): rebuild everything from disk now, rather
     /// than serving whatever the memo last computed.
     func refresh() {
+        LogoStore.shared.reset()
         refreshFast()
         refreshSlow(force: true, includeWeek: true, priority: .userInitiated)
     }

@@ -532,12 +532,8 @@ struct ProjectCard: View {
         VStack(alignment: .leading, spacing: 9) {
             Button(action: toggle) {
                 HStack(spacing: 10) {
-                    Text(String(project.name.prefix(1)).uppercased())
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(Brand.accent)
-                        .frame(width: 30, height: 30)
-                        .background(Color.primary.opacity(0.08),
-                                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    LogoBadge(subject: .project(path: project.path,
+                                                mainAgent: project.byAgent.first?.agent))
                     VStack(alignment: .leading, spacing: 1) {
                         Text(project.name)
                             .font(.system(size: 13, weight: .semibold))
@@ -776,10 +772,7 @@ struct AgentsList: View {
     private func row(_ agent: DetectedAgent) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
-                Text(String(agent.name.prefix(1)))
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .frame(width: 28, height: 28)
-                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                LogoBadge(subject: .agent(agent.name), side: 28)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(agent.name)
                         .font(.system(size: 13, weight: .semibold))
