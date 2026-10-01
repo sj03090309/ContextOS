@@ -5,9 +5,8 @@ import Foundation
 /// Supports the common subset of gitignore syntax: comments, blank lines,
 /// `*` / `?` / `**` globs, leading-`/` (and any mid-`/`) root anchoring,
 /// trailing-`/` directory-only patterns, and `!` negation with last-match-wins.
-/// Nested `.gitignore` files are not consulted — the root file covers the vast
-/// majority of real projects, and the built-in `FileFilter` already drops the
-/// usual build/vendor trees.
+/// ProjectScanner composes this matcher at each directory's scope. A nil
+/// decision lets parent rules stand; a matching child rule can override them.
 public struct GitignoreMatcher: Sendable {
 
     private struct Rule: @unchecked Sendable {
@@ -29,8 +28,8 @@ public struct GitignoreMatcher: Sendable {
 
     /// Load the root `.gitignore` of a project, or nil if absent/empty.
     public static func load(projectRoot: URL) -> GitignoreMatcher? {
-        let url = projectRoot.appendingPathComponent(".gitignore")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        guard let data = try? ProjectFileAccess(root: projectRoot).read(".gitignore"),
+              let text = String(data: data, encoding: .utf8) else { return nil }
         let matcher = GitignoreMatcher(patterns: text.components(separatedBy: "\n"))
         return matcher.isEmpty ? nil : matcher
     }
@@ -39,7 +38,11 @@ public struct GitignoreMatcher: Sendable {
     /// is ignored. Directory matches imply everything beneath them, which the
     /// scanner honors by pruning matched directories wholesale.
     public func isIgnored(_ relativePath: String, isDirectory: Bool) -> Bool {
-        var ignored = false
+        decision(relativePath, isDirectory: isDirectory) ?? false
+    }
+
+    public func decision(_ relativePath: String, isDirectory: Bool) -> Bool? {
+        var ignored: Bool?
         let range = NSRange(relativePath.startIndex..<relativePath.endIndex, in: relativePath)
         for rule in rules {
             if rule.directoryOnly && !isDirectory { continue }

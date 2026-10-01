@@ -161,6 +161,10 @@ struct DashboardView: View {
             }
         }
         .animation(.snappy(duration: 0.22), value: ui.showSettings)
+        .sheet(item: $model.connectionPreview) { preview in
+            ConnectionPreviewSheet(preview: preview)
+                .environmentObject(model)
+        }
     }
 }
 

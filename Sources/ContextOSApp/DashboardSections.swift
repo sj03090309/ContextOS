@@ -794,6 +794,19 @@ struct AgentsList: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
+            if ManagedAgent(rawValue: agent.name) != nil {
+                HStack(spacing: 12) {
+                    Button("연결 설정") { model.connect(agent: agent.name) }
+                    if agent.connection.isConfigured {
+                        Button("해제") { model.disconnect(agent: agent.name) }
+                    }
+                    Button("최근 백업 복구") { model.restoreSettings(agent: agent.name) }
+                }
+                .font(.system(size: 10.5))
+                .buttonStyle(.plain)
+                .foregroundStyle(Brand.accent)
+                .disabled(model.connectionBusy || model.connecting.contains(agent.name))
+            }
         }
         .dashboardCard(radius: 14, padding: 11)
     }
@@ -823,7 +836,9 @@ struct AgentsList: View {
                 .frame(height: 22)
                 .background(Brand.positiveDot.opacity(0.13), in: Capsule())
         case .notConfigured:
-            if model.connecting.contains(agent.name) {
+            if ManagedAgent(rawValue: agent.name) == nil {
+                Text("수동 설정 필요").font(.system(size: 11)).foregroundStyle(.secondary)
+            } else if model.connecting.contains(agent.name) {
                 ProgressView().controlSize(.small)
             } else {
                 Button { model.connect(agent: agent.name) } label: {

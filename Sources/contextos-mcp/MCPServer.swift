@@ -11,7 +11,7 @@ import ContextOSCore
 struct MCPServer {
 
     static let name = "contextos"
-    static let version = "0.3.0"
+    static let version = ContextOSVersion.current
     static let defaultProtocolVersion = "2024-11-05"
 
     let service = ContextService()
@@ -30,7 +30,7 @@ struct MCPServer {
             guard let data = trimmed.data(using: .utf8),
                   let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else {
-                log("failed to parse line as JSON: \(trimmed.prefix(120))")
+                log("failed to parse request JSON")
                 continue
             }
             handle(message)
@@ -106,8 +106,8 @@ struct MCPServer {
             }
             reply(id: id, result: toolResult(text))
         } catch {
-            log("tool \(name) failed: \(error)")
-            reply(id: id, result: toolResult("Error: \(error)", isError: true))
+            log("tool request failed")
+            reply(id: id, result: toolResult("Unable to process this project request.", isError: true))
         }
     }
 
@@ -137,11 +137,11 @@ struct MCPServer {
         let selection = try service.relevantContext(query: query, projectRoot: root, tokenBudget: budget)
 
         guard !selection.isEmpty else {
-            return "No relevant files found for “\(query)”. Terms: \(selection.terms.joined(separator: ", "))"
+            return "No relevant files found."
         }
 
         var out = """
-        Query: \(query)
+        Query: \(SensitiveFilePolicy.redactingReferences(in: query))
         Context Score: \(selection.contextScore)/100  |  Budget: \(TokenEstimator.humanReadable(selection.tokenBudget))  |  Estimated: \(TokenEstimator.humanReadable(selection.estimatedTokens))
 
         Read ONLY these \(selection.included.count) files (already within budget):
@@ -171,7 +171,7 @@ struct MCPServer {
             query: query, projectRoot: root, tokenBudget: budget, memory: fresh ? nil : memory
         )
         guard !selection.isEmpty else {
-            return "No relevant files found for “\(query)”."
+            return "No relevant files found."
         }
         // Honest delivery saving: full size of the files actually delivered vs
         // the complete sliced/deduped response, including any outline.

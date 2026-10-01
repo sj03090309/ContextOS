@@ -44,6 +44,7 @@ public struct FileFilter: Sendable {
 
     /// True if a file should be skipped, based on name only (cheap pre-check).
     public func shouldSkipFile(named name: String) -> Bool {
+        if SensitiveFilePolicy.isSensitivePath(name) { return true }
         if ignoredFileNames.contains(name) { return true }
         let lower = name.lowercased()
         for suffix in ignoredFileSuffixes where lower.hasSuffix(suffix) {
@@ -85,7 +86,7 @@ public struct FileFilter: Sendable {
     ]
 
     public static let defaultIgnoredFileNames: Set<String> = [
-        ".DS_Store", "package-lock.json", "yarn.lock",
+        ".DS_Store", ".gitignore", "package-lock.json", "yarn.lock",
         "pnpm-lock.yaml", "Package.resolved"
     ]
 }

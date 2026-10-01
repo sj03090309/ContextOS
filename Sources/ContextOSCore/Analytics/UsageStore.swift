@@ -258,7 +258,7 @@ public final class UsageStore {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_double(stmt, 1, event.timestamp)
         bindText(stmt, 2, event.project)
-        bindText(stmt, 3, event.query)
+        bindText(stmt, 3, SensitiveFilePolicy.redactingReferences(in: event.query))
         sqlite3_bind_int64(stmt, 4, Int64(event.selectedTokens))
         sqlite3_bind_int64(stmt, 5, Int64(event.fullTokens))
         sqlite3_bind_int64(stmt, 6, Int64(event.contextScore))

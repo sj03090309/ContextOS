@@ -19,10 +19,11 @@ public extension ContextService {
     /// Concatenate every rule file present in the project, each under a header
     /// naming its source. Returns nil when no rule file exists.
     func projectRules(projectRoot: URL) -> String? {
+        guard let access = try? ProjectFileAccess(root: projectRoot) else { return nil }
         var sections: [String] = []
         for candidate in Self.ruleFileCandidates {
-            let url = projectRoot.appendingPathComponent(candidate)
-            guard let content = try? String(contentsOf: url, encoding: .utf8),
+            guard let data = try? access.read(candidate),
+                  let content = String(data: data, encoding: .utf8),
                   !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
             sections.append("===== \(candidate) =====\n\(content.trimmingCharacters(in: .whitespacesAndNewlines))")
@@ -34,6 +35,7 @@ public extension ContextService {
     /// git branch, uncommitted changes, recent commits, recent ContextOS
     /// optimizations in this project, and index size.
     func sessionSnapshot(projectRoot: URL) -> String {
+        guard (try? ProjectFileAccess(root: projectRoot)) != nil else { return "Project is unavailable or protected." }
         var out = ["Session snapshot: \(projectRoot.path)"]
 
         if git.isRepository(projectRoot) {
@@ -41,7 +43,7 @@ public extension ContextService {
                 out.append("Branch: \(branch)")
             }
 
-            let changed = git.changedFiles(projectRoot).sorted()
+            let changed = git.changedFiles(projectRoot).filter { !SensitiveFilePolicy.isSensitivePath($0) }.sorted()
             if changed.isEmpty {
                 out.append("Working tree: clean")
             } else {
@@ -53,7 +55,7 @@ public extension ContextService {
             let commits = git.recentCommits(projectRoot, limit: 5)
             if !commits.isEmpty {
                 out.append("Recent commits:")
-                for c in commits { out.append("  \(c.shortHash) \(c.subject)  (\(c.relativeDate))") }
+                for c in commits { out.append("  \(c.shortHash) \(SensitiveFilePolicy.redactingReferences(in: c.subject))  (\(c.relativeDate))") }
             }
         } else {
             out.append("Not a git repository.")
@@ -67,7 +69,7 @@ public extension ContextService {
             if !mine.isEmpty {
                 out.append("Recent ContextOS queries here:")
                 for e in mine {
-                    let query = e.query.isEmpty ? "(proactive)" : e.query
+                    let query = e.query.isEmpty ? "(proactive)" : SensitiveFilePolicy.redactingReferences(in: e.query)
                     out.append("  • \(query)  — \(e.fileCount) files")
                 }
             }

@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import Darwin
 
 /// Errors thrown by the SQLite index store.
 public enum IndexStoreError: Error, CustomStringConvertible {
@@ -31,8 +32,18 @@ public final class IndexStore {
 
     /// Open (or create) a database at `path`. Pass ":memory:" for tests.
     public init(path: String) throws {
-        if sqlite3_open(path, &db) != SQLITE_OK {
-            let message = String(cString: sqlite3_errmsg(db))
+        var databasePath = path
+        if path != ":memory:" {
+            let url = URL(fileURLWithPath: path)
+            if let parent = Darwin.realpath(url.deletingLastPathComponent().path, nil) {
+                defer { free(parent) }
+                // Resolve only the parent; resolving the final component would
+                // defeat NOFOLLOW by accepting a linked database.
+                databasePath = String(cString: parent) + "/" + url.lastPathComponent
+            }
+        }
+        if sqlite3_open_v2(databasePath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, nil) != SQLITE_OK {
+            let message = String(cString: sqlite3_errmsg(db)) + " (SQLite \(sqlite3_extended_errcode(db)), system \(sqlite3_system_errno(db)))"
             sqlite3_close(db)
             throw IndexStoreError.open(message)
         }

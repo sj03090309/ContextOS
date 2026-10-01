@@ -6,88 +6,73 @@ import Foundation
 struct ContextOS: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "contextos",
-        abstract: "Local, AI-free context manager for Claude Code.",
-        version: "2.0.0",
-        subcommands: [Connect.self, Context.self, Watch.self, Hook.self],
+        abstract: "Local context manager for Claude Code and Codex.",
+        version: ContextOSVersion.current,
+        subcommands: [Connect.self, Disconnect.self, RestoreSettings.self, Context.self, Watch.self, Hook.self],
         defaultSubcommand: Connect.self
     )
 }
 
 // MARK: - contextos connect
 
-/// One command to make every detected AI agent use ContextOS automatically.
+/// Preview first; only --apply changes the selected tool's settings.
 struct Connect: ParsableCommand {
-    static let configuration = CommandConfiguration(
-        abstract: "Set up automatic use in every detected AI agent (Claude Code · Codex · Gemini · Cursor · Windsurf)."
-    )
+    static let configuration = CommandConfiguration(abstract: "Preview safe Claude Code / Codex connection settings.")
+    @Option(help: "Claude Code or Codex. Omit to preview detected tools.") var agent: String?
+    @Flag(help: "Apply the reviewed settings, with a private local backup.") var apply = false
 
     func run() throws {
-        let mcpPath = Self.binaryPath(name: "contextos-mcp")
-        let cliPath = Self.binaryPath(name: "contextos")
+        let manager = try Self.manager()
+        let names = agent.map { [$0] } ?? AgentDetector.detect(home: manager.home).map(\.name)
+        let agents = names.compactMap(ManagedAgent.init(rawValue:))
+        guard !agents.isEmpty else { throw ValidationError("Claude Code 또는 Codex를 지정하거나 먼저 설치해 주세요.") }
+        for selected in agents {
+            try Self.present(manager.previewConnect(selected), manager: manager, apply: apply)
+        }
+    }
 
-        // Claude Code — the richest integration: memory file + `claude mcp add`
-        // + an auto-inject prompt hook so ContextOS runs on *every* prompt,
-        // not only when the agent chooses to call the MCP tools.
-        print("── Claude Code ──")
-        let url = ClaudeIntegration.globalMemoryURL()
-        let updated = try ClaudeIntegration.installInstruction(at: url)
-        print("\(updated ? "↻ 갱신" : "✓ 추가")됨: \(url.path)")
-        if Self.registerViaClaudeCLI(mcpBinaryPath: mcpPath) {
-            print("✓ MCP 서버 전역 등록 완료 (모든 프로젝트)")
+    static func manager() throws -> ConnectionManager {
+        guard let binaries = RuntimeBinaries.resolve(executable: URL(fileURLWithPath: CommandLine.arguments[0])) else {
+            throw ValidationError("ContextOS 실행 파일을 찾지 못했습니다. 앱 또는 Release 빌드 폴더에서 실행해 주세요.")
+        }
+        return ConnectionManager(mcpBinaryPath: binaries.mcp.path, cliBinaryPath: binaries.cli.path)
+    }
+
+    static func present(_ preview: ConnectionPreview, manager: ConnectionManager, apply: Bool) throws {
+        print("── \(preview.agent.rawValue) · \(preview.action) 미리보기 ──")
+        for file in preview.files { print("  \(file): ContextOS 항목 변경") }
+        for warning in preview.warnings { print("  \(warning)") }
+        guard preview.hasChanges else { print("변경할 설정이 없습니다."); return }
+        if apply {
+            _ = try manager.apply(preview)
+            print("✓ 적용 완료 · 변경 전 백업은 이 Mac의 ~/.contextos-backups에만 보관됩니다.")
+            print("도구를 다시 시작하면 설정이 적용됩니다.")
         } else {
-            print("MCP 서버를 전역 등록하려면 아래 한 줄을 터미널에 붙여넣으세요:")
-            print("  \(ClaudeIntegration.mcpAddCommand(mcpBinaryPath: mcpPath))")
+            print("설정은 변경하지 않았습니다. 적용하려면 같은 명령에 --apply를 추가하세요.")
         }
-        do {
-            try ClaudeIntegration.installPromptHook(at: ClaudeIntegration.settingsURL(), contextosBinaryPath: cliPath)
-            print("✓ 자동 주입 훅 설치 (매 프롬프트마다 관련 파일 자동 제공)")
-        } catch {
-            print("자동 주입 훅 설치 실패(수동 설정 가능): \(error)")
-        }
-
-        // Every other detected agent, each in its own config format.
-        let others = AgentIntegration.connectAll(mcpBinaryPath: mcpPath)
-        if !others.isEmpty {
-            print("\n── 다른 AI 에이전트 ──")
-            for r in others {
-                var line = "✓ \(r.agent): MCP 등록 → \(r.mcpConfigPath)"
-                if let inst = r.instructionPath { line += "\n    지침 설치 → \(inst)" }
-                print(line)
-            }
-        }
-
-        print("\n완료! 연결된 도구를 재시작하면 아무것도 안 해도 자동으로 토큰을 아낍니다.")
     }
 
-    private static func registerViaClaudeCLI(mcpBinaryPath: String) -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        p.arguments = ["claude", "mcp", "add", "--scope", "user", "contextos", "--", mcpBinaryPath]
-        p.standardOutput = Pipe(); p.standardError = Pipe()
-        do { try p.run() } catch { return false }
-        p.waitUntilExit()
-        return p.terminationStatus == 0
-    }
+}
 
-    /// Resolve a bundled binary (`contextos` or `contextos-mcp`) to a stable
-    /// installed path, preferring an installed .app over the transient dev build.
-    static func binaryPath(name: String) -> String {
-        let fm = FileManager.default
-        let home = fm.homeDirectoryForCurrentUser
-        let appLocations = [
-            "/Applications/ContextOS.app",
-            home.appendingPathComponent("Applications/ContextOS.app").path,
-            home.appendingPathComponent("Desktop/ContextOS.app").path
-        ]
-        for app in appLocations {
-            let path = app + "/Contents/Resources/" + name
-            if fm.fileExists(atPath: path) { return path }
-        }
-        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-        let siblingDir = exe.deletingLastPathComponent()
-        let sibling = siblingDir.appendingPathComponent(name).path
-        if fm.fileExists(atPath: sibling), !siblingDir.path.contains("/debug") { return sibling }
-        return fm.currentDirectoryPath + "/.build/release/" + name
+struct Disconnect: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Preview removal of ContextOS-owned settings.")
+    @Option(help: "Claude Code or Codex.") var agent: String
+    @Flag(help: "Apply the reviewed removal.") var apply = false
+    func run() throws {
+        guard let selected = ManagedAgent(rawValue: agent) else { throw ValidationError("Claude Code 또는 Codex를 지정해 주세요.") }
+        let manager = try Connect.manager()
+        try Connect.present(manager.previewDisconnect(selected), manager: manager, apply: apply)
+    }
+}
+
+struct RestoreSettings: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "restore-settings", abstract: "Preview restoration of the latest connection-settings backup.")
+    @Option(help: "Claude Code or Codex.") var agent: String
+    @Flag(help: "Apply the reviewed restoration.") var apply = false
+    func run() throws {
+        guard let selected = ManagedAgent(rawValue: agent) else { throw ValidationError("Claude Code 또는 Codex를 지정해 주세요.") }
+        let manager = try Connect.manager()
+        try Connect.present(manager.previewRestore(selected), manager: manager, apply: apply)
     }
 }
 
@@ -245,7 +230,7 @@ struct Watch: ParsableCommand {
                 print("♻️  [\(ts)] 다시 읽음: 파일 \(stats.filesIndexed)개")
             }
         }
-        watcher.start()
+        guard watcher.start() else { throw ValidationError("파일 감시를 시작하지 못했습니다. 프로젝트 경로와 접근 권한을 확인해 주세요.") }
         RunLoop.main.run()
     }
 }

@@ -18,6 +18,8 @@ import ContextOSCore
 @MainActor
 final class DashboardModel: ObservableObject {
 
+    @Published var connectionPreview: ConnectionPreview?
+    @Published var connectionBusy = false
     @Published var todaySaved = 0
     @Published var totalSaved = 0
     @Published var queryCount = 0
@@ -99,7 +101,7 @@ final class DashboardModel: ObservableObject {
     /// A refresh asked for while another was running, run as soon as it ends —
     /// so opening the panel mid-way through a background top-up still gets the
     /// week in code, which the background pass skips.
-    private var queuedUsageRefresh: (includeWeek: Bool, priority: TaskPriority)?
+    private var queuedUsageRefresh: (force: Bool, includeWeek: Bool, priority: TaskPriority)?
     private var flashTask: Task<Void, Never>?
     nonisolated(unsafe) private var optimizedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var activityObserver: NSObjectProtocol?
@@ -371,9 +373,9 @@ final class DashboardModel: ObservableObject {
     private func refreshSlow(force: Bool = false, includeWeek: Bool, priority: TaskPriority) {
         // One at a time: a refresh that lands while another is still parsing
         // would only wait on the same lock and redo its work. Remember it instead.
-        guard force || !usageRefreshInFlight else {
+        guard !usageRefreshInFlight else {
             let queued = queuedUsageRefresh
-            queuedUsageRefresh = (includeWeek || queued?.includeWeek == true,
+            queuedUsageRefresh = (force || queued?.force == true, includeWeek || queued?.includeWeek == true,
                                   max(priority, queued?.priority ?? priority))
             return
         }
@@ -391,7 +393,7 @@ final class DashboardModel: ObservableObject {
             lastUpdated = Date()
             if let next = queuedUsageRefresh {
                 queuedUsageRefresh = nil
-                refreshSlow(includeWeek: next.includeWeek, priority: next.priority)
+                refreshSlow(force: next.force, includeWeek: next.includeWeek, priority: next.priority)
             }
         }
     }
@@ -415,35 +417,54 @@ final class DashboardModel: ObservableObject {
 
     // MARK: - Connecting agents
 
-    /// Register ContextOS with one agent that isn't connected yet.
-    func connect(agent name: String) { connect([name]) }
+    func connect(agent name: String) { prepareConnection(agent: name, action: "connect") }
+    func disconnect(agent name: String) { prepareConnection(agent: name, action: "disconnect") }
+    func restoreSettings(agent name: String) { prepareConnection(agent: name, action: "restore") }
 
-    /// Every detected agent ContextOS can wire in but hasn't yet.
     func connectAll() {
-        let names = agents.filter {
-            if case .notConfigured = $0.connection { return true }
-            return false
-        }.map(\.name)
-        guard !names.isEmpty else {
-            showNotice("더 연결할 AI 도구가 없어요.")
-            return
-        }
-        connect(names)
+        showNotice("Claude Code·Codex 카드에서 연결 설정을 확인해 주세요.")
     }
 
-    private func connect(_ names: [String]) {
-        let pending = names.filter { !connecting.contains($0) }
-        guard !pending.isEmpty else { return }
-        connecting.formUnion(pending)
-        Task(priority: .userInitiated) {
-            let result = await Self.performConnect(pending)
-            connecting.subtract(pending)
-            if let command = result.manualCommand {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(command, forType: .string)
-            }
-            showNotice(result.message)
-            refreshSlow(includeWeek: false, priority: .userInitiated)
+    private static func connectionManager() -> ConnectionManager? {
+        guard let executable = Bundle.main.executableURL, let binaries = RuntimeBinaries.resolve(executable: executable) else { return nil }
+        return ConnectionManager(mcpBinaryPath: binaries.mcp.path, cliBinaryPath: binaries.cli.path)
+    }
+
+    private func prepareConnection(agent name: String, action: String) {
+        guard let agent = ManagedAgent(rawValue: name) else { showNotice("이 단계는 Claude Code·Codex 설정 관리를 지원합니다."); return }
+        guard !connectionBusy, connectionPreview == nil, !connecting.contains(name) else { return }
+        guard let manager = Self.connectionManager() else { showNotice("연결에 필요한 실행 파일을 찾지 못했습니다."); return }
+        connecting.insert(name)
+        Task {
+            do {
+                connectionPreview = try await Task.detached(priority: .userInitiated) {
+                    switch action {
+                    case "disconnect": return try manager.previewDisconnect(agent)
+                    case "restore": return try manager.previewRestore(agent)
+                    default: return try manager.previewConnect(agent)
+                    }
+                }.value
+            } catch { showNotice(error.localizedDescription) }
+            connecting.remove(name)
+        }
+    }
+
+    func cancelConnectionPreview() {
+        guard !connectionBusy else { return }
+        connectionPreview = nil
+    }
+
+    func applyConnectionPreview() {
+        guard let preview = connectionPreview, !connectionBusy, let manager = Self.connectionManager() else { return }
+        connectionBusy = true
+        Task {
+            do {
+                _ = try await Task.detached(priority: .userInitiated) { try manager.apply(preview) }.value
+                showNotice(preview.hasChanges ? "설정 변경 완료 · 도구를 다시 시작해 주세요." : "변경할 설정이 없습니다.")
+                refreshSlow(includeWeek: false, priority: .userInitiated)
+            } catch { showNotice(error.localizedDescription) }
+            connectionBusy = false
+            connectionPreview = nil
         }
     }
 
@@ -456,48 +477,6 @@ final class DashboardModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             if !Task.isCancelled { self?.notice = nil }
         }
-    }
-
-    private struct ConnectResult: Sendable {
-        var message: String
-        /// A command the user has to run themselves, already on the clipboard.
-        var manualCommand: String?
-    }
-
-    private nonisolated static func performConnect(_ names: [String]) async -> ConnectResult {
-        guard let mcp = bundledBinary("contextos-mcp") else {
-            return ConnectResult(message: "연결에 필요한 contextos-mcp 를 찾지 못했어요.")
-        }
-        let cli = bundledBinary("contextos") ?? mcp
-        var connected: [String] = []
-        var manual: String?
-        for name in names {
-            if name == "Claude Code" {
-                if ClaudeIntegration.connect(mcpBinaryPath: mcp, cliBinaryPath: cli) {
-                    connected.append(name)
-                } else {
-                    manual = ClaudeIntegration.mcpAddCommand(mcpBinaryPath: mcp)
-                }
-            } else if (try? AgentIntegration.connect(agent: name, mcpBinaryPath: mcp)) != nil {
-                connected.append(name)
-            }
-        }
-        if let manual {
-            return ConnectResult(message: "Claude Code는 터미널에서 등록해야 해요. 명령어를 복사해 뒀어요.",
-                                 manualCommand: manual)
-        }
-        guard !connected.isEmpty else {
-            return ConnectResult(message: "연결하지 못했어요. 설정 파일을 확인해 주세요.")
-        }
-        return ConnectResult(message: connected.joined(separator: ", ") + " 연결됨 · 다시 시작하면 적용돼요")
-    }
-
-    /// A binary shipped with the app: in the bundle's Resources, or beside the
-    /// executable for a `swift run` build.
-    private nonisolated static func bundledBinary(_ name: String) -> String? {
-        let candidates = [Bundle.main.resourceURL?.appendingPathComponent(name),
-                          Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(name)]
-        return candidates.compactMap { $0?.path }.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     // Show the bolt while ContextOS is actively working. Each new optimization

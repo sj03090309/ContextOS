@@ -57,13 +57,11 @@ public enum AgentIntegration {
         let dir = home.appendingPathComponent(".codex")
         guard FileManager.default.fileExists(atPath: dir.path) else { return nil }
 
-        let toml = dir.appendingPathComponent("config.toml")
-        try upsertTOMLBlock(at: toml, mcpBinaryPath: mcpBinaryPath)
-
-        let agentsMD = dir.appendingPathComponent("AGENTS.md")
-        try ClaudeIntegration.installInstruction(at: agentsMD)
-
-        return ConnectionResult(agent: "Codex", mcpConfigPath: toml.path, instructionPath: agentsMD.path)
+        let manager = ConnectionManager(home: home, mcpBinaryPath: mcpBinaryPath,
+                                        cliBinaryPath: (mcpBinaryPath as NSString).deletingLastPathComponent + "/contextos")
+        try manager.apply(manager.previewConnect(.codex))
+        return ConnectionResult(agent: "Codex", mcpConfigPath: dir.appendingPathComponent("config.toml").path,
+                                instructionPath: dir.appendingPathComponent("AGENTS.md").path)
     }
 
     /// Gemini CLI: `~/.gemini/settings.json` (mcpServers) + `~/.gemini/GEMINI.md`.
@@ -111,20 +109,14 @@ public enum AgentIntegration {
     /// Merge `mcpServers.contextos` into a JSON config, preserving everything
     /// else in the file. Creates the file (and parents) when absent.
     static func mergeMCPJSON(at url: URL, mcpBinaryPath: String) throws {
-        var root: [String: Any] = [:]
-        if let data = try? Data(contentsOf: url),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            root = parsed
-        }
-        var servers = root["mcpServers"] as? [String: Any] ?? [:]
-        servers["contextos"] = ["command": mcpBinaryPath, "args": [String]()]
-        root["mcpServers"] = servers
-
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try JSONSerialization.data(
-            withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: url)
+        let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        let name = url.lastPathComponent
+        var editor = try JSONSettingsEditor(transaction.read(name), file: name)
+        let path = ["mcpServers", "contextos"]
+        if try editor.value(path) == nil { try editor.set(path, to: JSONSettingsEditor.encode([String: String]())) }
+        try editor.set(path + ["command"], to: JSONSettingsEditor.encode(mcpBinaryPath))
+        try editor.set(path + ["args"], to: JSONSettingsEditor.encode([String]()))
+        try transaction.apply([transaction.change(name, after: editor.data)], agent: "MCP", action: "connect")
     }
 
     static let tomlBeginMarker = "# ContextOS:begin"
@@ -133,26 +125,13 @@ public enum AgentIntegration {
     /// Insert (or replace) the `[mcp_servers.contextos]` block in a TOML config,
     /// bounded by comment markers so re-runs update in place.
     static func upsertTOMLBlock(at url: URL, mcpBinaryPath: String) throws {
-        let block = """
-        \(tomlBeginMarker)
-        [mcp_servers.contextos]
-        command = "\(mcpBinaryPath)"
-        args = []
-        \(tomlEndMarker)
-        """
-
-        var content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        if let begin = content.range(of: tomlBeginMarker),
-           let end = content.range(of: tomlEndMarker), end.upperBound >= begin.lowerBound {
-            content.replaceSubrange(begin.lowerBound..<end.upperBound, with: block)
-        } else {
-            if !content.isEmpty && !content.hasSuffix("\n") { content += "\n" }
-            if !content.isEmpty { content += "\n" }
-            content += block + "\n"
-        }
-
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try content.write(to: url, atomically: true, encoding: .utf8)
+        let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        let name = url.lastPathComponent
+        var editor = try CodexSettingsEditor(transaction.read(name))
+        if try editor.hasSection {
+            try editor.set("command", to: String(data: JSONSettingsEditor.encode(mcpBinaryPath), encoding: .utf8)!)
+            try editor.set("args", to: "[]")
+        } else { try editor.addSection(command: mcpBinaryPath) }
+        try transaction.apply([transaction.change(name, after: editor.data)], agent: "Codex", action: "connect")
     }
 }

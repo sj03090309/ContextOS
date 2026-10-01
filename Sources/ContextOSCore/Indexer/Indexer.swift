@@ -34,13 +34,14 @@ public struct Indexer: Sendable {
     @discardableResult
     public func index(projectRoot: URL, force: Bool = false) throws -> IndexStats {
         let start = Date()
+        let access = try ProjectFileAccess(root: projectRoot)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: projectRoot.path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
             throw CocoaError(.fileReadNoSuchFile)
         }
 
-        let dbURL = Self.databaseURL(forProjectRoot: projectRoot)
+        let dbURL = try access.indexURL()
         let indexDir = dbURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: indexDir, withIntermediateDirectories: true)
         // Make the index self-ignoring so it never pollutes the host project's
@@ -52,7 +53,8 @@ public struct Indexer: Sendable {
             try? "*\n".write(to: ignore, atomically: true, encoding: .utf8)
         }
 
-        let store = try IndexStore(path: dbURL.path)
+        // Validate again after directory creation before opening SQLite.
+        let store = try IndexStore(path: access.indexURL().path)
 
         // Acquire the writer lock before reading the snapshot. Two MCP/hook
         // processes must not both decide to insert the same new path from a
@@ -82,7 +84,7 @@ public struct Indexer: Sendable {
                 continue
             }
 
-            guard let data = try? Data(contentsOf: scanned.absoluteURL),
+            guard let data = try? access.read(scanned.relativePath, maximumBytes: scanner.filter.maxFileSize),
                   let source = String(data: data, encoding: .utf8)
             else {
                 stats.filesSkipped += 1
@@ -137,7 +139,7 @@ public struct Indexer: Sendable {
 
     /// Open the store for an already-indexed project (for `stats`, later queries).
     public static func openStore(forProjectRoot root: URL) throws -> IndexStore {
-        let dbURL = databaseURL(forProjectRoot: root)
+        let dbURL = try ProjectFileAccess(root: root).indexURL()
         return try IndexStore(path: dbURL.path)
     }
 }

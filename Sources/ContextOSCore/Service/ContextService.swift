@@ -144,7 +144,7 @@ public struct ContextService: Sendable {
             .symbols(forPaths: shown.map(\.path))) ?? [:]
 
         var out = "[ContextOS] 이 요청에 관련된 파일 (정확도 \(selection.contextScore)/100). "
-        out += "본문이 필요하면 read_optimized(\"\(query)\") 를 호출하세요.\n"
+        out += "본문이 필요하면 read_optimized를 호출하세요.\n"
         for file in shown {
             let reason = file.reasons.first.map { " — \($0)" } ?? ""
             out += "- \(file.path)  (~\(TokenEstimator.abbrev(file.estimatedTokens)))\(reason)\n"
@@ -220,8 +220,10 @@ public struct ContextService: Sendable {
         var bundle = ""
         var fullCharacterCount = 0
         var skipped = 0
-        let rootPath = projectRoot.resolvingSymlinksInPath().standardizedFileURL.path
+        guard let access = try? ProjectFileAccess(root: projectRoot) else { return (result, bundle, 0, 0) }
+        let rootPath = access.root.path
         for file in selection.included + selection.excluded {
+            guard !SensitiveFilePolicy.isSensitivePath(file.path) else { continue }
             let marker = "// FILE: \(file.path) (이미 전달됨; fresh=true로 재요청)\n\n"
             let emptySection = "// ===== FILE: \(file.path) =====\n\n"
             let minimumFraming = marker.count < emptySection.count ? marker : emptySection
@@ -231,11 +233,8 @@ public struct ContextService: Sendable {
                 result.excluded.append(file)
                 continue
             }
-            let url = projectRoot.appendingPathComponent(file.path).resolvingSymlinksInPath().standardizedFileURL
-            // Defense in depth: never read outside the project root.
-            guard url.path.hasPrefix(rootPath == "/" ? "/" : rootPath + "/"),
-                  (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
-                  let content = try? String(contentsOf: url, encoding: .utf8)
+            guard let data = try? access.read(file.path, maximumBytes: indexer.scanner.filter.maxFileSize),
+                  let content = String(data: data, encoding: .utf8)
             else { result.excluded.append(file); continue }
 
             var body = content

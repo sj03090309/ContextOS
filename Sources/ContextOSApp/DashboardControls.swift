@@ -174,7 +174,7 @@ struct SettingsOverlay: View {
                     ui.showSettings = false
                     model.refresh()
                 }
-                menuRow("AI 도구 모두 연결", symbol: "link") {
+                menuRow("AI 연결 설정", symbol: "link") {
                     ui.showSettings = false
                     ui.tab = .ai
                     model.connectAll()

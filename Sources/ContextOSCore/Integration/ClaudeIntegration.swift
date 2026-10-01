@@ -25,48 +25,17 @@ public enum ClaudeIntegration {
     /// re-running replaces ContextOS's own entries rather than duplicating them.
     @discardableResult
     public static func installPromptHook(at url: URL, contextosBinaryPath: String) throws -> Bool {
-        var root: [String: Any] = [:]
-        if let data = try? Data(contentsOf: url),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            root = parsed
-        }
-        var hooks = root["hooks"] as? [String: Any] ?? [:]
-
-        let group: [String: Any] = [
-            "hooks": [[
-                "type": "command",
-                "command": contextosBinaryPath,
-                "args": ["hook"],
-                "timeout": 20
-            ]]
-        ]
-
-        var hadPrior = false
+        let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        let name = url.lastPathComponent
+        var editor = try JSONSettingsEditor(transaction.read(name), file: name)
+        let hook = try JSONSettingsEditor.encode(["type": "command", "command": contextosBinaryPath,
+                                                "args": ["hook"], "timeout": 20])
+        let hadPrior = editor.data.range(of: Data("contextos".utf8)) != nil
         for event in ["UserPromptSubmit", "Stop"] {
-            var groups = hooks[event] as? [[String: Any]] ?? []
-            if groups.contains(where: isContextOSGroup) { hadPrior = true }
-            groups.removeAll(where: isContextOSGroup)
-            groups.append(group)
-            hooks[event] = groups
+            try ConnectionManager.updateHooks(&editor, event: event, insert: hook, expected: nil)
         }
-        root["hooks"] = hooks
-
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: url)
+        try transaction.apply([transaction.change(name, after: editor.data)], agent: "Claude Code", action: "connect")
         return hadPrior
-    }
-
-    /// True if a hook group is ContextOS's own (its command points at a
-    /// `contextos` binary run with the `hook` arg).
-    private static func isContextOSGroup(_ group: [String: Any]) -> Bool {
-        let inner = group["hooks"] as? [[String: Any]] ?? []
-        return inner.contains { entry in
-            let cmd = (entry["command"] as? String) ?? ""
-            let args = (entry["args"] as? [String]) ?? []
-            return cmd.hasSuffix("/contextos") || (cmd.contains("contextos") && args.contains("hook"))
-        }
     }
 
     public static func projectMemoryURL(projectRoot: URL) -> URL {
@@ -112,35 +81,23 @@ public enum ClaudeIntegration {
     /// block was updated (true) vs. freshly added (false).
     @discardableResult
     public static func installInstruction(at url: URL) throws -> Bool {
-        let block = markedBlock()
-        var content = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-
-        let updated: Bool
-        if let begin = content.range(of: beginMarker),
-           let end = content.range(of: endMarker), end.upperBound >= begin.lowerBound {
-            content.replaceSubrange(begin.lowerBound..<end.upperBound, with: block)
-            updated = true
-        } else {
-            if !content.isEmpty && !content.hasSuffix("\n") { content += "\n" }
-            if !content.isEmpty { content += "\n" }
-            content += block + "\n"
-            updated = false
-        }
-
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try content.write(to: url, atomically: true, encoding: .utf8)
+        let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        let name = url.lastPathComponent
+        let original = try SettingsTransaction.text(transaction.read(name), file: name)
+        let updated = try ConnectionManager.instructionRange(original) != nil
+        let changed = try ConnectionManager.settingInstruction(original, to: markedBlock())
+        try transaction.apply([transaction.change(name, after: Data(changed.utf8))], agent: "Instructions", action: "connect")
         return updated
     }
 
     /// Remove the ContextOS block from `url` (leaving other content intact).
     public static func removeInstruction(at url: URL) throws {
-        guard var content = try? String(contentsOf: url, encoding: .utf8),
-              let begin = content.range(of: beginMarker),
-              let end = content.range(of: endMarker), end.upperBound >= begin.lowerBound
-        else { return }
-        content.replaceSubrange(begin.lowerBound..<end.upperBound, with: "")
-        try content.write(to: url, atomically: true, encoding: .utf8)
+        let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        let name = url.lastPathComponent
+        guard let original = try transaction.read(name) else { return }
+        let content = try SettingsTransaction.text(original, file: name)
+        let changed = try ConnectionManager.settingInstruction(content, to: nil)
+        try transaction.apply([transaction.change(name, after: Data(changed.utf8))], agent: "Instructions", action: "disconnect")
     }
 
     /// The command to register the MCP server for **all** projects (user scope).
@@ -148,35 +105,16 @@ public enum ClaudeIntegration {
         "claude mcp add --scope user contextos -- \"\(mcpBinaryPath)\""
     }
 
-    /// Wire ContextOS into Claude Code the way `contextos connect` does: the
-    /// instruction in the global memory file, the auto-inject prompt hook, and
-    /// the MCP server registered for every project through Claude's own CLI.
-    ///
-    /// The CLI runs through a login shell: an app launched from Finder gets a
-    /// bare PATH, and `claude` usually lives somewhere only the user's shell
-    /// profile adds (npm, Homebrew, `~/.local/bin`).
-    ///
-    /// - Returns: whether the MCP server got registered. False means the user
-    ///   has to run `mcpAddCommand` themselves.
+    /// Apply the same backed-up settings transaction as the explicit CLI apply.
+    /// UI clients use ConnectionManager previews to expose errors and cancellation.
     public static func connect(mcpBinaryPath: String, cliBinaryPath: String) -> Bool {
-        _ = try? installInstruction(at: globalMemoryURL())
-        _ = try? installPromptHook(at: settingsURL(), contextosBinaryPath: cliBinaryPath)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lc", mcpAddCommand(mcpBinaryPath: mcpBinaryPath)]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return false }
-        process.waitUntilExit()
-        return process.terminationStatus == 0
+        let manager = ConnectionManager(mcpBinaryPath: mcpBinaryPath, cliBinaryPath: cliBinaryPath)
+        do { try manager.apply(manager.previewConnect(.claudeCode)); return true }
+        catch { return false }
     }
 
     /// Write a project-local `.mcp.json` pointing at the MCP server.
     public static func writeProjectMCPConfig(projectRoot: URL, mcpBinaryPath: String) throws {
-        let config: [String: Any] = [
-            "mcpServers": ["contextos": ["command": mcpBinaryPath, "args": [String]()]]
-        ]
-        let data = try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted])
-        try data.write(to: projectRoot.appendingPathComponent(".mcp.json"))
+        try AgentIntegration.mergeMCPJSON(at: projectRoot.appendingPathComponent(".mcp.json"), mcpBinaryPath: mcpBinaryPath)
     }
 }

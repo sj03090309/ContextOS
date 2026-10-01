@@ -24,14 +24,30 @@ public struct ProjectScanner: Sendable {
     /// into), which is what keeps `node_modules`-style trees cheap.
     public func scan(root: URL) throws -> [ScannedFile] {
         let fm = FileManager.default
-        let rootPath = root.standardizedFileURL.path
-        let gitignore = GitignoreMatcher.load(projectRoot: root)
+        let scanRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let rootPath = scanRoot.path
+        guard !SensitiveFilePolicy.isSensitiveRoot(scanRoot) else { throw CocoaError(.fileReadNoPermission) }
         var results: [ScannedFile] = []
 
         // Explicit stack so we control directory pruning precisely.
-        var stack: [URL] = [root.standardizedFileURL]
+        struct IgnoreScope { var prefix: String; var matcher: GitignoreMatcher }
+        var stack: [(URL, [IgnoreScope])] = [(scanRoot, [])]
 
-        while let dir = stack.popLast() {
+        while let (dir, inherited) = stack.popLast() {
+            var scopes = inherited
+            if let matcher = GitignoreMatcher.load(projectRoot: dir) {
+                let relative = Self.relativePath(of: dir.standardizedFileURL.path, root: rootPath)
+                scopes.append(IgnoreScope(prefix: relative.isEmpty ? "" : relative + "/", matcher: matcher))
+            }
+            func ignored(_ path: String, isDirectory: Bool) -> Bool {
+                var ignored = false
+                for scope in scopes where path.hasPrefix(scope.prefix) {
+                    if let decision = scope.matcher.decision(String(path.dropFirst(scope.prefix.count)), isDirectory: isDirectory) {
+                        ignored = decision
+                    }
+                }
+                return ignored
+            }
             let entries: [URL]
             do {
                 // Include hidden entries so the filter can decide (e.g. keep .github,
@@ -43,7 +59,7 @@ public struct ProjectScanner: Sendable {
                     options: []
                 )
             } catch {
-                if dir.standardizedFileURL == root.standardizedFileURL { throw error }
+                if dir.standardizedFileURL == scanRoot { throw error }
                 continue // unreadable directory — skip, don't abort the whole scan
             }
 
@@ -64,15 +80,16 @@ public struct ProjectScanner: Sendable {
 
                 if isDir {
                     if filter.shouldSkipDirectory(named: name) { continue }
-                    if let gitignore, gitignore.isIgnored(relative, isDirectory: true) { continue }
-                    stack.append(entry)
+                    if ignored(relative, isDirectory: true) { continue }
+                    stack.append((entry, scopes))
                     continue
                 }
 
                 guard values.isRegularFile == true else { continue }
 
                 if filter.shouldSkipFile(named: name) { continue }
-                if let gitignore, gitignore.isIgnored(relative, isDirectory: false) { continue }
+                if SensitiveFilePolicy.isSensitivePath(relative) { continue }
+                if ignored(relative, isDirectory: false) { continue }
 
                 let size = values.fileSize ?? 0
                 if size > filter.maxFileSize { continue }
