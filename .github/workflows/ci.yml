@@ -5,14 +5,40 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: contextos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    runs-on: macos-15
+  verify:
+    name: Verify (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Swift version
         run: swift --version
-      - name: Build
-        run: swift build
-      - name: Test
-        run: swift test
+      - name: Debug build and complete tests
+        run: |
+          swift build
+          swift test
+      - name: Release build
+        run: swift build -c release
+      - name: Temporary-home CLI connections
+        run: python3 scripts/smoke_connections.py --binary "$(swift build -c release --show-bin-path)/contextos"
+      - name: Isolated MCP regression
+        run: python3 scripts/benchmark_context.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp" --verify
+      - name: Local packaging (no installation, launch or public upload)
+        run: |
+          bash scripts/package_app.sh --binary-dir "$(swift build -c release --show-bin-path)"
+          python3 scripts/verify_bundle.py dist/ContextOS.app
+          python3 scripts/smoke_install.py --app dist/ContextOS.app
+      - name: Synthetic performance correctness smoke
+        run: '"$(swift build -c release --show-bin-path)/contextos-bench" "$RUNNER_TEMP/contextos-bench-$GITHUB_RUN_ID" 50'

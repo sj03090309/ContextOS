@@ -1,6 +1,7 @@
 # Swift / SwiftPM
 .build/
 .swiftpm/
+.audit/
 Package.resolved
 
 # ContextOS index output

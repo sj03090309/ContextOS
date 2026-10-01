@@ -1,0 +1,261 @@
+{
+  "recorded_date": "2026-10-01",
+  "environment": {
+    "swift": "6.4",
+    "build_system": "SwiftPM native",
+    "macos": "27.0 (26A428)",
+    "architecture": "arm64",
+    "processor_count": 8,
+    "configuration": "Release",
+    "git_signals_enabled": false,
+    "cpu_affinity_or_other_processes_controlled": false
+  },
+  "comparison": {
+    "before": "Final safety code with only ContextOptimizer.swift replaced by b28bb8b34c4e32c3d112324e62370ff9d2449dfc version",
+    "after": "Final safety code and per-query lexical token reuse",
+    "baseline_optimizer_sha256": "91353d785e80afb6da372ac4a1f75d9737854e5c67c8363a1d28866a81f89442",
+    "after_optimizer_sha256": "1d2ce0ae1fd55822f646dcd02cbf583168f208e7890ced4ae3f93576d10b25a9",
+    "benchmark_sha256": "7def1b8e8c7e1bb45b517d5b741b02af500639685b2f9e1ce1dbc6fd938b7ff6"
+  },
+  "before": [
+    {
+      "architecture": "64-bit",
+      "bundle_estimated_tokens": 7994,
+      "configuration": "release",
+      "correctness_digest": "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+      "fixture": {
+        "files": 500,
+        "source_bytes": 1985720,
+        "symbols": 12000,
+        "terms": [
+          "login",
+          "session",
+          "token",
+          "cache",
+          "validation",
+          "service"
+        ]
+      },
+      "indexed_files": 500,
+      "measurements_ms": {
+        "cold_index": 303.580166,
+        "query_median_5": 1360.733625,
+        "rank_median_7": 910.02325,
+        "scan_median_9": 14.17675,
+        "warm_index_median_9": 19.682666
+      },
+      "os": "Version 27.0 (Build 26A428)",
+      "peak_rss_bytes": 30146560,
+      "processor_count": 8,
+      "selected_files": 7,
+      "watcher": {
+        "classifier_median_ms_3": 52.697167,
+        "events": 10000,
+        "new_accepted": 4000,
+        "old_accepted": 7000,
+        "old_classifier_median_ms_3": 64.383834
+      }
+    },
+    {
+      "architecture": "64-bit",
+      "bundle_estimated_tokens": 7994,
+      "configuration": "release",
+      "correctness_digest": "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+      "fixture": {
+        "files": 500,
+        "source_bytes": 1985720,
+        "symbols": 12000,
+        "terms": [
+          "login",
+          "session",
+          "token",
+          "cache",
+          "validation",
+          "service"
+        ]
+      },
+      "indexed_files": 500,
+      "measurements_ms": {
+        "cold_index": 303.623792,
+        "query_median_5": 1362.589917,
+        "rank_median_7": 921.432125,
+        "scan_median_9": 15.2365,
+        "warm_index_median_9": 18.306625
+      },
+      "os": "Version 27.0 (Build 26A428)",
+      "peak_rss_bytes": 30392320,
+      "processor_count": 8,
+      "selected_files": 7,
+      "watcher": {
+        "classifier_median_ms_3": 52.643125,
+        "events": 10000,
+        "new_accepted": 4000,
+        "old_accepted": 7000,
+        "old_classifier_median_ms_3": 65.072167
+      }
+    },
+    {
+      "architecture": "64-bit",
+      "bundle_estimated_tokens": 7994,
+      "configuration": "release",
+      "correctness_digest": "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+      "fixture": {
+        "files": 500,
+        "source_bytes": 1985720,
+        "symbols": 12000,
+        "terms": [
+          "login",
+          "session",
+          "token",
+          "cache",
+          "validation",
+          "service"
+        ]
+      },
+      "indexed_files": 500,
+      "measurements_ms": {
+        "cold_index": 296.186834,
+        "query_median_5": 1357.977292,
+        "rank_median_7": 920.454583,
+        "scan_median_9": 14.340667,
+        "warm_index_median_9": 18.101292
+      },
+      "os": "Version 27.0 (Build 26A428)",
+      "peak_rss_bytes": 30375936,
+      "processor_count": 8,
+      "selected_files": 7,
+      "watcher": {
+        "classifier_median_ms_3": 53.243375,
+        "events": 10000,
+        "new_accepted": 4000,
+        "old_accepted": 7000,
+        "old_classifier_median_ms_3": 65.173709
+      }
+    }
+  ],
+  "after": [
+    {
+      "architecture": "64-bit",
+      "bundle_estimated_tokens": 7994,
+      "configuration": "release",
+      "correctness_digest": "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+      "dashboard_data": {
+        "cold_ms": 58.398042,
+        "memoized_median_ms_9": 0.000125,
+        "total_tokens": 880000,
+        "transcript_bytes": 1176000,
+        "transcripts": 4,
+        "ui_rendering_measured": false,
+        "warm_median_ms_9": 1.102583
+      },
+      "fixture": {
+        "files": 500,
+        "source_bytes": 1985720,
+        "symbols": 12000,
+        "terms": [
+          "login",
+          "session",
+          "token",
+          "cache",
+          "validation",
+          "service"
+        ]
+      },
+      "indexed_files": 500,
+      "measurements_ms": {
+        "cold_index": 310.448958,
+        "query_median_5": 592.213625,
+        "rank_median_7": 159.118458,
+        "scan_median_9": 14.510375,
+        "warm_index_median_9": 18.53425
+      },
+      "os": "Version 27.0 (Build 26A428)",
+      "peak_rss_bytes": 34504704,
+      "processor_count": 8,
+      "selected_files": 7,
+      "watcher": {
+        "classifier_median_ms_3": 52.847625,
+        "events": 10000,
+        "new_accepted": 4000,
+        "old_accepted": 7000,
+        "old_classifier_median_ms_3": 64.993
+      }
+    },
+    {
+      "architecture": "64-bit",
+      "bundle_estimated_tokens": 7994,
+      "configuration": "release",
+      "correctness_digest": "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+      "fixture": {
+        "files": 500,
+        "source_bytes": 1985720,
+        "symbols": 12000,
+        "terms": [
+          "login",
+          "session",
+          "token",
+          "cache",
+          "validation",
+          "service"
+        ]
+      },
+      "indexed_files": 500,
+      "measurements_ms": {
+        "cold_index": 297.000791,
+        "query_median_5": 599.196041,
+        "rank_median_7": 162.521875,
+        "scan_median_9": 14.16125,
+        "warm_index_median_9": 18.867792
+      },
+      "os": "Version 27.0 (Build 26A428)",
+      "peak_rss_bytes": 34701312,
+      "processor_count": 8,
+      "selected_files": 7,
+      "watcher": {
+        "classifier_median_ms_3": 52.182084,
+        "events": 10000,
+        "new_accepted": 4000,
+        "old_accepted": 7000,
+        "old_classifier_median_ms_3": 66.193083
+      }
+    },
+    {
+      "architecture": "64-bit",
+      "bundle_estimated_tokens": 7994,
+      "configuration": "release",
+      "correctness_digest": "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+      "fixture": {
+        "files": 500,
+        "source_bytes": 1985720,
+        "symbols": 12000,
+        "terms": [
+          "login",
+          "session",
+          "token",
+          "cache",
+          "validation",
+          "service"
+        ]
+      },
+      "indexed_files": 500,
+      "measurements_ms": {
+        "cold_index": 300.244166,
+        "query_median_5": 602.760292,
+        "rank_median_7": 164.90275,
+        "scan_median_9": 14.363917,
+        "warm_index_median_9": 17.941125
+      },
+      "os": "Version 27.0 (Build 26A428)",
+      "peak_rss_bytes": 34537472,
+      "processor_count": 8,
+      "selected_files": 7,
+      "watcher": {
+        "classifier_median_ms_3": 52.638708,
+        "events": 10000,
+        "new_accepted": 4000,
+        "old_accepted": 7000,
+        "old_classifier_median_ms_3": 66.440416
+      }
+    }
+  ]
+}

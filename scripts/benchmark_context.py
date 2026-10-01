@@ -8,6 +8,7 @@ Token figures use ContextOS's local text estimate, not a provider tokenizer.
 import argparse
 import json
 import math
+import os
 import pathlib
 import shutil
 import statistics
@@ -21,12 +22,16 @@ class MCP:
         sandbox = shutil.which("sandbox-exec")
         if sandbox is None:
             raise RuntimeError("sandbox-exec is required to isolate usage analytics")
-        analytics = pathlib.Path.home() / "Library/Application Support/ContextOS"
-        profile = '(version 1)(allow default)(deny file-write* (subpath ' + json.dumps(str(analytics)) + '))'
+        self.home = tempfile.TemporaryDirectory(prefix="contextos-mcp-home-")
+        real_home = pathlib.Path.home()
+        blocked = [real_home / name for name in [".claude", ".claude.json", ".codex", ".ssh", ".aws", ".contextos-backups", "Library/Application Support/ContextOS"]]
+        profile = '(version 1)(allow default)(deny network*)'
+        for path in blocked:
+            profile += '(deny file-read* file-write* (subpath ' + json.dumps(str(path)) + '))'
         self.process = subprocess.Popen(
             [sandbox, "-p", profile, str(pathlib.Path(binary).resolve())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1)
+            text=True, bufsize=1, env=dict(os.environ, CFFIXED_USER_HOME=self.home.name))
         self.counter = 0
 
     def request(self, method, params):
@@ -60,7 +65,10 @@ class MCP:
             self.process.kill()
             self.process.wait()
         self.process.stdout.close()
+        diagnostics = self.process.stderr.read()
+        assert "DUMMY_PRIVATE_VALUE" not in diagnostics, "Sensitive fixture appeared in MCP diagnostics"
         self.process.stderr.close()
+        self.home.cleanup()
 
 
 def estimate(text):
@@ -79,6 +87,9 @@ def main():
     try:
         server.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
                                       "clientInfo": {"name": "contextos-benchmark", "version": "1"}})
+        tools, _ = server.request("tools/list", {})
+        assert len(tools["tools"]) == 6
+        report["tools_list"] = {"tool_count": len(tools["tools"])}
         with tempfile.TemporaryDirectory(prefix="contextos-benchmark-") as directory:
             base = pathlib.Path(directory)
 
@@ -132,6 +143,38 @@ def main():
             ]:
                 text, _ = server.call(name, root, **arguments)
                 report[name] = {"responded": bool(text)}
+
+            root = project("privacy", {"public.py": "def login():\n    return 'PUBLIC_BODY'\n",
+                         ".env": "DUMMY_PRIVATE_VALUE", "credentials.json": "DUMMY_PRIVATE_VALUE",
+                         "nested/.gitignore": "private.py\n", "nested/private.py": "def login():\n    return 'DUMMY_PRIVATE_VALUE'\n"})
+            text, _ = server.call("read_optimized", root, query="login .env credentials.json", token_budget=8000, fresh=True)
+            assert all(value not in text for value in ["DUMMY_PRIVATE_VALUE", "credentials.json", ".env", "nested/private.py"]), text
+            # A malformed JSON request is dropped; its bytes must not reach stderr.
+            server.process.stdin.write('{"DUMMY_PRIVATE_VALUE":\n')
+            server.process.stdin.flush()
+            server.request("ping", {})
+            report["privacy"] = {"sensitive_fixtures_excluded": True, "malformed_request_recovery": True}
+
+            # Rules use the same file boundary as source reads. Never consult
+            # the user's actual files: all symlink targets below are fixtures.
+            root = project("rule-boundary", {".env": "DUMMY_PRIVATE_VALUE", ".cursorrules": "PUBLIC_RULE"})
+            outside = project("rule-boundary-other", {"rules.md": "DUMMY_PRIVATE_VALUE"})
+            (root / "AGENTS.md").symlink_to(outside / "rules.md")
+            (root / "CLAUDE.md").symlink_to(root / ".env")
+            (root / ".contextos").symlink_to(outside, target_is_directory=True)
+            text, _ = server.call("get_project_rules", root)
+            assert "PUBLIC_RULE" in text and "DUMMY_PRIVATE_VALUE" not in text, text
+            result, _ = server.request("tools/call", {"name": "project_stats", "arguments": {"path": str(root)}})
+            assert result.get("isError") and "DUMMY_PRIVATE_VALUE" not in json.dumps(result), result
+            assert not (outside / "index.sqlite").exists()
+            private_root = project(".aws/nested", {"AGENTS.md": "DUMMY_PRIVATE_VALUE"})
+            text, _ = server.call("restore_session", private_root)
+            assert text == "Project is unavailable or protected.", text
+            text, _ = server.call("get_project_rules", private_root)
+            assert "DUMMY_PRIVATE_VALUE" not in text
+            assert not (private_root / ".contextos").exists()
+            report["project_boundary"] = {"rule_links_excluded": True, "linked_index_rejected": True,
+                                          "protected_root_not_read_or_indexed": True}
     finally:
         server.close()
     rendered = json.dumps(report, ensure_ascii=False, indent=2)

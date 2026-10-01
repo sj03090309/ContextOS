@@ -13,7 +13,7 @@ let package = Package(
         .executable(name: "ContextOSApp", targets: ["ContextOSApp"])
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
+        .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2")
     ],
     targets: [
         // Pure logic. No platform / UI dependencies. Everything else is a thin adapter.
@@ -38,6 +38,8 @@ let package = Package(
             name: "ContextOSApp",
             dependencies: ["ContextOSCore"]
         ),
+        // Disposable synthetic workloads; never included in the app bundle.
+        .executableTarget(name: "contextos-bench", dependencies: ["ContextOSCore"], path: "Benchmarks"),
         .testTarget(
             name: "ContextOSCoreTests",
             dependencies: ["ContextOSCore"]

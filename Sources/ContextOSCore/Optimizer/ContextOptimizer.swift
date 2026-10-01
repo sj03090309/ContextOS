@@ -79,13 +79,29 @@ public struct ContextOptimizer: Sendable {
         // *anywhere* (e.g. "file", "view", "test") is recognised as low-signal,
         // not just one that happens to be a common symbol. This is what stops a
         // broad dictionary expansion like 파일→"file" from flooding the results.
+        // Tokenize each surface once per query. Repeating camel-case splitting
+        // inside every term × symbol pair dominated large-project ranking.
+        struct LexicalFile {
+            var stem: String
+            var stemWords: Set<String>
+            var pathWords: Set<String>
+            var symbols: [(name: String, words: [String])]
+            var importWords: Set<String>
+        }
+        var lexicalByID: [Int64: LexicalFile] = [:]
+        lexicalByID.reserveCapacity(files.count)
         var termDF: [String: Int] = [:]
         for file in files {
             guard let id = file.id else { continue }
-            var words = Set(TextTokens.subwords(of: file.relativePath))
-            words.formUnion(TextTokens.subwords(of: PathResolution.stem(of: file.relativePath)))
-            for s in symbolsByFile[id] ?? [] { for w in TextTokens.subwords(of: s.name) { words.insert(w) } }
+            let stem = PathResolution.stem(of: file.relativePath)
+            let pathWords = Set(TextTokens.subwords(of: file.relativePath))
+            let stemWords = Set(TextTokens.subwords(of: stem))
+            let symbolWords = (symbolsByFile[id] ?? []).map { (name: $0.name, words: TextTokens.subwords(of: $0.name)) }
+            var words = pathWords.union(stemWords)
+            for symbol in symbolWords { words.formUnion(symbol.words) }
             for w in words { termDF[w, default: 0] += 1 }
+            lexicalByID[id] = LexicalFile(stem: stem, stemWords: stemWords, pathWords: pathWords, symbols: symbolWords,
+                                         importWords: Set((importsByFile[id] ?? []).flatMap { TextTokens.subwords(of: $0.module) }))
         }
         func idf(_ term: String) -> Double {
             let df = termDF[term] ?? 0
@@ -102,11 +118,7 @@ public struct ContextOptimizer: Sendable {
         var reasons: [Int64: [String]] = [:]
 
         for file in files {
-            guard let id = file.id else { continue }
-            let fileStem = PathResolution.stem(of: file.relativePath)
-            let pathWords = Set(TextTokens.subwords(of: file.relativePath))
-            let symbols = symbolsByFile[id] ?? []
-            let importWords = Set((importsByFile[id] ?? []).flatMap { TextTokens.subwords(of: $0.module) })
+            guard let id = file.id, let lexical = lexicalByID[id] else { continue }
 
             var fileScore = 0.0
             var fileReasons: [String] = []
@@ -117,8 +129,8 @@ public struct ContextOptimizer: Sendable {
                 var reason: String? = nil
 
                 // Symbol matches (strongest signal).
-                for symbol in symbols {
-                    let words = TextTokens.subwords(of: symbol.name)
+                for symbol in lexical.symbols {
+                    let words = symbol.words
                     if words.contains(term) {
                         if Self.symbolExactScore > best {
                             best = Self.symbolExactScore
@@ -133,17 +145,17 @@ public struct ContextOptimizer: Sendable {
                 }
 
                 // File name.
-                if TextTokens.subwords(of: fileStem).contains(term), Self.fileNameScore > best {
+                if lexical.stemWords.contains(term), Self.fileNameScore > best {
                     best = Self.fileNameScore
-                    reason = "filename \(fileStem)"
+                    reason = "filename \(lexical.stem)"
                 }
                 // Path component.
-                if best < Self.pathScore, pathWords.contains(term) {
+                if best < Self.pathScore, lexical.pathWords.contains(term) {
                     best = Self.pathScore
                     reason = "path"
                 }
                 // Import module.
-                if best < Self.importScore, importWords.contains(term) {
+                if best < Self.importScore, lexical.importWords.contains(term) {
                     best = Self.importScore
                     reason = "import \(term)"
                 }
