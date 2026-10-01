@@ -285,7 +285,9 @@ public enum BuildLogReader {
            open < close {
             let inner = path[path.index(after: open)..<close]
             let replacement = inner.components(separatedBy: " => ").last ?? ""
-            let rebuilt = path[path.startIndex..<open] + replacement + path[path.index(after: close)...]
+            let prefix = String(path.prefix(upTo: open))
+            let suffix = String(path.suffix(from: path.index(after: close)))
+            let rebuilt = prefix + replacement + suffix
             return rebuilt.replacingOccurrences(of: "//", with: "/")
         }
         return path.components(separatedBy: " => ").last ?? path
