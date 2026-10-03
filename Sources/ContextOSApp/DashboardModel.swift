@@ -59,10 +59,8 @@ final class DashboardModel: ObservableObject {
     /// `syncMascot`. Publishing them re-ran the whole dashboard's body — calendar,
     /// project cards and all — on every turn start and stop, with the panel shut.
     private var flashing = false { didSet { syncMascot() } }
-    /// An AI agent is actively processing a command *right now* — from the
-    /// moment the user hits enter until the response settles. Detected two
-    /// ways: session-log writes (Claude Code/Codex, catches the very first
-    /// keystroke of a turn) and MCP request heartbeats (any agent).
+    /// A supported agent has an unfinished turn, including a quiet reasoning
+    /// or tool wait. Session lifecycle evidence decides this, not a heartbeat.
     private var working = false { didSet { syncMascot() } }
 
     /// One place decides whether 뭉치 is eating, so the two renderers can never
@@ -70,28 +68,19 @@ final class DashboardModel: ObservableObject {
     private func syncMascot() { mascot.set(eating: flashing || working) }
 
     private let activityMonitor = AgentActivityMonitor()
+    private let sessionTracker = SessionActivityTracker()
     private var logEvents: FileEventStream?
     /// The roots `logEvents` was started on, to notice a new one (Codex
     /// installed after launch) and restart the stream.
     private var watchedPaths: [String] = []
     /// Only used when the event stream can't be started: the old rescan poll.
     private var pollTimer: Timer?
-    /// Last MCP heartbeat / activity signal (posted by contextos-mcp and the
-    /// UserPromptSubmit hook). Also the "turn start" time.
-    private var lastActivity = Date.distantPast
-    /// Last "turn ended" signal (the Stop hook). When this is newer than
-    /// `lastActivity`, the agent finished and the mascot should stop *now*.
-    private var lastStop = Date.distantPast
     /// Fires when the current verdict's quiet window closes — the only way
     /// `working` can change without an event.
     private var recheckTimer: Timer?
     /// Bumped by every evaluation, so a tail read that finishes after a newer
     /// evaluation has started can't overwrite it.
     private var evaluation = 0
-    /// The last "does the newest log end on an unanswered tool call?" answer,
-    /// and the log state it was read from, so the tail is read once per write
-    /// rather than once per evaluation.
-    private var pendingAnswer: (path: String, mtime: Date, pending: Bool)?
 
     private var lastQueryCount = -1
     private var savingsTimer: Timer?
@@ -128,24 +117,22 @@ final class DashboardModel: ObservableObject {
             forName: UsageStore.optimizedNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.onOptimized() }
         }
-        // Turn START — the UserPromptSubmit hook fires the instant the user hits
-        // enter. Start eating immediately.
+        // Hooks wake the monitor; session logs identify which turn changed.
         startObserver = center.addObserver(
             forName: UsageStore.turnStartNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.noteActivity() }
+            Task { @MainActor in self?.rescanWorking() }
         }
-        // Turn STOP — the Stop hook fires the instant the agent finishes. Stop now.
+        // A Stop may belong to a different concurrently open session.
         stopObserver = center.addObserver(
             forName: UsageStore.turnStopNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                self?.lastStop = Date()
-                self?.evaluateWorking()
-            }
+            // Old hooks carry no session identity. A Stop is a request to read
+            // the logs, never permission to end every other agent's turn.
+            Task { @MainActor in self?.rescanWorking() }
         }
-        // MCP heartbeat on every request: keeps a hook-less agent's turn alive.
+        // A real MCP tool call wakes the log reader; protocol pings do not.
         activityObserver = center.addObserver(
             forName: UsageStore.activityNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.noteActivity() }
+            Task { @MainActor in self?.evaluateWorking() }
         }
 
         watchSessionLogs()
@@ -175,6 +162,7 @@ final class DashboardModel: ObservableObject {
         dayDetails = [:]
         refreshFast()
         refreshSlow(includeWeek: true, priority: .userInitiated)
+        rescanWorking()
         scheduleUsageRefresh()
     }
 
@@ -217,10 +205,14 @@ final class DashboardModel: ObservableObject {
 
     // MARK: - Working detection
 
-    /// A turn start or an MCP tool call: the agent is working as of now.
-    private func noteActivity() {
-        lastActivity = Date()
-        evaluateWorking()
+    /// Anonymous cross-process notifications are wake-ups. Transcript events
+    /// supply session identity and the actual start/end, including after relaunch.
+    private func rescanWorking() {
+        let monitor = activityMonitor
+        Task.detached(priority: .utility) { [weak self] in
+            monitor.rescan()
+            await self?.evaluateWorking()
+        }
     }
 
     /// Watch the session-log trees for writes. Each one tells the monitor which
@@ -281,28 +273,19 @@ final class DashboardModel: ObservableObject {
         recheckTimer?.invalidate()
         recheckTimer = nil
 
-        let newest = activityMonitor.newestLog
-        var pending: Bool?
-        if let newest, let answer = pendingAnswer,
-           answer.path == newest.url.path, answer.mtime == newest.mtime {
-            pending = answer.pending
+        let monitor = activityMonitor
+        let tracker = sessionTracker
+        Task.detached(priority: .utility) { [weak self] in
+            let snapshot = tracker.snapshot(logs: monitor.sessionLogs)
+            await self?.workingEvaluated(ticket: ticket, snapshot: snapshot)
         }
-        let verdict = TurnActivity.evaluate(now: Date(), lastActivity: lastActivity,
-                                            lastStop: lastStop, lastLogWrite: newest?.mtime,
-                                            pendingToolCall: pending)
-        if verdict.needsPendingCheck, let newest {
-            // The log has gone quiet: is it waiting on a long tool? That is a
-            // tail read — off the main thread, once per write. `working` keeps
-            // its value until the answer is in, so 뭉치 doesn't blink.
-            Task.detached(priority: .utility) { [weak self] in
-                let answer = AgentActivityMonitor.hasPendingToolCall(newest.url)
-                await self?.pendingChecked(ticket: ticket, log: newest, pending: answer)
-            }
-            return
-        }
-        update(\.working, verdict.working)
-        updateLive(working: verdict.working, newest: newest)
-        if let at = verdict.recheckAt {
+    }
+
+    private func workingEvaluated(ticket: Int, snapshot: SessionActivitySnapshot) {
+        guard ticket == evaluation else { return }
+        update(\.working, snapshot.activeSessions > 0)
+        live.update(snapshot)
+        if let at = snapshot.recheckAt {
             let timer = Timer(fire: at, interval: 0, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.evaluateWorking() }
             }
@@ -312,32 +295,6 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    /// Tell the header who is working where. The agent and project come from
-    /// the newest session log, but only while that log is fresh: a heartbeat
-    /// from some other MCP client says nothing about whose log went quiet an
-    /// hour ago.
-    private func updateLive(working: Bool, newest: (url: URL, mtime: Date)?) {
-        var agent: String?
-        var project: String?
-        if let newest {
-            let fresh = Date().timeIntervalSince(newest.mtime) < 120
-            if fresh || !working {
-                agent = activityMonitor.agent(ofLog: newest.url)
-                project = AgentSessionReader.project(ofTranscript: newest.url.path)
-                    .map { ($0 as NSString).lastPathComponent }
-            }
-        }
-        live.update(working: working, agent: agent, project: project,
-                    lastWrite: newest?.mtime)
-    }
-
-    private func pendingChecked(ticket: Int, log: (url: URL, mtime: Date), pending: Bool) {
-        pendingAnswer = (log.url.path, log.mtime, pending)
-        // A newer evaluation is already under way; it will pick the answer up
-        // if it's still about the same write.
-        guard ticket == evaluation else { return }
-        evaluateWorking()
-    }
 
     // MARK: - Data
 
@@ -564,23 +521,18 @@ final class DashboardModel: ObservableObject {
 /// Who is working where, right now — the dashboard header's live line.
 @MainActor
 final class LiveStatus: ObservableObject {
-    @Published private(set) var working = false
-    /// The agent and project of the newest session log, when known.
-    @Published private(set) var agent: String?
-    @Published private(set) var project: String?
-    /// When the current turn started — or, while idle, when the last one ended.
-    @Published private(set) var since: Date?
+    @Published private(set) var snapshot = SessionActivitySnapshot.empty
+    var working: Bool { snapshot.activeSessions > 0 }
+    var phase: AgentWorkPhase { snapshot.selected?.phase ?? .unknown }
+    var agent: String? { snapshot.selected?.agent }
+    var project: String? { snapshot.selected?.project }
+    var since: Date? { snapshot.selected?.startedAt }
+    var endedAt: Date? { snapshot.selected?.endedAt }
+    var lastEventAt: Date? { snapshot.selected?.lastEventAt }
+    var pendingTools: Int { snapshot.selected?.pendingTools ?? 0 }
 
-    func update(working: Bool, agent: String?, project: String?, lastWrite: Date?, now: Date = Date()) {
-        if working != self.working {
-            self.working = working
-            since = now
-        } else if since == nil {
-            // The first word since launch: an idle agent was last active when
-            // its log was last written.
-            since = working ? now : lastWrite
-        }
-        if let agent, agent != self.agent { self.agent = agent }
-        if let project, project != self.project { self.project = project }
+    func update(_ snapshot: SessionActivitySnapshot) {
+        guard snapshot != self.snapshot else { return }
+        self.snapshot = snapshot
     }
 }

@@ -115,7 +115,8 @@ struct DashboardView: View {
             Color.clear.frame(height: PopoverContentController.mascotHeight)
 
             LiveHeader(live: model.live,
-                       configured: model.agents.filter { $0.connection.isConfigured }.count)
+                       configured: model.agents.filter { $0.connection.isConfigured }.count,
+                       todaySaved: model.todaySaved)
                 .padding(.horizontal, 18)
 
             HeroSection()

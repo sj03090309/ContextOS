@@ -3,6 +3,7 @@
 import argparse
 import pathlib
 import plistlib
+import re
 import subprocess
 
 p=argparse.ArgumentParser()
@@ -14,7 +15,7 @@ with (app/'Contents/Info.plist').open('rb') as stream:
 assert info['CFBundleIdentifier']=='com.contextos.app'
 assert info['LSMinimumSystemVersion']=='14.0'
 assert info['LSUIElement'] is True
-assert info['CFBundleVersion']==info['CFBundleShortVersionString']
+assert re.fullmatch(r'[0-9]+(?:\.[0-9]+){0,2}', info['CFBundleVersion'])
 architectures=[]
 for relative in ['MacOS/ContextOSApp','Resources/contextos','Resources/contextos-mcp']:
     binary=app/'Contents'/relative
@@ -28,4 +29,4 @@ assert set(architectures[0].split()).issubset({'arm64','x86_64'})
 for name in ['THIRD_PARTY_NOTICES.md','PRIVACY.md','INSTALL.md']:
     assert (app/'Contents/Resources'/name).is_file(),name
 assert (app/'Contents/Resources/ThirdPartyLicenses/swift-argument-parser.txt').is_file()
-print('Bundle verified: version '+info['CFBundleShortVersionString']+', '+architectures[0])
+print('Bundle verified: version '+info['CFBundleShortVersionString']+', build '+info['CFBundleVersion']+', '+architectures[0])

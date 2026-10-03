@@ -97,7 +97,7 @@ struct FooterBar: View {
     private func updated(now: Date) -> String {
         guard let last = model.lastUpdated else { return "불러오는 중…" }
         let ago = LiveHeader.ago(last, now: now)
-        return ago == "방금" ? "방금 업데이트됨" : ago + " 업데이트"
+        return "통계 확인 " + ago
     }
 }
 

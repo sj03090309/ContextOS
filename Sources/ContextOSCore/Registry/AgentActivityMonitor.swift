@@ -1,11 +1,9 @@
 import Foundation
 
-/// Detects whether an AI agent is *actively processing a command right now* by
-/// watching its session logs. Claude Code appends every user message and
-/// assistant/tool event to `~/.claude/projects/<project>/<session>.jsonl` as it
-/// works, and Codex CLI does the same under `~/.codex/sessions` — so "a session
-/// log was modified in the last few seconds" is exactly "the user hit enter and
-/// the agent is still working".
+/// Discovers main-session logs and tracks their filesystem events. The dashboard
+/// uses `SessionActivityTracker` to read their turn lifecycle: a quiet log alone
+/// cannot establish that an agent finished working. `isActive` remains a legacy
+/// recency heuristic for callers that only need a filesystem activity signal.
 ///
 /// Pure filesystem stats, no parsing. Two ways to use it:
 ///   - **Event-driven** (the menu-bar app): a file-event stream on `watchRoots`
@@ -18,6 +16,7 @@ public final class AgentActivityMonitor: @unchecked Sendable {
 
     private let home: URL
     private var hottest: (url: URL, mtime: Date)?
+    private var knownLogs: [String: Date] = [:]
     private var lastScan = Date.distantPast
     private let lock = NSLock()
 
@@ -111,6 +110,12 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         return hottest
     }
 
+    /// All main-session logs, so a finished session cannot hide another active turn.
+    public var sessionLogs: [(url: URL, mtime: Date)] {
+        lock.lock(); defer { lock.unlock() }
+        return knownLogs.map { (URL(fileURLWithPath: $0.key), $0.value) }
+    }
+
     /// Walk both log trees for the newest log — at startup, and whenever an
     /// event stream admits it lost track (dropped events, a replaced root).
     public func rescan(now: Date = Date()) {
@@ -126,6 +131,7 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     public func noteWrite(atPath path: String) -> Bool {
         guard isSessionLog(path), let written = Self.modificationDate(path) else { return false }
         lock.lock(); defer { lock.unlock() }
+        knownLogs[path] = written
         if let h = hottest, h.url.path != path, h.mtime > written { return true }
         hottest = (URL(fileURLWithPath: path), written)
         return true
@@ -226,9 +232,11 @@ public final class AgentActivityMonitor: @unchecked Sendable {
 
     private func scanLocked(now: Date) {
         lastScan = now
+        knownLogs.removeAll()
         var newest: (URL, Date)?
         for file in candidateLogs(now: now) {
             guard let m = mtime(file) else { continue }
+            knownLogs[file.path] = m
             if newest == nil || m > newest!.1 { newest = (file, m) }
         }
         hottest = newest

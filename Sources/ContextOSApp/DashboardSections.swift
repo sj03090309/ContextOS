@@ -10,6 +10,7 @@ struct LiveHeader: View {
     @ObservedObject var live: LiveStatus
     /// Agents whose own config registers ContextOS.
     var configured: Int
+    var todaySaved: Int = 0
 
     var body: some View {
         // A clock only for the "4분째" / "3시간 전" wording. Half a minute is as
@@ -29,6 +30,10 @@ struct LiveHeader: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                Text(contextOSDetail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .help("AI 작업 상태와 ContextOS 사용 기록은 별개입니다. 절감량은 최적화해 전달한 응답의 토큰 추정치입니다.")
             }
         }
     }
@@ -40,7 +45,7 @@ struct LiveHeader: View {
                 .frame(width: 6, height: 6)
                 .background(Circle().fill((live.working ? Brand.positiveDot : .clear).opacity(0.25))
                     .frame(width: 12, height: 12))
-            Text(live.working ? "\(live.agent ?? "AI") 작업 중" : "쉬는 중")
+            Text(phaseTitle)
                 .font(.system(size: 11.5, weight: .medium))
         }
         .foregroundStyle(live.working ? Brand.positive : .secondary)
@@ -51,17 +56,39 @@ struct LiveHeader: View {
         .animation(.snappy(duration: 0.25), value: live.working)
     }
 
+    private var phaseTitle: String {
+        let agent = live.agent ?? "AI"
+        switch live.phase {
+        case .working: return agent + " 작업 중"
+        case .waiting: return agent + (live.pendingTools > 0 ? " 도구 대기" : " 응답 대기")
+        case .completed: return "응답 종료 확인"
+        case .interrupted: return "중단 확인"
+        case .unknown: return "작업 상태 확인 필요"
+        }
+    }
+
+    private var contextOSDetail: String {
+        if live.snapshot.optimizing { return "ContextOS · 파일 최적화 호출 중" }
+        if live.snapshot.planning { return "ContextOS · 도구 호출 중" }
+        return todaySaved > 0
+            ? "ContextOS · 오늘 추정 절감 \(TokenEstimator.korean(todaySaved)) 토큰"
+            : "ContextOS · 오늘 절감 기록 없음"
+    }
+
     private func detail(now: Date) -> String {
         var parts: [String] = []
         if live.working {
-            let elapsed = live.since.map { Self.elapsed(since: $0, now: now) } ?? "방금 시작"
+            let elapsed = live.since.map { Self.elapsed(since: $0, now: now) } ?? "작업 신호 확인"
             parts.append(live.project.map { "\($0)에서 \(elapsed)" } ?? elapsed)
-            if configured > 0 { parts.append("MCP 연결 \(configured)개") }
-        } else if let since = live.since {
-            parts.append("마지막 작업 " + Self.ago(since, now: now))
+            if live.snapshot.activeSessions > 1 { parts.append("진행 세션 \(live.snapshot.activeSessions)개") }
+        } else if (live.phase == .completed || live.phase == .interrupted), let ended = live.endedAt {
+            parts.append((live.phase == .completed ? "확인된 응답 종료 " : "확인된 중단 ") + Self.ago(ended, now: now))
+            if let project = live.project { parts.append(project) }
+        } else if let last = live.lastEventAt {
+            parts.append("최근 로그 변경 " + Self.ago(last, now: now))
             if let project = live.project { parts.append(project) }
         } else {
-            parts.append(configured > 0 ? "MCP 연결 \(configured)개" : "아직 연결된 AI 도구가 없어요")
+            parts.append("작업 로그가 없거나 상태를 확인할 수 없어요")
         }
         return parts.joined(separator: " · ")
     }
@@ -96,7 +123,7 @@ struct HeroSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .bottom, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("누적 아낀 토큰")
+                    Text("누적 추정 절감 토큰")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                     // Proportional figures: tabular digits space a lone big
@@ -113,7 +140,7 @@ struct HeroSection: View {
                     .padding(.bottom, 4)
             }
             HStack(spacing: 8) {
-                Text("오늘 +\(TokenEstimator.korean(model.todaySaved))")
+                Text("오늘 추정 +\(TokenEstimator.korean(model.todaySaved))")
                     .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Brand.accent)
                     .padding(.horizontal, 9)
@@ -130,7 +157,7 @@ struct HeroSection: View {
                         .font(.system(size: 11.5).monospacedDigit())
                 }
                 .foregroundStyle(.secondary)
-                .help("ContextOS가 컨텍스트를 골라 준 횟수")
+                .help("저장된 절감 기록 수입니다. 파일 추천이나 일반 Read 호출 횟수와는 다릅니다.")
             }
         }
     }

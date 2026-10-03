@@ -7,11 +7,13 @@ cd "$(dirname "$0")/.."
 OUTPUT="dist"
 BIN_DIR=""
 SIGN_IDENTITY="-"
+BUILD_NUMBER=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --binary-dir) BIN_DIR="${2:?binary directory required}"; shift ;;
         --output) OUTPUT="${2:?output directory required}"; shift ;;
         --sign-identity) SIGN_IDENTITY="${2:?signing identity required}"; shift ;;
+        --build-number) BUILD_NUMBER="${2:?build number required}"; shift ;;
         -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
@@ -19,6 +21,8 @@ while [ $# -gt 0 ]; do
 done
 VERSION="$(sed -n 's/^    public static let current = "\([0-9.]*\)"/\1/p' Sources/ContextOSCore/Model/ContextOSVersion.swift)"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release version" >&2; exit 1; }
+BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
+[[ "$BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || { echo "Invalid build number" >&2; exit 1; }
 if [ -z "$BIN_DIR" ]; then
     swift build -c release
     BIN_DIR="$(swift build -c release --show-bin-path)"
@@ -49,7 +53,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$VERSION</string>
-<key>CFBundleVersion</key><string>$VERSION</string>
+<key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
@@ -70,13 +74,13 @@ ARCHIVE="ContextOS-$VERSION-macos-$ARCH.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$STAGE_DIR/$ARCHIVE"
 SIGNING="ad-hoc-local-only"
 [ "$SIGN_IDENTITY" = "-" ] || SIGNING="developer-id-not-yet-notarized"
-python3 - "$VERSION" "$ARCH" "$SIGNING" "$STAGE_DIR/$ARCHIVE" <<'PY'
+python3 - "$VERSION" "$ARCH" "$SIGNING" "$STAGE_DIR/$ARCHIVE" "$BUILD_NUMBER" <<'PY'
 import hashlib,json,pathlib,sys
-version,arch,signing,archive=sys.argv[1:]
+version,arch,signing,archive,build=sys.argv[1:]
 p=pathlib.Path(archive)
 digest=hashlib.sha256(p.read_bytes()).hexdigest()
 p.with_suffix('.sha256').write_text(digest+'  '+p.name+'\n')
-p.with_suffix('.json').write_text(json.dumps({'version':version,'architecture':arch,'signing':signing,'notarized':False,'archive':p.name,'sha256':digest},indent=2)+'\n')
+p.with_suffix('.json').write_text(json.dumps({'version':version,'build':build,'architecture':arch,'signing':signing,'notarized':False,'archive':p.name,'sha256':digest},indent=2)+'\n')
 PY
 # Only replace known build output, never an installed bundle or user data.
 if [ -e "$OUTPUT/ContextOS.app" ]; then
