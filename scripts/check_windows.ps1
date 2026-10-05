@@ -89,7 +89,7 @@ try {
                 try {
                     $gui = Start-Process -FilePath "$guiDirectory/ContextOS.Windows.exe" -ArgumentList '--self-test' -PassThru `
                         -RedirectStandardOutput "$guiLogs/stdout.txt" -RedirectStandardError "$guiLogs/stderr.txt"
-                    if (-not $gui.WaitForExit(60_000)) {
+                    if (-not $gui.WaitForExit(60000)) {
                         # Stop only the self-test process created immediately above.
                         $gui.Kill(); $gui.WaitForExit()
                         throw "Owned GUI self-test exceeded its one-minute limit."
