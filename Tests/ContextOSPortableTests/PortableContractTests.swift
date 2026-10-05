@@ -33,7 +33,10 @@ final class PortableContractTests: XCTestCase {
         XCTAssertNil(RuntimeBinaries.resolve(executable: cli, home: root, platform: .windows))
         let mcp = root.appendingPathComponent("contextos-mcp.exe")
         try makeBinary(mcp)
-        XCTAssertEqual(RuntimeBinaries.resolve(executable: cli, home: root, platform: .windows)?.mcp, mcp)
+        // The resolver returns the canonical sibling directory. Windows temp
+        // URLs may use an 8.3 alias for the very same physical directory.
+        XCTAssertEqual(RuntimeBinaries.resolve(executable: cli, home: root, platform: .windows)?.mcp.resolvingSymlinksInPath(),
+                       mcp.resolvingSymlinksInPath())
     }
 
     func testMacDoctorDetectsMissingPeerAndMixedVersions() throws {
