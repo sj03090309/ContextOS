@@ -13,7 +13,7 @@ let portablePreparation = ProcessInfo.processInfo.environment["CONTEXTOS_PORTABL
 let preparationSettings: [SwiftSetting] = portablePreparation ? [.define("CONTEXTOS_PORTABLE_BUILD")] : []
 let preparationExcludes = [
     "Platform/macOS", "Analytics", "Git", "Health", "Integration", "Registry",
-    "Indexer/Indexer.swift", "Indexer/ProjectScanner.swift", "Optimizer/ContextOptimizer.swift",
+    "Indexer/Indexer.swift", "Indexer/ProjectScanner.swift",
     "Service/ContextService.swift", "Service/SessionTools.swift"
 ]
 var products: [Product] = [
@@ -29,7 +29,7 @@ var targets: [Target] = [
     .target(name: "ContextOSCore", dependencies: ["CWindowsNative"], exclude: portablePreparation ? preparationExcludes : [], swiftSettings: preparationSettings),
     .executableTarget(name: "contextos", dependencies: ["ContextOSCore", .product(name: "ArgumentParser", package: "swift-argument-parser")], swiftSettings: preparationSettings),
     .executableTarget(name: "contextos-mcp", dependencies: ["ContextOSCore"], swiftSettings: preparationSettings),
-    .testTarget(name: "ContextOSPortableTests", dependencies: ["ContextOSCore"])
+    .testTarget(name: "ContextOSPortableTests", dependencies: ["ContextOSCore"], swiftSettings: preparationSettings)
 ]
 if !portablePreparation {
     products.append(.executable(name: "ContextOSApp", targets: ["ContextOSApp"]))

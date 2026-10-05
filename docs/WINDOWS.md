@@ -5,7 +5,7 @@
 ## 구현한 경계
 
 - `Platform/macOS/`에 프로젝트의 링크 우회 방지 읽기, SQLite 열기, 설정 잠금·private 백업·원자 교체, FSEvents 어댑터를 모았습니다. 기존 Mac 구현은 유지합니다.
-- Windows manifest는 이 어댑터와 아직 분리되지 않은 인덱싱·분석·설정·GUI 계층을 제외합니다. 순수 Swift 모델·파서·슬라이서·토큰 추정·질의 교정·세션 중복 기억과 공유 계약은 같은 소스로 컴파일합니다.
+- Windows manifest는 이 어댑터와 아직 분리되지 않은 인덱싱·분석·설정·GUI 계층을 제외합니다. 순수 Swift 모델·파서·순위 계산·슬라이서·토큰 추정·질의 교정·세션 중복 기억과 공유 계약은 같은 소스로 컴파일합니다.
 - Windows 준비 CLI는 같은 명령·옵션을 파싱합니다. MCP는 같은 버전·도구 스키마를 광고합니다. 보호가 필요한 모든 명령과 도구 호출은 오류로 중단합니다. 설정 변경만 막고 프로젝트 읽기를 허용하는 우회 경로는 없습니다.
 - `RuntimeSupport`는 실제 보안 어댑터 구현 여부를 판단합니다. OS의 Swift 지원 여부나 바이너리 파일 존재를 기능 지원으로 표시하지 않습니다.
 - CLI `contract`와 MCP `--contract`는 단일 `ContextOSVersion`·`RuntimeContract`·`MCPToolContract`에서 생성합니다. `doctor`는 준비 빌드를 사용 가능한 설치로 표시하지 않습니다.
@@ -18,7 +18,7 @@ Windows에서 기존에 준비한 [공식 Swift Windows 도구 체인](https://w
 ./scripts/check_windows.ps1
 ```
 
-스크립트는 최대 2개 빌드 작업으로 CLI/MCP·공유 테스트·명시적인 임시 보안 fixture·WPF 빌드와 화면 검사를 실행합니다. 새 도구를 설치하거나 앱·계정 설정을 변경하거나 릴리스를 게시하지 않습니다. .NET 10 SDK도 기존 환경에 필요합니다. `windows-preflight.yml`은 준비된 `contextos-windows` 레이블의 Windows x64 self-hosted runner에서 수동 실행하는 구성입니다. self-hosted runner는 아직 확인되지 않았습니다.
+스크립트는 빌드 작업 1개로 CLI/MCP·공유 테스트·명시적인 임시 보안 fixture·WPF 빌드와 화면 검사를 실행합니다. 새 도구를 설치하거나 앱·계정 설정을 변경하거나 릴리스를 게시하지 않습니다. .NET 10 SDK도 기존 환경에 필요합니다. `windows-preflight.yml`은 준비된 `contextos-windows` 레이블의 Windows x64 self-hosted runner에서 수동 실행하는 구성입니다. self-hosted runner는 아직 확인되지 않았습니다.
 
 ## 2차 구현과 Windows 검증 브랜치
 
@@ -37,8 +37,8 @@ Windows 보안 fixture는 임시 GUID 폴더의 dummy 본문·junction·hardlink
 Mac에서는 같은 제외 목록과 컴파일 분기를 별도 scratch 경로로 검증할 수 있습니다:
 
 ```sh
-CONTEXTOS_PORTABLE_BUILD=1 swift build --scratch-path .build-portable --jobs 2
-CONTEXTOS_PORTABLE_BUILD=1 swift test --scratch-path .build-portable --jobs 2 --filter PortableContractTests
+CONTEXTOS_PORTABLE_BUILD=1 swift build --scratch-path .build-portable --jobs 1
+CONTEXTOS_PORTABLE_BUILD=1 swift test --scratch-path .build-portable --jobs 1 --filter 'PortableContractTests|SnapshotOptimizerTests'
 python3 scripts/verify_contract.py --cli .build-portable/debug/contextos --mcp .build-portable/debug/contextos-mcp --preparation
 ```
 
@@ -52,6 +52,14 @@ python3 scripts/verify_contract.py --cli .build-portable/debug/contextos --mcp .
 - 실제 CLI/MCP 버전·도구 목록·JSON 스키마가 일치했고, 준비 빌드와 Mac 계약 JSON도 동일했습니다. 준비 CLI 보호 명령 6개와 MCP 도구 호출 6개가 모두 오류로 중단됐으며 임시 홈·프로젝트의 파일 목록과 내용 해시는 변하지 않았습니다.
 - 기존 Mac stdio MCP 회귀 검사가 통과했습니다. 민감 fixture 제외, 잘못된 JSON 복구, 규칙 링크 제외, 링크된 인덱스 거부와 보호 루트 검사를 포함합니다.
 - **Windows SDK에서의 컴파일·실행, Windows 인덱스 엔진·보안 어댑터·GUI·설치 프로그램, 공동 업데이트 채널, 실제 고객 실험은 미완료입니다.** Mac 준비 소스 검사 결과를 Windows 지원 완료로 사용하지 않습니다.
+
+## 공유 순위 계산기의 최소 분리
+
+`ContextOptimizer`는 파일·심볼·import의 `IndexSnapshot`을 받아 I/O 없이 순위를 계산합니다. 기존 Mac의 `IndexStore` 호출은 macOS 어댑터가 같은 스냅샷을 만드는 형태로 유지합니다. `GitSignals` 데이터만 공유하며 Git 프로세스 실행과 상태 수집은 Windows 빌드에 포함하지 않습니다. 기존 점수식·그래프 확장·파일 정렬·토큰 예산 계산은 변경하지 않습니다.
+
+분리 전 Mac 검증 SHA `ce795e7`의 실제 SQLite 메모리 저장소 계산으로 고정한 fixture 10개를 양쪽 준비 테스트에서 사용합니다. 영어·한국어 질의, import 연결, 복수 seed, 명시적 파일 요청, Git 데이터, 동점 정렬, 빈 결과와 제한된 예산을 포함합니다. 파일 선택 순서·점수·토큰 추정·예산·context score는 그대로 비교합니다. 기존 Dictionary 순회에 따라 순서가 달라지는 연결 사유는 비교 보고서에서만 정렬하고 실제 결과 생성 순서는 변경하지 않습니다. 실제 Windows 실행 결과는 해당 원격 SHA의 CI로 확인합니다.
+
+이 단위는 SQLite 연동·프로젝트 탐색·실제 Git 실행·설정 연결·감시를 Windows에서 활성화하지 않습니다. `RuntimeSupport`의 보호 작업 차단과 CLI/MCP 버전·도구 계약은 유지합니다.
 
 ## Windows 핵심 기능을 활성화하기 전에 필요한 작업
 

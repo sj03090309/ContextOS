@@ -50,4 +50,4 @@ jobs:
         shell: pwsh
         run: |
           "Validated commit: $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
-          "Windows x64 preparation and native disposable fixtures passed. Project indexing, settings transactions, watching, installer and customer GUI use remain unavailable." >> $env:GITHUB_STEP_SUMMARY
+          "Windows x64 preparation, shared snapshot ranking against the captured Mac fixture, and native disposable fixtures passed. Project indexing, settings transactions, watching, installer and customer GUI use remain unavailable." >> $env:GITHUB_STEP_SUMMARY

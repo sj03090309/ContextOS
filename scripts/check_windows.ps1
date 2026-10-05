@@ -27,7 +27,7 @@ try {
     $buildPassed = $true
     foreach ($product in @("contextos", "contextos-mcp")) {
         $passed = Invoke-Validation "Swift build $product" {
-            & swift build --jobs 2 --product $product
+            & swift build --jobs 1 --product $product
             if ($LASTEXITCODE -ne 0) { throw "Preparation compilation failed." }
         }
         if (-not $passed) { $buildPassed = $false }
@@ -43,7 +43,7 @@ try {
         $env:CONTEXTOS_WINDOWS_NATIVE_TEST_ROOT = $fixture
         if ($buildPassed) {
             $null = Invoke-Validation "Shared and native Swift fixtures" {
-                & swift test --jobs 2 --no-parallel --filter 'PortableContractTests|WindowsPathPolicyTests|WindowsNativeFixtureTests'
+                & swift test --jobs 1 --no-parallel --filter 'PortableContractTests|WindowsPathPolicyTests|WindowsNativeFixtureTests|SnapshotOptimizerTests'
                 if ($LASTEXITCODE -ne 0) { throw "Shared/native fixture tests failed." }
             }
         } else { Write-Host "Skipped dependent Swift tests: build failed." }
@@ -101,7 +101,7 @@ try {
         } else { Write-Host "Skipped dependent WPF self-test: GUI build failed." }
     } else { Write-Host "Skipped dependent GUI build: shared contract did not pass." }
     if ($failures.Count -gt 0) { throw ("Validation failures:`n" + ($failures -join "`n")) }
-    Write-Output '{"windows_preparation_build_passed":true,"native_fixture_passed":true,"gui_compile_passed":true,"gui_self_test_passed":true,"windows_product_ready":false}'
+    Write-Output '{"windows_preparation_build_passed":true,"snapshot_ranking_fixture_passed":true,"native_fixture_passed":true,"gui_compile_passed":true,"gui_self_test_passed":true,"windows_product_ready":false}'
 } finally {
     Pop-Location
 }

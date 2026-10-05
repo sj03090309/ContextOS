@@ -8,18 +8,6 @@ public struct GitCommit: Sendable, Equatable {
     public var relativeDate: String
 }
 
-/// Ranking signals derived from Git state, consumed by the optimizer.
-public struct GitSignals: Sendable {
-    /// Files with uncommitted changes in the working tree.
-    public var changedPaths: Set<String>
-    /// Files touched by recent commits.
-    public var recentPaths: Set<String>
-
-    public static let empty = GitSignals(changedPaths: [], recentPaths: [])
-
-    public var isEmpty: Bool { changedPaths.isEmpty && recentPaths.isEmpty }
-}
-
 /// Runs the system `git`.
 ///
 /// No libgit2 dependency: `git` is already on every dev machine, and this keeps
