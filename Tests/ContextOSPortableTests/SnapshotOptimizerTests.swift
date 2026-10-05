@@ -4,6 +4,39 @@ import XCTest
 
 /// Fixed, supplied index data only. No project scan, Git process or agent setup.
 private enum RankingFixtures {
+    // Compare Swift values without relying on platform-specific Foundation
+    // collection bridging; every score, field and array order stays exact.
+    struct Row: Decodable, Equatable {
+        let path: String
+        let language: String
+        let score: Double
+        let estimatedTokens: Int
+        let reasons: [String]
+        enum CodingKeys: String, CodingKey {
+            case path, language, score, reasons
+            case estimatedTokens = "estimated_tokens"
+        }
+    }
+    struct Record: Decodable, Equatable {
+        let name: String
+        let query: String
+        let terms: [String]
+        let included: [Row]
+        let excluded: [Row]
+        let tokenBudget: Int
+        let estimatedTokens: Int
+        let contextScore: Int
+        enum CodingKeys: String, CodingKey {
+            case name = "case"
+            case query, terms, included, excluded
+            case tokenBudget = "token_budget"
+            case estimatedTokens = "estimated_tokens"
+            case contextScore = "context_score"
+        }
+    }
+    static func decode(_ records: [[String: Any]]) throws -> [Record] {
+        try JSONDecoder().decode([Record].self, from: JSONSerialization.data(withJSONObject: records, options: [.sortedKeys]))
+    }
     struct Case {
         let name: String
         let query: String
@@ -97,10 +130,13 @@ final class SnapshotOptimizerTests: XCTestCase {
     }
 
     func testSnapshotsPreserveCapturedMacSelections() throws {
-        let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(SnapshotOptimizerBaseline.json.utf8)) as? [[String: Any]])
-        let actual = records()
-        guard NSArray(array: actual).isEqual(to: expected) else {
-            XCTFail("Shared snapshot ranking differs from the captured Mac selection order, scores, budgets or reason membership")
+        let expected = try JSONDecoder().decode([RankingFixtures.Record].self, from: Data(SnapshotOptimizerBaseline.json.utf8))
+        let actual = try RankingFixtures.decode(records())
+        guard actual == expected else {
+            XCTAssertEqual(actual.count, expected.count)
+            for (result, baseline) in zip(actual, expected) where result != baseline {
+                XCTAssertEqual(result, baseline, "Mac/Windows ranking differs for fixture: \(baseline.name)")
+            }
             return
         }
         let report: [String: Any] = ["snapshot_ranking_matches_mac_baseline": true,
@@ -111,8 +147,9 @@ final class SnapshotOptimizerTests: XCTestCase {
         print("CONTEXTOS_RANKING_PARITY " + String(decoding: data, as: UTF8.self))
     }
 
-    func testSnapshotInputOrderDoesNotChangeFileRanking() {
-        XCTAssertTrue(NSArray(array: records()).isEqual(to: records(files: Array(RankingFixtures.files.reversed()))))
+    func testSnapshotInputOrderDoesNotChangeFileRanking() throws {
+        XCTAssertEqual(try RankingFixtures.decode(records()),
+                       try RankingFixtures.decode(records(files: Array(RankingFixtures.files.reversed()))))
     }
 
     func testExactBudgetBoundaryPreservesPathTieOrder() {
@@ -134,7 +171,7 @@ final class SnapshotOptimizerTests: XCTestCase {
             RankingFixtures.record(try ContextOptimizer().selectContext(query: fixture.query, from: store,
                 tokenBudget: fixture.budget, signals: fixture.signals, overrideTerms: fixture.terms), name: fixture.name)
         }
-        XCTAssertTrue(NSArray(array: stored).isEqual(to: records()))
+        XCTAssertEqual(try RankingFixtures.decode(stored), try RankingFixtures.decode(records()))
         #else
         throw XCTSkip("Only the native Mac profile includes the SQLite store adapter")
         #endif
