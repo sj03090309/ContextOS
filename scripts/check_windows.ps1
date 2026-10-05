@@ -2,13 +2,31 @@
 # Requires an existing Swift Windows toolchain, Python 3 and .NET 10 SDK.
 $ErrorActionPreference = "Stop"
 if (-not $IsWindows) { throw "Run this preflight on Windows using PowerShell 7." }
+$failures = [Collections.Generic.List[string]]::new()
+function Invoke-Validation {
+    param([string]$Name, [scriptblock]$Check)
+    Write-Host "Validation stage: $Name"
+    try {
+        & $Check | Out-Host
+        Write-Host "Passed stage: $Name"
+        return $true
+    } catch {
+        $failures.Add("${Name}: " + $_.Exception.Message)
+        Write-Host "Failed stage: $Name - $($_.Exception.Message)"
+        return $false
+    }
+}
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     & swift --version
     if ($LASTEXITCODE -ne 0) { throw "Install/configure the official Swift Windows developer toolchain separately." }
+    $buildPassed = $true
     foreach ($product in @("contextos", "contextos-mcp")) {
-        & swift build --jobs 2 --product $product
-        if ($LASTEXITCODE -ne 0) { throw "Windows preparation build failed: $product" }
+        $passed = Invoke-Validation "Swift build $product" {
+            & swift build --jobs 2 --product $product
+            if ($LASTEXITCODE -ne 0) { throw "Preparation compilation failed." }
+        }
+        if (-not $passed) { $buildPassed = $false }
     }
     $fixture = Join-Path ([IO.Path]::GetTempPath()) ("contextos-native-" + [guid]::NewGuid())
     $oldFixture = $env:CONTEXTOS_WINDOWS_NATIVE_TEST_ROOT
@@ -19,13 +37,19 @@ try {
         New-Item -ItemType Junction -Path "$fixture/project/junction" -Value "$fixture/outside" | Out-Null
         New-Item -ItemType HardLink -Path "$fixture/project/hardlinked.txt" -Value "$fixture/outside/secret.txt" | Out-Null
         $env:CONTEXTOS_WINDOWS_NATIVE_TEST_ROOT = $fixture
-        & swift test --jobs 2 --no-parallel --filter 'PortableContractTests|WindowsPathPolicyTests|WindowsNativeFixtureTests'
-        if ($LASTEXITCODE -ne 0) { throw "Shared/Windows native fixture tests failed." }
-        $probe = Join-Path $fixture "contextos-native-probe.exe"
-        & clang -std=c11 -Wall -Wextra -Werror -I Sources/CWindowsNative/include Sources/CWindowsNative/CWindowsNative.c Tests/WindowsNativeHarness/main.c -ladvapi32 -lbcrypt -o $probe
-        if ($LASTEXITCODE -ne 0) { throw "Windows native harness compilation failed." }
-        & $probe $fixture
-        if ($LASTEXITCODE -ne 0) { throw "Native direct-call/ancestor/interprocess protection failed." }
+        if ($buildPassed) {
+            $null = Invoke-Validation "Shared and native Swift fixtures" {
+                & swift test --jobs 2 --no-parallel --filter 'PortableContractTests|WindowsPathPolicyTests|WindowsNativeFixtureTests'
+                if ($LASTEXITCODE -ne 0) { throw "Shared/native fixture tests failed." }
+            }
+        } else { Write-Host "Skipped dependent Swift tests: build failed." }
+        $null = Invoke-Validation "Direct native calls, ancestor protection and interprocess lock" {
+            $probe = Join-Path $fixture "contextos-native-probe.exe"
+            & clang -std=c11 -Wall -Wextra -Werror -I Sources/CWindowsNative/include Sources/CWindowsNative/CWindowsNative.c Tests/WindowsNativeHarness/main.c -ladvapi32 -lbcrypt -o $probe
+            if ($LASTEXITCODE -ne 0) { throw "Native harness compilation failed." }
+            & $probe $fixture
+            if ($LASTEXITCODE -ne 0) { throw "Native boundary/interprocess verification failed." }
+        }
     } finally {
         $env:CONTEXTOS_WINDOWS_NATIVE_TEST_ROOT = $oldFixture
         # Only this script's GUID-named disposable fixture is removed. Remove
@@ -33,22 +57,41 @@ try {
         if (Test-Path "$fixture/project/junction") { [IO.Directory]::Delete("$fixture/project/junction") }
         if (Test-Path $fixture) { Remove-Item -LiteralPath $fixture -Recurse -Force }
     }
-    $binaryDir = (& swift build --show-bin-path).Trim()
-    if ($LASTEXITCODE -ne 0) { throw "Cannot resolve the Swift build directory." }
-    & python scripts/verify_contract.py --cli "$binaryDir/contextos.exe" --mcp "$binaryDir/contextos-mcp.exe" --preparation --contract-output "$binaryDir/contextos-contract.json"
-    if ($LASTEXITCODE -ne 0) { throw "CLI/MCP preparation contract check failed." }
-    & python scripts/prepare_windows_gui.py --contract "$binaryDir/contextos-contract.json"
-    if ($LASTEXITCODE -ne 0) { throw "Shared GUI identity generation failed." }
-    & dotnet build Windows/ContextOS.Windows/ContextOS.Windows.csproj --configuration Debug --no-incremental
-    if ($LASTEXITCODE -ne 0) { throw "Windows WPF compilation failed." }
-    $guiDirectory = Join-Path $PWD "Windows/ContextOS.Windows/bin/Debug/net10.0-windows"
-    $runtime = Join-Path $guiDirectory "runtime"
-    New-Item -ItemType Directory -Path $runtime -Force | Out-Null
-    Copy-Item "$binaryDir/contextos.exe", "$binaryDir/contextos-mcp.exe" $runtime
-    # Installed Swift runtime DLLs stay on this developer/CI host's PATH. This
-    # output is not an installer or a redistributable customer package.
-    $gui = Start-Process -FilePath "$guiDirectory/ContextOS.Windows.exe" -ArgumentList '--self-test' -PassThru -Wait
-    if ($gui.ExitCode -ne 0) { throw "Windows GUI contract/layout self-test failed: $($gui.ExitCode)" }
+    $contractPassed = $false
+    if ($buildPassed) {
+        $binaryDir = (& swift build --show-bin-path).Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Cannot resolve the Swift build directory." }
+        $contractPassed = Invoke-Validation "CLI/MCP version, schemas and protected routes" {
+            & python scripts/verify_contract.py --cli "$binaryDir/contextos.exe" --mcp "$binaryDir/contextos-mcp.exe" --preparation --contract-output "$binaryDir/contextos-contract.json"
+            if ($LASTEXITCODE -ne 0) { throw "CLI/MCP preparation contract verification failed." }
+        }
+    }
+    if ($contractPassed) {
+        $guiBuilt = Invoke-Validation "Shared GUI identity and WPF compilation" {
+            & python scripts/prepare_windows_gui.py --contract "$binaryDir/contextos-contract.json"
+            if ($LASTEXITCODE -ne 0) { throw "Shared GUI identity generation failed." }
+            & dotnet build Windows/ContextOS.Windows/ContextOS.Windows.csproj --configuration Debug --no-incremental
+            if ($LASTEXITCODE -ne 0) { throw "WPF compilation failed." }
+        }
+        if ($guiBuilt) {
+            $null = Invoke-Validation "WPF contract and headless layout self-test" {
+                $guiDirectory = Join-Path $PWD "Windows/ContextOS.Windows/bin/Debug/net10.0-windows"
+                $runtime = Join-Path $guiDirectory "runtime"
+                New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+                Copy-Item "$binaryDir/contextos.exe", "$binaryDir/contextos-mcp.exe" $runtime
+                # Developer DLLs stay on PATH. This is not customer packaging.
+                $guiLogs = Join-Path ([IO.Path]::GetTempPath()) ("contextos-gui-" + [guid]::NewGuid())
+                New-Item -ItemType Directory -Path $guiLogs | Out-Null
+                try {
+                    $gui = Start-Process -FilePath "$guiDirectory/ContextOS.Windows.exe" -ArgumentList '--self-test' -PassThru -Wait `
+                        -RedirectStandardOutput "$guiLogs/stdout.txt" -RedirectStandardError "$guiLogs/stderr.txt"
+                    Get-Content "$guiLogs/stdout.txt", "$guiLogs/stderr.txt" | Write-Host
+                    if ($gui.ExitCode -ne 0) { throw "GUI self-test failed: $($gui.ExitCode)" }
+                } finally { Remove-Item -LiteralPath $guiLogs -Recurse -Force }
+            }
+        } else { Write-Host "Skipped dependent WPF self-test: GUI build failed." }
+    } else { Write-Host "Skipped dependent GUI build: shared contract did not pass." }
+    if ($failures.Count -gt 0) { throw ("Validation failures:`n" + ($failures -join "`n")) }
     Write-Output '{"windows_preparation_build_passed":true,"native_fixture_passed":true,"gui_compile_passed":true,"gui_self_test_passed":true,"windows_product_ready":false}'
 } finally {
     Pop-Location
