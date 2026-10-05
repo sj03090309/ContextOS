@@ -86,8 +86,13 @@ final class PortableContractTests: XCTestCase {
     }
 
     private func makeBinary(_ file: URL) throws {
+        #if os(Windows)
+        // Windows checks executable image validity, not Unix mode bits. Use
+        // our own test runner's PE bytes; no fixture is launched by this test.
+        let runningImage = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        try FileManager.default.copyItem(at: runningImage, to: file)
+        #else
         try Data("fixture".utf8).write(to: file)
-        #if os(macOS)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
         #endif
     }
