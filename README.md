@@ -6,6 +6,8 @@ ContextOS는 작업에 관련된 파일·심볼을 찾고, 필요한 함수 본�
 
 **현재 버전: 2.1.0 · macOS 14+ · Swift 6.** 이 버전은 안전한 연결과 배포 준비를 위한 코드입니다. 로컬 시험용 패키징을 제공하며 Developer ID 서명·Apple 공증·공개 Release·판매 정책은 별도 단계입니다. [배포 준비 상태](docs/RELEASE.md)를 확인하세요.
 
+Windows용은 **빌드 준비 단계**입니다. 같은 Swift 순수 로직·CLI 명령·MCP 도구 계약을 사용하지만, 프로젝트 읽기·인덱싱·연결 설정 변경·파일 감시·GUI는 제공하지 않습니다. 미구현 보안 어댑터를 우회하지 않고 오류로 중단합니다. [Windows 준비와 동일 버전 배포 계획](docs/WINDOWS.md)을 확인하세요. 이 준비 변경은 설치된 기존 앱에 자동 적용되지 않습니다.
+
 ## 주요 기능
 
 - 파일·심볼·import 관계를 프로젝트별 SQLite에 인덱싱하고 변경 파일만 재파싱합니다. 쿼리마다 파일 메타데이터를 확인해 최신 편집을 반영합니다.
@@ -37,6 +39,12 @@ swift build -c release
 설치 스크립트는 기존 앱을 이전 버전 백업으로 보존합니다. 설정·인덱스·사용 기록은 자동 삭제하지 않습니다. [설치·업데이트·해제·복구 안내](docs/INSTALL.md), [개인정보와 데이터 위치](docs/PRIVACY.md)를 먼저 읽어 주세요.
 
 ## AI 도구 연결
+
+이 변경을 포함해 만든 빌드에서는 먼저 번들 CLI의 `doctor`를 실행할 수 있습니다. CLI·MCP 누락이나 서로 다른 버전을 알려 주며 계정 설정·프로젝트·대화 기록을 읽거나 바꾸지 않습니다. 기존 설치 번들에 이 명령이 없다면 해당 번들은 이 준비 변경 이전 빌드입니다.
+
+```sh
+"$HOME/Applications/ContextOS.app/Contents/Resources/contextos" doctor
+```
 
 앱을 최종 설치 위치에 둔 뒤 메뉴바의 AI 탭에서 **연결 설정 → 미리보기 → 적용**을 선택합니다. CLI 기본 실행도 미리보기만 합니다.
 
@@ -73,6 +81,8 @@ CLI="$HOME/Applications/ContextOS.app/Contents/Resources/contextos"
 .build/release/contextos watch /path/to/project
 .build/release/contextos --version
 .build/release/contextos-mcp --version
+.build/release/contextos contract
+.build/release/contextos-mcp --contract
 ```
 
 코어 로직은 `ContextOSCore`, 어댑터는 CLI `contextos`, stdio 서버 `contextos-mcp`, SwiftUI 앱 `ContextOSApp`입니다. `contextos-bench`는 합성 입력을 쓰는 개발용 벤치마크이며 앱 번들에 포함하지 않습니다.

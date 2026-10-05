@@ -1,5 +1,7 @@
 # Swift / SwiftPM
 .build/
+.build-*/
+.swift-cache/
 .swiftpm/
 .audit/
 Package.resolved
@@ -21,3 +23,7 @@ xcuserdata/
 # Local tool output and per-machine agent config
 graphify-out/
 .codex/
+
+# Generated Windows desktop output and shared-version inputs
+Windows/**/bin/
+Windows/**/obj/

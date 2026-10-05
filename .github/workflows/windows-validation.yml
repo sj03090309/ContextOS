@@ -1,0 +1,40 @@
+name: Windows x64 validation
+
+on:
+  push:
+    branches: ['codex/windows-validation-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contextos-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-x64:
+    # Public repo + standard runner is free. No larger runner, cache, artifact
+    # upload, signing, user configuration, environment secrets or deployment.
+    if: github.event.repository.private == false
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+          cache: false
+      - name: Install the signed official Swift 6.4 Windows toolchain
+        shell: pwsh
+        run: ./scripts/install_ci_swift_windows.ps1
+      - name: Build, security fixtures, CLI/MCP contract and WPF checks
+        shell: pwsh
+        run: ./scripts/check_windows.ps1
+      - name: Record validation scope
+        shell: pwsh
+        run: |
+          "Validated commit: $env:GITHUB_SHA" >> $env:GITHUB_STEP_SUMMARY
+          "Windows x64 preparation and native disposable fixtures passed. Project indexing, settings transactions, watching, installer and customer GUI use remain unavailable." >> $env:GITHUB_STEP_SUMMARY

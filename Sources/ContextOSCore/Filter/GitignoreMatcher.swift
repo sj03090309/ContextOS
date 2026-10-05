@@ -26,14 +26,6 @@ public struct GitignoreMatcher: Sendable {
         }
     }
 
-    /// Load the root `.gitignore` of a project, or nil if absent/empty.
-    public static func load(projectRoot: URL) -> GitignoreMatcher? {
-        guard let data = try? ProjectFileAccess(root: projectRoot).read(".gitignore"),
-              let text = String(data: data, encoding: .utf8) else { return nil }
-        let matcher = GitignoreMatcher(patterns: text.components(separatedBy: "\n"))
-        return matcher.isEmpty ? nil : matcher
-    }
-
     /// Whether `relativePath` (project-relative, "/"-separated, no leading "/")
     /// is ignored. Directory matches imply everything beneath them, which the
     /// scanner honors by pruning matched directories wholesale.

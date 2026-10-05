@@ -1,0 +1,31 @@
+<Application x:Class="ContextOS.Windows.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <SolidColorBrush x:Key="Cream" Color="#EFE7D6" />
+    <SolidColorBrush x:Key="Ink" Color="#17171B" />
+    <SolidColorBrush x:Key="Paper" Color="#FAF7EF" />
+    <SolidColorBrush x:Key="Muted" Color="#675F55" />
+    <SolidColorBrush x:Key="Rule" Color="#D8D0C2" />
+    <SolidColorBrush x:Key="Pending" Color="#84550C" />
+    <Style TargetType="TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+    </Style>
+    <Style TargetType="Button">
+      <Setter Property="Padding" Value="16,9" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Background" Value="{StaticResource Ink}" />
+      <Setter Property="Foreground" Value="{StaticResource Cream}" />
+      <Setter Property="BorderBrush" Value="{StaticResource Ink}" />
+      <Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.48" /></Trigger></Style.Triggers>
+    </Style>
+    <Style TargetType="TabItem">
+      <Setter Property="Padding" Value="22,12" />
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{StaticResource Ink}" />
+      <Setter Property="Background" Value="{StaticResource Paper}" />
+    </Style>
+  </Application.Resources>
+</Application>

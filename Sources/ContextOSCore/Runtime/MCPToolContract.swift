@@ -3,9 +3,9 @@ import Foundation
 /// The MCP tool catalogue advertised via `tools/list`.
 ///
 /// Schemas are plain JSON dictionaries (JSON Schema) so they serialize directly.
-enum Tools {
+public enum MCPToolContract {
 
-    static var all: [[String: Any]] {
+    public static var all: [[String: Any]] {
         [
         [
             "name": "get_relevant_context",

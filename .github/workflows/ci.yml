@@ -27,10 +27,19 @@ jobs:
         run: swift --version
       - name: Debug build and complete tests
         run: |
-          swift build
-          swift test
+          swift build --jobs 2
+          swift test --jobs 2 --no-parallel
+      - name: Shared CLI/MCP contract and installation diagnosis
+        run: python3 scripts/verify_contract.py --cli "$(swift build --show-bin-path)/contextos" --mcp "$(swift build --show-bin-path)/contextos-mcp" --contract-output "$RUNNER_TEMP/contextos-native-contract.json"
+      - name: Portable source and fail-closed preparation checks (not a Windows runtime test)
+        run: |
+          export CONTEXTOS_PORTABLE_BUILD=1
+          swift build --scratch-path .build-portable --jobs 2
+          swift test --scratch-path .build-portable --jobs 2 --no-parallel --filter PortableContractTests
+          BIN="$(swift build --scratch-path .build-portable --show-bin-path)"
+          python3 scripts/verify_contract.py --cli "$BIN/contextos" --mcp "$BIN/contextos-mcp" --preparation --compare-to "$RUNNER_TEMP/contextos-native-contract.json"
       - name: Release build
-        run: swift build -c release
+        run: swift build -c release --jobs 2
       - name: Temporary-home CLI connections
         run: python3 scripts/smoke_connections.py --binary "$(swift build -c release --show-bin-path)/contextos"
       - name: Isolated MCP regression

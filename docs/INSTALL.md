@@ -2,6 +2,29 @@
 
 대상은 macOS 14 이상, Claude Code와 Codex입니다. ZIP 파일 이름의 `arm64`는 Apple Silicon, `x86_64`는 Intel용입니다. 소스 빌드는 Swift 6와 Xcode Command Line Tools가 필요합니다.
 
+## 처음 사용하는 고객의 확인 순서
+
+1. 공개 배포된 서명·공증 완료 패키지가 있는지 확인하고 Mac의 칩에 맞는 ZIP을 선택합니다. 현재 저장소의 로컬 ad-hoc 패키지는 고객 배포 완료를 뜻하지 않습니다.
+2. 앱 전체를 최종 위치에 둡니다. CLI·MCP 파일만 따로 옮기거나 이전 앱과 섞지 않습니다.
+3. 앱의 AI 탭에서 Claude Code 또는 Codex 연결 미리보기를 확인하고 적용합니다. 해당 AI 도구를 다시 시작합니다.
+4. AI 도구의 MCP 목록에서 ContextOS의 6개 도구가 보이는지 확인합니다. 시험 프로젝트에서 관련 코드 요청을 한 번 실행해 실제 도구 호출을 확인합니다. 설치·등록 성공과 실제 호출 성공을 구분합니다.
+5. 연결이 실패하면 아래 설치 진단 결과와 개인정보를 지운 오류 요약을 지원 요청에 포함합니다. 계정 설정·백업·세션 원문은 첨부하지 않습니다.
+
+## 설치 구성을 읽기 전용으로 진단
+
+이 준비 변경을 포함해 만든 빌드에서 제공하는 새 명령입니다. 이전에 설치한 2.1.0 번들에는 `doctor`가 없을 수 있습니다.
+
+```sh
+"$HOME/Applications/ContextOS.app/Contents/Resources/contextos" doctor
+"$HOME/Applications/ContextOS.app/Contents/Resources/contextos" doctor --json
+```
+
+- CLI·MCP 누락: 앱 전체를 동일한 설치 위치에 다시 복사합니다.
+- 버전 불일치: 개별 실행 파일을 교체하지 말고 동일 패키지의 앱 전체를 사용합니다.
+- 진단 통과 후 도구가 안 보임: AI 도구 재시작 후 목록을 확인하고 연결 미리보기의 대상 위치를 다시 확인합니다.
+
+`readyToConnect`는 실행 파일 구성과 버전 검사 결과입니다. 실제 AI 도구 호출, 서명·공증·업데이트 또는 고객 설치 성공을 인증하지 않습니다. `agentToolCallVerified`는 이 진단에서 항상 false입니다. Windows 준비 빌드는 실패 결과와 비활성화 이유를 출력하며 연결을 적용하지 않습니다.
+
 ## 로컬 시험 빌드
 
 ```sh

@@ -1,0 +1,19 @@
+name: Windows preparation (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preparation:
+    # Owner-provisioned runner with an existing Swift Windows SDK and Python.
+    # This workflow installs nothing and does not publish a package or release.
+    runs-on: [self-hosted, Windows, X64, contextos-windows]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify the preparation binaries
+        shell: pwsh
+        run: ./scripts/check_windows.ps1

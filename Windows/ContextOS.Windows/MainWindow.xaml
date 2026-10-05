@@ -1,0 +1,88 @@
+<Window x:Class="ContextOS.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ContextOS" Width="860" Height="780" MinWidth="640" MinHeight="680"
+        FontFamily="Segoe UI" FontSize="14" Language="ko-KR"
+        Background="{StaticResource Cream}" Foreground="{StaticResource Ink}"
+        WindowStartupLocation="CenterScreen" Loaded="Window_Loaded">
+  <Grid Margin="28">
+    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <Grid Margin="0,0,0,24">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <StackPanel Orientation="Horizontal">
+        <Viewbox Width="44" Height="44" Margin="0,0,14,0" AutomationProperties.Name="ContextOS 마스코트">
+          <Canvas Width="60" Height="60">
+            <Path Fill="{StaticResource Ink}" Data="M 7,39 C 3,27 12,10 27,9 C 45,5 58,19 55,34 C 55,45 43,53 29,52 C 17,55 5,49 7,39 Z" />
+            <Ellipse Canvas.Left="22" Canvas.Top="27" Width="4" Height="7" Fill="{StaticResource Cream}" />
+            <Ellipse Canvas.Left="35" Canvas.Top="27" Width="4" Height="7" Fill="{StaticResource Cream}" />
+          </Canvas>
+        </Viewbox>
+        <StackPanel><TextBlock Text="ContextOS" FontSize="28" FontWeight="SemiBold" /><TextBlock Text="{Binding VersionLabel}" Foreground="{StaticResource Muted}" FontSize="12" /></StackPanel>
+      </StackPanel>
+      <Border Grid.Column="1" Background="{StaticResource Paper}" CornerRadius="16" Padding="14,8" VerticalAlignment="Center" MaxWidth="240">
+        <TextBlock Text="{Binding Status}" Foreground="{StaticResource Pending}" FontWeight="SemiBold" />
+      </Border>
+    </Grid>
+    <Border Grid.Row="1" Background="{StaticResource Ink}" CornerRadius="22" Padding="26,22" Margin="0,0,0,24">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="3*" /><ColumnDefinition Width="2*" /></Grid.ColumnDefinitions>
+        <StackPanel>
+          <TextBlock Text="오늘 절약한 컨텍스트" Foreground="{StaticResource Cream}" FontSize="15" />
+          <TextBlock Text="—" Foreground="{StaticResource Cream}" FontSize="52" FontWeight="SemiBold" Margin="0,4,0,0" />
+          <TextBlock Text="절감량은 아직 측정되지 않았습니다." Foreground="{StaticResource Cream}" Opacity="0.8" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="24,0,0,0">
+          <TextBlock Text="AI가 실제로 사용한 토큰" Foreground="{StaticResource Cream}" Opacity="0.8" />
+          <TextBlock Text="확인 전" Foreground="{StaticResource Cream}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,16" />
+          <TextBlock Text="실제 작업 시간과 품질도 함께 확인해야 합니다." Foreground="{StaticResource Cream}" Opacity="0.8" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <TabControl x:Name="InformationTabs" Grid.Row="2" Background="{StaticResource Paper}" BorderBrush="{StaticResource Rule}">
+      <TabItem Header="프로젝트" AutomationProperties.Name="프로젝트">
+        <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="24">
+          <TextBlock Text="프로젝트 읽기는 준비 중입니다." FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
+          <TextBlock Text="Windows 핵심 기능이 준비되면 프로젝트를 추가하고 필요한 코드만 AI에 전달할 수 있습니다." Foreground="{StaticResource Muted}" MaxWidth="540" HorizontalAlignment="Left" />
+          <Button Content="프로젝트 추가" IsEnabled="False" HorizontalAlignment="Left" Margin="0,22,0,28" ToolTip="Windows 기능 검증 후 사용할 수 있습니다." ToolTipService.ShowOnDisabled="True" />
+          <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Padding="0,20,0,0"><StackPanel>
+            <TextBlock Text="등록한 프로젝트" FontWeight="SemiBold" /><TextBlock Text="프로젝트 목록을 읽지 않았습니다." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+          </StackPanel></Border>
+        </StackPanel></ScrollViewer>
+      </TabItem>
+      <TabItem Header="활동" AutomationProperties.Name="활동">
+        <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="24">
+          <TextBlock Text="실제 작업 기록을 기다리고 있습니다." FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
+          <TextBlock Text="첫 AI 작업이 완료되면 사용한 컨텍스트와 작업 기록을 여기에서 확인할 수 있습니다." Foreground="{StaticResource Muted}" MaxWidth="540" HorizontalAlignment="Left" />
+          <Border BorderBrush="{StaticResource Rule}" BorderThickness="0,1,0,0" Padding="0,20,0,0" Margin="0,28,0,0"><StackPanel>
+            <TextBlock Text="최근 작업" FontWeight="SemiBold" /><TextBlock Text="활동 기록을 읽지 않았습니다." Foreground="{StaticResource Muted}" Margin="0,10,0,0" />
+          </StackPanel></Border>
+        </StackPanel></ScrollViewer>
+      </TabItem>
+      <TabItem Header="AI 연결" AutomationProperties.Name="AI 연결">
+        <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="24">
+          <TextBlock Text="AI 연결은 아직 사용할 수 없습니다." FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
+          <TextBlock Text="설치 확인은 이 앱의 실행 파일과 버전만 검사합니다. 실제 AI 도구 호출을 검증하려면 Windows 핵심 기능이 먼저 준비돼야 합니다." Foreground="{StaticResource Muted}" MaxWidth="540" HorizontalAlignment="Left" />
+          <Grid Margin="0,24,0,24">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <TextBlock Text="Claude Code" FontWeight="SemiBold" Margin="0,0,0,14" /><TextBlock Grid.Column="1" Text="연결 확인 전" Foreground="{StaticResource Muted}" />
+            <TextBlock Grid.Row="1" Text="Codex" FontWeight="SemiBold" /><TextBlock Grid.Row="1" Grid.Column="1" Text="연결 확인 전" Foreground="{StaticResource Muted}" />
+          </Grid>
+          <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+            <Button Content="연결 준비" IsEnabled="False" Margin="0,0,12,0" ToolTip="Windows 설정 보호 검증 후 사용할 수 있습니다." ToolTipService.ShowOnDisabled="True" />
+            <Button Content="설치 확인" Command="{Binding InspectCommand}" AutomationProperties.Name="동봉된 실행 파일과 버전 확인" />
+          </StackPanel>
+          <TextBlock Text="{Binding Detail}" Foreground="{StaticResource Muted}" Margin="0,0,0,16" />
+          <ItemsControl ItemsSource="{Binding Checks}"><ItemsControl.ItemTemplate><DataTemplate>
+            <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="150" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+              <TextBlock Text="{Binding Label}" FontWeight="SemiBold" /><TextBlock Grid.Column="1" Text="{Binding Detail}" Foreground="{StaticResource Muted}" />
+            </Grid>
+          </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+        </StackPanel></ScrollViewer>
+      </TabItem>
+    </TabControl>
+    <Grid Grid.Row="3" Margin="0,16,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <TextBlock Text="Windows 준비 버전" Foreground="{StaticResource Muted}" FontSize="12" /><TextBlock Grid.Column="1" Text="{Binding LastChecked}" Foreground="{StaticResource Muted}" FontSize="12" />
+    </Grid>
+  </Grid>
+</Window>

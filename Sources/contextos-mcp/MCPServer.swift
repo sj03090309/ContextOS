@@ -12,8 +12,9 @@ struct MCPServer {
 
     static let name = "contextos"
     static let version = ContextOSVersion.current
-    static let defaultProtocolVersion = "2024-11-05"
+    static let defaultProtocolVersion = RuntimeContract.mcpProtocolVersion
 
+    #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
     let service = ContextService()
     /// Per-session dedup: bodies already delivered aren't resent while this
     /// MCP process (i.e. this agent session) is alive.
@@ -21,6 +22,7 @@ struct MCPServer {
     /// Cross-process "an agent is using me right now" signal for the menu-bar
     /// mascot, throttled to one post per second.
     let heartbeat = Heartbeat()
+    #endif
 
     func run() {
         log("contextos-mcp \(Self.version) started (stdio)")
@@ -50,7 +52,9 @@ struct MCPServer {
         // bookkeeping — Claude Code sends a keepalive `ping` on an idle
         // connection, so firing the heartbeat for every message made the mascot
         // eat whenever a session was merely *open*, with nothing being asked.
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         if UsageStore.isAgentActivity(method: method) { heartbeat.post() }
+        #endif
 
         switch method {
         case "initialize":
@@ -60,7 +64,7 @@ struct MCPServer {
         case "ping":
             reply(id: id, result: [:])
         case "tools/list":
-            reply(id: id, result: ["tools": Tools.all])
+            reply(id: id, result: ["tools": MCPToolContract.all])
         case "tools/call":
             handleToolCall(id: id, params: params)
         default:
@@ -72,11 +76,15 @@ struct MCPServer {
 
     private func initializeResult(params: [String: Any]) -> [String: Any] {
         let requested = params["protocolVersion"] as? String
-        return [
+        var result: [String: Any] = [
             "protocolVersion": requested ?? Self.defaultProtocolVersion,
             "capabilities": ["tools": [String: Any]()],
             "serverInfo": ["name": Self.name, "version": Self.version]
         ]
+        if !RuntimeSupport.permits(.projectFiles) {
+            result["instructions"] = PlatformSupportError(platform: .current, operation: .projectFiles).localizedDescription
+        }
+        return result
     }
 
     // MARK: - Tool calls
@@ -86,6 +94,8 @@ struct MCPServer {
         let args = params["arguments"] as? [String: Any] ?? [:]
 
         do {
+            try RuntimeSupport.require(.projectFiles)
+            #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
             let text: String
             switch name {
             case "index_project":
@@ -105,12 +115,16 @@ struct MCPServer {
                 return
             }
             reply(id: id, result: toolResult(text))
+            #endif
+        } catch let error as PlatformSupportError {
+            reply(id: id, result: toolResult(error.localizedDescription, isError: true))
         } catch {
             log("tool request failed")
             reply(id: id, result: toolResult("Unable to process this project request.", isError: true))
         }
     }
 
+    #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
     private func toolIndexProject(_ args: [String: Any]) throws -> String {
         let root = projectRoot(from: args)
         let stats = try service.reindex(projectRoot: root)
@@ -232,6 +246,8 @@ struct MCPServer {
         return nil
     }
 
+    #endif
+
     // MARK: - JSON-RPC output
 
     private func toolResult(_ text: String, isError: Bool = false) -> [String: Any] {
@@ -259,6 +275,7 @@ struct MCPServer {
 }
 
 /// Posts the cross-process activity notification, at most once per second.
+#if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
 final class Heartbeat {
     private var last = Date.distantPast
     func post() {
@@ -269,6 +286,8 @@ final class Heartbeat {
             UsageStore.activityNotification, object: nil, userInfo: nil, deliverImmediately: true)
     }
 }
+
+#endif
 
 enum ToolError: Error, CustomStringConvertible {
     case missing(String)
