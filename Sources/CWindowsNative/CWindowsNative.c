@@ -142,7 +142,7 @@ int32_t cosw_root_open(const char *absolute_utf8, COSWRoot **result) {
     COSWRoot *root = calloc(1, sizeof(COSWRoot));
     wchar_t *path = calloc(length + 5, sizeof(wchar_t));
     if (!root || !path) { free(root); free(path); free(absolute); return COSW_IO_ERROR; }
-    wcscpy(path, L"\\\\?\\"); wcscat(path, absolute); free(absolute);
+    wmemcpy(path, L"\\\\?\\", 4); wmemcpy(path + 4, absolute, length + 1); free(absolute);
     wchar_t saved = path[7]; path[7] = 0;
     HANDLE ancestor = open_directory(path); path[7] = saved;
     if (ancestor == INVALID_HANDLE_VALUE) { status = COSW_IO_ERROR; goto finish; }
@@ -179,7 +179,7 @@ static wchar_t *child_path(COSWRoot *root, const wchar_t *relative) {
     size_t left = wcslen(root->canonical), right = wcslen(relative);
     if (left + right + 2 > 32700) return NULL;
     wchar_t *path = calloc(left + right + 2, sizeof(wchar_t));
-    if (path) { wcscpy(path, root->canonical); path[left] = L'\\'; wcscpy(path + left + 1, relative); }
+    if (path) { wmemcpy(path, root->canonical, left); path[left] = L'\\'; wmemcpy(path + left + 1, relative, right + 1); }
     return path;
 }
 
@@ -250,9 +250,9 @@ static PSECURITY_DESCRIPTOR private_descriptor(int directory) {
     wchar_t *sddl = calloc(length, sizeof(wchar_t));
     PSECURITY_DESCRIPTOR descriptor = NULL;
     if (sddl) {
-        wcscpy(sddl, L"O:"); wcscat(sddl, sid);
-        wcscat(sddl, directory ? L"D:P(A;OICI;FA;;;" : L"D:P(A;;FA;;;"); wcscat(sddl, sid); wcscat(sddl, L")");
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, NULL);
+        int written = swprintf(sddl, length, L"O:%lsD:P(A;%ls;FA;;;%ls)", sid, directory ? L"OICI" : L"", sid);
+        if (written > 0 && (size_t)written < length)
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, NULL);
     }
     LocalFree(sid); free(user); free(sddl); return descriptor;
 }
@@ -405,7 +405,7 @@ int32_t cosw_sha256(const void *bytes, size_t count, uint8_t digest[32]) {
     size_t position = 0;
     while (position < count) {
         size_t remaining = count - position;
-        ULONG amount = remaining > MAXULONG ? MAXULONG : (ULONG)remaining;
+        ULONG amount = remaining > UINT32_MAX ? (ULONG)UINT32_MAX : (ULONG)remaining;
         if (BCryptHashData(hash, (PUCHAR)bytes + position, amount, 0) < 0) goto finish;
         position += amount;
     }
