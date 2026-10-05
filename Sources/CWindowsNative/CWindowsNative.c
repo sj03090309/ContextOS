@@ -83,7 +83,10 @@ static int safe_object(HANDLE file, int directory) {
 }
 
 static HANDLE open_directory(const wchar_t *path) {
-    return CreateFileW(path, FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_SHARE_READ,
+    /* Attribute-only handles do not participate in I/O sharing checks. The
+       directory read-data right is required to deny competing write/delete
+       access, including ancestor rename. Fail closed if it is not granted. */
+    return CreateFileW(path, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_SHARE_READ,
                        NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
 }
 

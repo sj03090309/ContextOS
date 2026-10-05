@@ -32,6 +32,8 @@ Windows에서 기존에 준비한 [공식 Swift Windows 도구 체인](https://w
 
 Windows 보안 fixture는 임시 GUID 폴더의 dummy 본문·junction·hardlink만 사용합니다. Swift 검사와 직접 C 호출 검사, 부모 rename 거부, 별도 자식 프로세스의 잠금 충돌, 기존 private 파일 보존, SHA-256 알려진 값을 확인합니다. WPF self-test는 계약 불일치·예상 밖 준비 완료 표시를 차단하고 3개 탭의 XAML 레이아웃을 확인합니다. 실제 Windows 11 표준 사용자/고객 설치·화면 조작 시험을 대신하지 않습니다.
 
+`dc21c34`의 독립 검사에서 메타데이터 전용 디렉터리 핸들이 rename을 막지 못하는 문제와 CI PATH의 Microsoft Store Python 별칭 우선 문제가 확인됐습니다. 디렉터리 핸들은 실제 공유 검사에 참여하는 `FILE_LIST_DIRECTORY` 권한을 요청하고 조상에서 이 권한이 거부되면 중단합니다. CI는 전체 machine/user PATH를 다시 내보내지 않고 설치한 Swift 경로만 추가하여 기존 runner의 Python·.NET 경로 순서를 보존합니다. 실패 검사는 제외하지 않습니다. 참고: [CreateFile 공유 모드](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew), [파일·디렉터리 접근 권한](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants).
+
 Mac에서는 같은 제외 목록과 컴파일 분기를 별도 scratch 경로로 검증할 수 있습니다:
 
 ```sh

@@ -23,10 +23,18 @@ if ($install.ExitCode -notin @(0, 3010)) { throw "Swift installer failed: $($ins
 foreach ($name in @('Path', 'SDKROOT', 'DEVELOPER_DIR')) {
     $machine = [Environment]::GetEnvironmentVariable($name, 'Machine')
     $user = [Environment]::GetEnvironmentVariable($name, 'User')
-    $value = if ($name -eq 'Path') { "$machine;$user;$env:Path" } elseif ($user) { $user } else { $machine }
+    # GITHUB_PATH prepends entries in the following step. Export only Swift
+    # directories, never the full machine/user PATH (which would promote Store
+    # execution aliases over the runner's existing Python/.NET locations).
+    $swiftPaths = @()
+    if ($name -eq 'Path') {
+        $swiftPaths = @(("$machine;$user" -split ';') | Where-Object { $_ -match '(?i)[\\/]Swift[\\/]' } | Select-Object -Unique)
+        if ($swiftPaths.Count -eq 0) { throw "The official installer did not register Swift directories." }
+        $value = "$env:Path;" + ($swiftPaths -join ';')
+    } else { $value = if ($user) { $user } else { $machine } }
     if ($value) {
         [Environment]::SetEnvironmentVariable($name, $value, 'Process')
-        if ($name -eq 'Path') { $value -split ';' | Where-Object { $_ } | Add-Content -LiteralPath $env:GITHUB_PATH }
+        if ($name -eq 'Path') { $swiftPaths | Add-Content -LiteralPath $env:GITHUB_PATH }
         else { "$name=$value" | Add-Content -LiteralPath $env:GITHUB_ENV }
     }
 }

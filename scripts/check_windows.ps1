@@ -20,6 +20,10 @@ Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     & swift --version
     if ($LASTEXITCODE -ne 0) { throw "Install/configure the official Swift Windows developer toolchain separately." }
+    & python --version
+    if ($LASTEXITCODE -ne 0) { throw "Configure the existing Python 3 executable before running this preflight." }
+    & dotnet --version
+    if ($LASTEXITCODE -ne 0) { throw "Configure the existing .NET 10 SDK before running this preflight." }
     $buildPassed = $true
     foreach ($product in @("contextos", "contextos-mcp")) {
         $passed = Invoke-Validation "Swift build $product" {
@@ -83,8 +87,13 @@ try {
                 $guiLogs = Join-Path ([IO.Path]::GetTempPath()) ("contextos-gui-" + [guid]::NewGuid())
                 New-Item -ItemType Directory -Path $guiLogs | Out-Null
                 try {
-                    $gui = Start-Process -FilePath "$guiDirectory/ContextOS.Windows.exe" -ArgumentList '--self-test' -PassThru -Wait `
+                    $gui = Start-Process -FilePath "$guiDirectory/ContextOS.Windows.exe" -ArgumentList '--self-test' -PassThru `
                         -RedirectStandardOutput "$guiLogs/stdout.txt" -RedirectStandardError "$guiLogs/stderr.txt"
+                    if (-not $gui.WaitForExit(60_000)) {
+                        # Stop only the self-test process created immediately above.
+                        $gui.Kill(); $gui.WaitForExit()
+                        throw "Owned GUI self-test exceeded its one-minute limit."
+                    }
                     Get-Content "$guiLogs/stdout.txt", "$guiLogs/stderr.txt" | Write-Host
                     if ($gui.ExitCode -ne 0) { throw "GUI self-test failed: $($gui.ExitCode)" }
                 } finally { Remove-Item -LiteralPath $guiLogs -Recurse -Force }
