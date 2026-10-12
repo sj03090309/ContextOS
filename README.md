@@ -90,3 +90,7 @@ python3 scripts/verify_bundle.py dist/ContextOS.app
 벤치마크는 합성 소스만 사용합니다. MCP 검사는 임시 사용자 폴더를 쓰고 실제 설정·세션·분석 기록과 네트워크를 차단합니다. 앱의 실제 에이전트 호출, 서명·공증 설치, 오래된 macOS 실기기 시험은 별도로 확인해야 합니다. 이번 검색 최적화의 시간·메모리·정확성 비교는 [성능 보고서](docs/PERFORMANCE.md)에 기록합니다.
 
 의존성은 Apple `swift-argument-parser`와 macOS 시스템 프레임워크·SQLite입니다. [의존성 고지](THIRD_PARTY_NOTICES.md)를 포함합니다. ContextOS 자체 라이선스·판매 조건은 소유자가 공개 배포 전에 결정해야 합니다.
+
+### 네이티브 위젯 및 동시 AI 사용 현황 (검토 후보)
+
+메뉴바의 **AI 동시 세션**에서 Codex·Claude Code의 주 세션별 상태와 관측 토큰을 확인합니다. 별도 WidgetKit 확장은 작은·중간·큰 크기를 지원합니다. 현재 로컬 후보는 서명/App Group 설정 전이므로 실제 위젯 데이터 공유 활성화가 필요합니다. [지원 데이터, 빌드, 검증 및 서명 절차](docs/WIDGETS.md)를 참고하세요.

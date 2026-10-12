@@ -16,9 +16,12 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2")
     ],
     targets: [
+        .target(name: "ContextOSUsage"),
+        .target(name: "ContextOSUsageUI", dependencies: ["ContextOSUsage"]),
+        .testTarget(name: "ContextOSUsageTests", dependencies: ["ContextOSCore", "ContextOSUsage"]),
         // Pure logic. No platform / UI dependencies. Everything else is a thin adapter.
         .target(
-            name: "ContextOSCore"
+            name: "ContextOSCore", dependencies: ["ContextOSUsage"]
         ),
         // Thin CLI adapter over ContextOSCore. Used for development + verification.
         .executableTarget(
@@ -36,7 +39,7 @@ let package = Package(
         // SwiftUI menu-bar dashboard.
         .executableTarget(
             name: "ContextOSApp",
-            dependencies: ["ContextOSCore"]
+            dependencies: ["ContextOSCore", "ContextOSUsageUI", "ContextOSUsage"]
         ),
         // Disposable synthetic workloads; never included in the app bundle.
         .executableTarget(name: "contextos-bench", dependencies: ["ContextOSCore"], path: "Benchmarks"),

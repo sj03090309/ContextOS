@@ -1,0 +1,22 @@
+// !$*UTF8*$!
+{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+A00000000000000000000000 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContextOSWidget.swift"; sourceTree = "<group>"; };
+B00000000000000000000000 = {isa = PBXBuildFile; fileRef = A00000000000000000000000; };
+A00000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Sources/ContextOSUsage/UsageSnapshot.swift"; sourceTree = "<group>"; };
+B00000000000000000000001 = {isa = PBXBuildFile; fileRef = A00000000000000000000001; };
+A00000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Sources/ContextOSUsage/WidgetSnapshotStore.swift"; sourceTree = "<group>"; };
+B00000000000000000000002 = {isa = PBXBuildFile; fileRef = A00000000000000000000002; };
+A00000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Sources/ContextOSUsageUI/UsageWidgetView.swift"; sourceTree = "<group>"; };
+B00000000000000000000003 = {isa = PBXBuildFile; fileRef = A00000000000000000000003; };
+C00000000000000000000001 = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = ContextOSWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+C00000000000000000000002 = {isa = PBXGroup; children = (A00000000000000000000000, A00000000000000000000001, A00000000000000000000002, A00000000000000000000003, C00000000000000000000001); sourceTree = "<group>"; };
+C00000000000000000000003 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000000, B00000000000000000000001, B00000000000000000000002, B00000000000000000000003); runOnlyForDeploymentPostprocessing = 0; };
+C00000000000000000000004 = {isa = PBXNativeTarget; buildConfigurationList = C00000000000000000000007; buildPhases = (C00000000000000000000003); buildRules = (); dependencies = (); name = ContextOSWidgets; productName = ContextOSWidgets; productReference = C00000000000000000000001; productType = "com.apple.product-type.app-extension"; };
+C00000000000000000000005 = {isa = PBXProject; attributes = {LastUpgradeCheck = 2700; }; buildConfigurationList = C00000000000000000000008; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en, ko, Base); mainGroup = C00000000000000000000002; projectDirPath = ""; projectRoot = ""; targets = (C00000000000000000000004); };
+C00000000000000000000007 = {isa = XCConfigurationList; buildConfigurations = (C00000000000000000000009, C00000000000000000000010); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+C00000000000000000000008 = {isa = XCConfigurationList; buildConfigurations = (C00000000000000000000011, C00000000000000000000012); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+C00000000000000000000009 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGNING_ALLOWED = NO; COMBINE_HIDPI_IMAGES = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.contextos.review.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; CONTEXTOS_URL_SCHEME = "contextos-review"; CONTEXTOS_APP_GROUP = "";}; name = Debug; };
+C00000000000000000000010 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGNING_ALLOWED = NO; COMBINE_HIDPI_IMAGES = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Info.plist; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.contextos.review.widgets; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = macosx; SKIP_INSTALL = YES; SWIFT_VERSION = 6.0; CONTEXTOS_URL_SCHEME = "contextos-review"; CONTEXTOS_APP_GROUP = "";}; name = Release; };
+C00000000000000000000011 = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; }; name = Debug; };
+C00000000000000000000012 = {isa = XCBuildConfiguration; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 14.0; }; name = Release; };
+}; rootObject = C00000000000000000000005; }

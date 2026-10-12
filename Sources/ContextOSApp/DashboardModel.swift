@@ -1,6 +1,8 @@
 import Foundation
 import AppKit
 import ContextOSCore
+import ContextOSUsage
+import WidgetKit
 
 /// Drives the menu-bar **monitor**. Optimization itself runs automatically via
 /// the MCP server inside Claude Code — this panel just shows the results:
@@ -17,6 +19,23 @@ import ContextOSCore
 ///   transcript cache is topped up every few minutes so opening stays instant.
 @MainActor
 final class DashboardModel: ObservableObject {
+
+    @Published var concurrentUsage = ConcurrentUsageSnapshot()
+    @Published var usageAppPresence: [String: Bool] = [:]
+    @Published var widgetBridgeStatus = "공유 권한 설정 필요"
+    @Published var dailyTokenBudget: Int64? = UserDefaults.standard.object(forKey: "contextos.dailyTokenBudget") as? Int64
+    private let concurrentReader = ConcurrentUsageReader()
+    private var lastWidgetReload = Date.distantPast
+
+    func setDailyBudget(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard trimmed.isEmpty || (Int64(trimmed).map { $0 > 0 } ?? false) else {
+            notice = "예산은 양의 정수로 입력하세요."; return
+        }
+        dailyTokenBudget = Int64(trimmed)
+        UserDefaults.standard.set(dailyTokenBudget, forKey: "contextos.dailyTokenBudget")
+        refresh()
+    }
 
     @Published var connectionPreview: ConnectionPreview?
     @Published var connectionBusy = false
@@ -338,6 +357,24 @@ final class DashboardModel: ObservableObject {
         }
         usageRefreshInFlight = true
         Task(priority: priority) {
+            let reader = concurrentReader
+            let budget = dailyTokenBudget
+            let usage = await Task.detached(priority: priority) {
+                reader.snapshot(dailyBudget: budget)
+            }.value
+            concurrentUsage = usage
+            let apps = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+            usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
+            if let container = WidgetSnapshotStore.container() {
+                do {
+                    try WidgetSnapshotStore.write(usage.widget, to: container)
+                    widgetBridgeStatus = "집계 공유됨"
+                    if Date().timeIntervalSince(lastWidgetReload) >= 15 * 60 {
+                        WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
+                        lastWidgetReload = Date()
+                    }
+                } catch { widgetBridgeStatus = "공유 저장 실패 · 이전 집계 유지" }
+            }
             let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
             usageRefreshInFlight = false
             update(\.aiTokens, a.aiTokens)

@@ -123,6 +123,10 @@ struct DashboardView: View {
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
 
+            ConcurrentUsageSummary()
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+
             CalendarCard()
                 .padding(.horizontal, 14)
                 .padding(.top, 12)

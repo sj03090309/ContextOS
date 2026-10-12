@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import ContextOSCore
+import ContextOSUsage
 
 @main
 struct ContextOSApp: App {
@@ -39,7 +40,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private static let lifecycleWindowPrefix = "contextos-lifecycle-"
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
-    private let model = DashboardModel()
+    private lazy var model = DashboardModel()
+    private let usageWindow = UsageWindowController()
+    private var usageObserver: NSObjectProtocol?
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let scheme = Bundle.main.object(forInfoDictionaryKey: "ContextOSURLScheme") as? String ?? "contextos"
+        guard urls.contains(where: { WidgetSnapshotStore.accepts($0, scheme: scheme) }) else { return }
+        showUsage()
+    }
+    private var isUsageReview: Bool {
+        Bundle.main.bundleIdentifier == "com.contextos.review" || ProcessInfo.processInfo.arguments.contains("--usage-review")
+    }
+    private func showUsage() {
+        if isUsageReview {
+            usageWindow.show(UsageReviewRoot(), title: "ContextOS Review · 합성 데이터")
+        } else {
+            usageWindow.show(UsageDetailRoot(model: model), title: "ContextOS · AI 사용 현황")
+        }
+    }
     private lazy var mascot = MascotRenderer(state: model.mascot)
     private var subscriptions: Set<AnyCancellable> = []
     private var glyphLayerHost: NSView?
@@ -50,6 +69,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private static let panelReleaseDelay: TimeInterval = 120
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if isUsageReview {
+            NSApp.setActivationPolicy(.regular)
+            let args = ProcessInfo.processInfo.arguments
+            if let index = args.firstIndex(of: "--usage-render-dir"), args.indices.contains(index + 1) {
+                do { try UsageReviewRenderer.render(to: URL(fileURLWithPath: args[index + 1])) }
+                catch { NSLog("Usage review rendering failed: %@", error.localizedDescription) }
+            }
+            usageWindow.show(UsageReviewRoot(), title: "ContextOS Review · 합성 데이터")
+            hideLifecycleWindow()
+            return
+        }
+        usageObserver = NotificationCenter.default.addObserver(forName: .openUsageDashboard, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showUsage() }
+        }
         // No Dock icon, no standalone window.
         NSApp.setActivationPolicy(.accessory)
 
