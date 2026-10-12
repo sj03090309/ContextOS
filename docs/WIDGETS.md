@@ -58,3 +58,18 @@ These local log adapters are format-specific. A newly unsupported format is inco
 The 2026-10-12 candidate is isolated from the original checkout's uncommitted Windows preparation work. Tests use disposable generated logs, including parallel Codex/Claude sessions. The review app uses fixtures and is labelled accordingly. Validation does not inspect the user's real prompts or unrelated project logs; therefore simultaneous live-provider operation is not claimed as exercised on this Mac. The Mac review window and exported render matrix verify the UI, while installed WidgetKit delivery and App Group sharing require the approved signing step above.
 
 The visual revision uses a small ContextOS character, a mint surface in light appearance and a forest surface in dark appearance. Small prioritizes today's count, medium shows tool shares, and large gives the week more space. Source problems, stale data, last aggregation time and budget warnings remain visible. Extremely large counts switch to short scientific notation rather than truncating the number.
+# Approved local review signing
+
+The isolated review app can be packaged with `scripts/sign_review_widgets.sh
+<existing-signing-identity-SHA1> <new-output-directory>`. This explicit path
+uses the reviewed Personal Team `Y56BH9PULD` and the macOS team-prefixed group
+`Y56BH9PULD.com.contextos.review.usage`. It signs only the review bundle IDs,
+verifies the resulting team, and never installs, creates a certificate, logs
+into an account, or uploads a build. Keep the default unsigned packaging path
+for portable builds. The review entitlements must be reviewed again before
+changing the team or group.
+
+The review app writes **synthetic fixtures only** to the configured shared
+container and labels them as sample data. Opening the normal host continues
+to use the existing real collectors. A successful review-app write does not
+verify live personal usage or the WidgetKit host's rendering and refresh.
