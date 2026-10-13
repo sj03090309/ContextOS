@@ -48,17 +48,17 @@ public struct UsageWidgetView: View {
         VStack(alignment: .leading, spacing: size == .medium && snapshot.agents.count >= 3 ? 4 : 12) {
             switch size {
             case .small:
-                title(old ? "마지막 집계 토큰" : "오늘 토큰")
+                title(old ? "마지막 집계 토큰" : "오늘 토큰", branded: true)
                 number(snapshot.today, points: 36)
             case .medium:
-                title(old ? "AI 토큰 · 이전 집계" : "오늘 AI 토큰")
+                title(old ? "AI 토큰 · 이전 집계" : "오늘 AI 토큰", branded: true)
                 if snapshot.agents.isEmpty { empty }
                 ForEach(Array(snapshot.agents.prefix(3).enumerated()), id: \.element.id) { index, rank in
                     comparison(rank, index: index)
                 }
             case .large:
                 VStack(alignment: .leading, spacing: 4) {
-                    title("7일 토큰")
+                    title("7일 토큰", branded: true)
                     number(snapshot.weekTotal, points: 38)
                 }
                 if snapshot.days.contains(where: { $0.tokens != nil }) { chart.padding(.top, 3) }
@@ -73,8 +73,17 @@ public struct UsageWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .privacySensitive().accessibilityElement(children: .contain)
     }
-    private func title(_ text: String) -> some View {
+    private func title(_ text: String, branded: Bool = false) -> some View {
         Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(muted)
+            .lineLimit(1).minimumScaleFactor(0.9)
+            .padding(.trailing, branded ? 24 : 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(alignment: .trailing) {
+                if branded {
+                    MungchiWidgetMark().fill(ink.opacity(0.8), style: FillStyle(eoFill: true))
+                        .frame(width: 20, height: 20).accessibilityHidden(true)
+                }
+            }
     }
     private func number(_ value: Int64?, points: CGFloat) -> some View {
         Text(millions(value)).font(.system(size: points, weight: .semibold))
@@ -138,5 +147,28 @@ public struct UsageWidgetView: View {
         .font(.system(size: 9)).foregroundStyle(muted)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(status). 마지막 집계 \(snapshot.generatedAt.formatted(date: .abbreviated, time: .shortened)). M은 백만 토큰입니다.")
+    }
+}
+
+/// Exact resting silhouette/eye geometry from the app's BlobShape in
+/// ContextOSApp.swift. A static brand mark, never an inferred activity state.
+private struct MungchiWidgetMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + x / 48 * rect.width, y: rect.minY + y / 48 * rect.height)
+        }
+        var p = Path()
+        p.move(to: pt(24, 6))
+        p.addCurve(to: pt(40, 26), control1: pt(34, 6), control2: pt(40, 14))
+        p.addCurve(to: pt(24, 42), control1: pt(40, 38), control2: pt(33, 42))
+        p.addCurve(to: pt(8, 26), control1: pt(15, 42), control2: pt(8, 38))
+        p.addCurve(to: pt(24, 6), control1: pt(8, 14), control2: pt(14, 6))
+        p.closeSubpath()
+        let er: CGFloat = 3.1
+        for x: CGFloat in [18, 30] {
+            p.addEllipse(in: CGRect(origin: pt(x - er, 24 - er),
+                size: CGSize(width: er / 24 * rect.width, height: er / 24 * rect.height)))
+        }
+        return p
     }
 }
