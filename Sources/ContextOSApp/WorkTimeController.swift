@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import ContextOSUsage
+import ContextOSCore
 
 /// Opt-in AppKit metadata observation. Never reads a title, document, keystroke
 /// or path. Values are this process's observation epoch, not "coding time".
@@ -14,6 +15,45 @@ final class WorkTimeController: ObservableObject {
     @Published private(set) var boundaryReason: String?
     @Published var smallMetric: SmallWidgetMetric = SmallWidgetMetric(rawValue: UserDefaults.standard.string(forKey: "contextos.smallWidgetMetric") ?? "") ?? .tokens {
         didSet { UserDefaults.standard.set(smallMetric.rawValue, forKey: "contextos.smallWidgetMetric") }
+    }
+    @Published private(set) var aiExecution: AIExecutionSummary?
+    @Published private(set) var bridgeEnabled = false
+    @Published private(set) var bridgeStatus = "확장 미연결"
+    @Published private(set) var bridgeEditCount: UInt64?
+    @Published private(set) var bridgeFocused: Bool?
+    private var bridgeLedger = ObservationBridgeLedger()
+    private var bridgeServer: ObservationBridgeServer?
+    func updateAIExecution(_ value: AIExecutionSummary) { aiExecution = value }
+    func setBridgeEnabled(_ enabled: Bool) {
+        guard enabled != bridgeEnabled else { return }
+        bridgeEnabled = enabled
+        if enabled {
+            ensureBoundaries()
+            bridgeStatus = "로컬 연결 대기 · 설치 승인 필요"
+            let server = ObservationBridgeServer { [weak self] event in
+                Task { @MainActor in
+                    guard let self, self.bridgeEnabled else { return }
+                    switch event {
+                    case .packet(let packet):
+                        self.bridgeLedger.consume(packet)
+                        self.bridgeEditCount = self.bridgeLedger.editCount
+                        self.bridgeFocused = self.bridgeLedger.focused
+                        self.bridgeStatus = self.bridgeLedger.partial ? "일부 관측 · 누락 있음" : "연결됨 · 콜백 횟수 관측"
+                    case .disconnected:
+                        self.bridgeLedger.disconnect(); self.bridgeFocused = nil; self.bridgeStatus = "연결 끊김 · 일부 관측"
+                    case .failed:
+                        self.bridgeStatus = "수신 시작 실패 · 기존 경로 보존"; self.bridgeEnabled = false
+                        self.bridgeServer = nil; self.releaseUnusedBoundaries()
+                    }
+                }
+            }
+            bridgeServer = server
+            let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ContextOS Observation Candidate", isDirectory: true)
+            server.start(directory: directory)
+        } else {
+            bridgeServer?.stop(); bridgeServer = nil; bridgeLedger.disconnect()
+            bridgeFocused = nil; bridgeStatus = "수신 꺼짐 · 관측 중지"; releaseUnusedBoundaries()
+        }
     }
     @Published private(set) var revision: UInt64 = 0
     private(set) var lastPublishTick: UInt64 = 0
@@ -127,13 +167,15 @@ final class WorkTimeController: ObservableObject {
     }
     private func interrupt(_ reason: String) {
         ledger.interrupt(); manualRunning = false; foregroundActive = false; foregroundEnabled = false
+        setBridgeEnabled(false)
         editorLabel = nil; interrupted = true; boundaryReason = reason
         if let activationObserver { workspace.notificationCenter.removeObserver(activationObserver) }
         activationObserver = nil; timer?.invalidate(); timer = nil
         publish(); releaseUnusedBoundaries()
     }
     func reset() {
-        interrupt("초기화"); ledger = MeasuredTimeLedger(); interrupted = false; boundaryReason = nil
+        interrupt("초기화"); setBridgeEnabled(false); bridgeLedger = ObservationBridgeLedger(); bridgeEditCount = nil
+        ledger = MeasuredTimeLedger(); interrupted = false; boundaryReason = nil
         lastTick = DispatchTime.now().uptimeNanoseconds; lastWall = Date(); publish()
     }
     private func ensureBoundaries() {
@@ -141,18 +183,21 @@ final class WorkTimeController: ObservableObject {
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             observe(workspace.notificationCenter, name, "절전 또는 세션 비활성")
         }
-        for name in [Notification.Name.NSSystemTimeZoneDidChange, .NSCalendarDayChanged] {
+        for name in [Notification.Name.NSSystemTimeZoneDidChange, .NSCalendarDayChanged, NSApplication.willTerminateNotification] {
             observe(.default, name, "일자 또는 시간대 변경")
         }
     }
     private func observe(_ center: NotificationCenter, _ name: Notification.Name, _ reason: String) {
         let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.interrupt(reason) }
+            MainActor.assumeIsolated {
+                if name == NSApplication.willTerminateNotification { self?.bridgeServer?.stopSynchronously() }
+                self?.interrupt(reason)
+            }
         }
         boundaries.append((center, token))
     }
     private func releaseUnusedBoundaries() {
-        guard !manualRunning && !foregroundEnabled else { return }
+        guard !manualRunning && !foregroundEnabled && !bridgeEnabled else { return }
         for (center, token) in boundaries { center.removeObserver(token) }
         boundaries.removeAll()
     }

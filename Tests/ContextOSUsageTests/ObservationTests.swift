@@ -1,0 +1,108 @@
+import Foundation
+import Testing
+import Darwin
+import ContextOSUsage
+import ContextOSCore
+
+struct ObservationTests {
+    let now = ISO8601DateFormatter().date(from: "2025-10-12T00:30:00Z")!
+    func event(_ id: String, _ kind: ExplicitAIRunEvent.Kind, _ seconds: Double) -> ExplicitAIRunEvent {
+        .init(id: id, kind: kind, date: now.addingTimeInterval(seconds))
+    }
+    @Test func explicitPairsUnionAndReplayWithoutFillingGaps() {
+        let e = [event("a",.start,-100),event("a",.end,-60),event("b",.start,-80),event("b",.end,-50),event("c",.start,-20),event("c",.end,-10)]
+        let value = ExplicitAIRuns.summarize(e + e, now: now, timeZone: .gmt)
+        #expect(value.todayMilliseconds == 60_000)
+        #expect(value.state == .ready)
+    }
+    @Test func missingConflictingAbortedReversedAndFuturePairsAreNotTime() {
+        let e = [event("open",.start,-50),event("orphan",.end,-10),
+                 event("conflict",.start,-50),event("conflict",.start,-40),event("conflict",.end,-10),
+                 event("abort",.start,-40),event("abort",.abort,-20),event("abort",.end,-10),
+                 event("reverse",.start,-10),event("reverse",.end,-20),event("future",.start,-1),event("future",.end,1)]
+        let value = ExplicitAIRuns.summarize(e, now: now, timeZone: .gmt)
+        #expect(value.todayMilliseconds == nil && value.state == .partial && value.missingPairs == 6)
+        let zero = ExplicitAIRuns.summarize([event("zero",.start,-1),event("zero",.end,-1)], now: now, timeZone: .gmt)
+        #expect(zero.todayMilliseconds == 0 && zero.formatted == "00:00:00")
+    }
+    @Test func midnightTimezoneAndDSTUseRealDayBoundaries() {
+        let e = [event("cross",.start,-1900),event("cross",.end,-1700)]
+        #expect(ExplicitAIRuns.summarize(e,now:now,timeZone:.gmt).todayMilliseconds == 100_000)
+        #expect(ExplicitAIRuns.summarize(e,now:now,timeZone:TimeZone(secondsFromGMT: -3600)!).todayMilliseconds == 200_000)
+        let zone = TimeZone(identifier:"America/New_York")!
+        let end=ISO8601DateFormatter().date(from:"2025-11-03T04:59:00Z")!,start=ISO8601DateFormatter().date(from:"2025-11-02T04:00:00Z")!
+        let d = ExplicitAIRuns.summarize([.init(id:"dst",kind:.start,date:start),.init(id:"dst",kind:.end,date:end)],now:end,timeZone:zone)
+        #expect(d.todayMilliseconds == 89_940_000)
+    }
+    @Test func readerUsesOnlyCorrelatedCodexLifecycleAndMergesCopies() throws {
+        let f=ConcurrentUsageTests(),h=try f.home();defer{try? FileManager.default.removeItem(at:h)}
+        func phase(_ kind:String,_ seconds:Double,_ id:String?) -> [String:Any] {
+            var p:[String:Any] = ["type":kind]; if let id { p["turn_id"]=id }
+            return ["type":"event_msg","timestamp":f.stamp(seconds),"payload":p]
+        }
+        let lines=f.meta("a")+[phase("task_started",-100,"t"),phase("task_complete",-50,"t"),f.counter(100)]
+        _=try f.write(lines,".codex/sessions/rollout-a.jsonl",home:h)
+        _=try f.write(lines,".codex/sessions/rollout-copy.jsonl",home:h)
+        _=try f.write([f.claude()],".claude/projects/p/a.jsonl",home:h)
+        let r=ConcurrentUsageReader(),v=r.snapshot(home:h,now:f.now,timeZone:.gmt)
+        #expect(v.aiExecution.todayMilliseconds == 50_000)
+        #expect(v.widget.today == 300) // 100 Codex + 200 disjoint Claude accounting.
+        #expect(r.snapshot(home:h,now:f.now.addingTimeInterval(100),timeZone:.gmt).aiExecution.todayMilliseconds == 50_000)
+        _=try f.write(f.meta("b")+[phase("user_message",-100,nil),f.counter(100)],".codex/sessions/rollout-b.jsonl",home:h)
+        #expect(r.snapshot(home:h,now:f.now,timeZone:.gmt).aiExecution.todayMilliseconds == 50_000)
+    }
+    func packet(_ kind: String = "edits", sequence:Int=1, nonce:String="12345678-1234-1234-1234-123456789abc", extra:[String:Any]=[:]) throws -> Data {
+        var p:[String:Any] = ["version":1,"editor":"vscode","nonce":nonce,"sequence":sequence,"kind":kind]
+        if kind == "edits" {p["count"]=2}; if kind == "focus" {p["focused"]=true}
+        p.merge(extra){_,new in new};return try JSONSerialization.data(withJSONObject:p)
+    }
+    @Test func bridgeSchemaRejectsSecretsOversizeAndWrongTypes() throws {
+        #expect(throws:(any Error).self) { try ObservationPacket.decode(packet(extra:["text":"private"])) }
+        #expect(throws:(any Error).self) { try ObservationPacket.decode(packet(extra:["count":true])) }
+        #expect(throws:(any Error).self) { try ObservationPacket.decode(packet("focus",extra:["focused":1])) }
+        #expect(throws:(any Error).self) { try ObservationPacket.decode(packet(extra:["count":257])) }
+        #expect(throws:(any Error).self) { try ObservationPacket.decode(Data(repeating:32,count:1025)) }
+        #expect(try ObservationPacket.decode(packet()).count == 2)
+    }
+    @Test func bridgeReplayGapsRestartAndDisconnectNeverAddTime() throws {
+        var ledger=ObservationBridgeLedger()
+        ledger.consume(try ObservationPacket.decode(packet()))
+        ledger.consume(try ObservationPacket.decode(packet()))
+        #expect(ledger.editCount == 2 && !ledger.partial)
+        ledger.consume(try ObservationPacket.decode(packet(sequence:3)))
+        #expect(ledger.editCount == 4 && ledger.partial)
+        ledger.consume(try ObservationPacket.decode(packet("focus",sequence:4)))
+        #expect(ledger.focused == true)
+        ledger.disconnect(); #expect(ledger.focused == nil)
+        ledger.consume(try ObservationPacket.decode(packet(nonce:"87654321-1234-1234-1234-123456789abc")))
+        #expect(ledger.editCount == 6 && ledger.partial)
+    }
+    @Test func unixReceiverAcceptsSyntheticPacketAndPreservesExistingPath() async throws {
+        actor Box { var events:[ObservationBridgeEvent]=[]; func add(_ e:ObservationBridgeEvent){events.append(e)}; func count()->Int{events.count} }
+        let directory=URL(fileURLWithPath:"/tmp",isDirectory:true).appendingPathComponent("contextos-bridge-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer{try? FileManager.default.removeItem(at:directory)}
+        let box=Box(),server=ObservationBridgeServer { e in Task { await box.add(e) } }
+        let path=directory.appendingPathComponent("observations.sock").path
+        server.start(directory:directory)
+        var st=stat()
+        for _ in 0..<100 { if lstat(path,&st)==0 {break};try await Task.sleep(for:.milliseconds(10)) }
+        try #require((st.st_mode & S_IFMT) == S_IFSOCK && st.st_mode & 0o077 == 0)
+        let fd=socket(AF_UNIX,SOCK_STREAM,0);defer{close(fd)}
+        try #require(path.utf8.count < 104)
+        var address=sockaddr_un();address.sun_family=sa_family_t(AF_UNIX);address.sun_len=UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutableBytes(of:&address.sun_path){ dest in path.utf8CString.withUnsafeBytes{dest.copyBytes(from:$0)} }
+        let connected=withUnsafePointer(to:&address){p in p.withMemoryRebound(to:sockaddr.self,capacity:1){ Darwin.connect(fd,$0,socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+        #expect(connected == 0)
+        var bytes=try packet();bytes.append(10)
+        let sent=bytes.withUnsafeBytes{Darwin.write(fd,$0.baseAddress,$0.count)};#expect(sent == bytes.count)
+        for _ in 0..<100 {if await box.count()>0{break};try await Task.sleep(for:.milliseconds(10))}
+        #expect(await box.count()>0)
+        server.stopSynchronously()
+        for _ in 0..<100 {if lstat(path,&st) != 0{break};try await Task.sleep(for:.milliseconds(10))}
+        let sentinel=Data("preserve".utf8);try sentinel.write(to:URL(fileURLWithPath:path))
+        server.start(directory:directory)
+        try await Task.sleep(for:.milliseconds(50));server.stop()
+        #expect(try Data(contentsOf:URL(fileURLWithPath:path)) == sentinel)
+    }
+}

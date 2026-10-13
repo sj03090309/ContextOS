@@ -41,7 +41,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
     }
     private struct Info: Decodable { var total_token_usage: Counter? }
     private struct Payload: Decodable {
-        var type: String?; var id: String?; var cwd: String?; var model: String?
+        var type: String?; var id: String?; var cwd: String?; var model: String?; var turn_id: String?
         var role: String?; var phase: String?; var call_id: String?
         var forked_from_id: String?; var info: Info?
     }
@@ -61,6 +61,8 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var partial = false; var inherited = false
         var skippingLongLine = false
         var needsMoreRead = false
+        var runEvents = Set<ExplicitAIRunEvent>()
+        var runIncomplete = false
     }
     private var rows: [String: Row] = [:]
     private struct MemoKey: Equatable {
@@ -120,8 +122,12 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                     for (key, metric) in row.metrics {
                         if combined[key] == nil || combined[key]!.tokens < metric.tokens { combined[key] = metric }
                     }
+                    let combinedRuns = old.runEvents.union(row.runEvents)
+                    let incompleteRuns = old.runIncomplete || row.runIncomplete
                     if (row.lastEvent ?? .distantPast) > (old.lastEvent ?? .distantPast) { old = row }
                     old.metrics = combined
+                    old.runEvents = combinedRuns
+                    old.runIncomplete = incompleteRuns
                     old.partial = old.partial || row.partial
                     old.needsMoreRead = old.needsMoreRead || row.needsMoreRead
                     merged[identity] = old
@@ -134,6 +140,10 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         if !readFailure, let memo, memo.key == key {
             var value = memo.value
             value.widget.generatedAt = now
+            value.aiExecution = ExplicitAIRuns.summarize(decodedRows.filter { $0.0 == "Codex" }.flatMap { source in
+                source.1.flatMap { identity, row in row.runEvents.map { ExplicitAIRunEvent(id: identity + ":" + $0.id, kind: $0.kind, date: $0.date) } }
+            }, now: now, timeZone: timeZone, incomplete: memo.value.aiExecution.state == .partial,
+                available: discoveries[0].state != .unavailable)
             value.sessions = value.sessions.map { session in
                 var s = session
                 s.state = Self.aged(memo.phases[s.id] ?? .unknown, last: s.lastEvent, now: now)
@@ -142,10 +152,16 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             return value
         }
         var phases: [String: WorkState] = [:]
+        var runEvents: [ExplicitAIRunEvent] = []
+        var runIncomplete = decodedRows.first?.2 == .partial
         for (agent, merged, initialState, latest) in decodedRows {
             var state = initialState
             var hasAccounting = false
             for (identity, row) in merged {
+                if agent == "Codex" {
+                    runEvents += row.runEvents.map { .init(id: identity + ":" + $0.id, kind: $0.kind, date: $0.date) }
+                    runIncomplete = runIncomplete || row.runIncomplete || row.partial || row.inherited || row.needsMoreRead
+                }
                 var total: Int64?, todayTotal: Int64?, previous: Int64 = 0
                 // Reconstruct one canonical counter stream across copied/resumed files.
                 // Claude messages choose the largest observed streamed total per message ID.
@@ -196,7 +212,9 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         let value = ConcurrentUsageSnapshot(widget: .init(generatedAt: now, timeZoneID: timeZone.identifier,
             days: days, models: ranks(modelTotals), agents: ranks(agentTotals), projects: ranks(projectTotals),
             providers: providers, dailyBudget: dailyBudget),
-            sessions: sessions.sorted { ($0.lastEvent ?? .distantPast) > ($1.lastEvent ?? .distantPast) })
+            sessions: sessions.sorted { ($0.lastEvent ?? .distantPast) > ($1.lastEvent ?? .distantPast) },
+            aiExecution: ExplicitAIRuns.summarize(runEvents, now: now, timeZone: timeZone,
+                incomplete: runIncomplete || readFailure, available: discoveries[0].state != .unavailable))
         if !readFailure { memo = (key, value, phases) }
         return value
     }
@@ -262,11 +280,11 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         guard let access = try? FileHandle(forReadingFrom: file) else { return nil }
         try? access.close()
         var row = rows[file.path] ?? Row()
-        let oldCount = row.metrics.count
+        let oldCount = row.metrics.count + row.runEvents.count
         if row.inode != inode.uint64Value || size.intValue < row.size || (size.intValue == row.size && row.mtime != mtime) { row = Row() }
         if row.inode == inode.uint64Value && row.size == size.intValue && row.mtime == mtime && !row.needsMoreRead { return row }
         guard readBudget > 0 else { return nil }
-        let capacity = max(0, min(4096, maximumMetrics - rows.values.reduce(0) { $0 + $1.metrics.count } + oldCount))
+        let capacity = max(0, min(4096, maximumMetrics - rows.values.reduce(0) { $0 + $1.metrics.count + $1.runEvents.count } + oldCount))
         var skipping = row.skippingLongLine
         let result = LineReader.boundedLines(of: file, from: row.offset, maximumLineBytes: maximumLineBytes,
             maximumReadBytes: readBudget, skippingOversizedLine: &skipping, onSkipped: { row.partial = true }) { bytes in
@@ -303,7 +321,9 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             row.model = Self.safeLabel(model, fallback: "모델 미상")
         }
         guard let stamp = e.timestamp, stamp.utf8.count <= 64, let epoch = TimeKeys.epoch(fromISO8601: stamp) else {
-            if e.message?.usage != nil || p?.type == "token_count" { row.partial = true }; return
+            if e.message?.usage != nil || p?.type == "token_count" { row.partial = true }
+            if !claude && ["task_started", "turn_started", "task_complete", "turn_complete", "turn_aborted"].contains(p?.type ?? "") { row.runIncomplete = true }
+            return
         }
         let date = Date(timeIntervalSince1970: epoch)
         guard date <= now.addingTimeInterval(300) else { row.partial = true; return }
@@ -314,7 +334,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 if e.type == "event_msg" {
                     switch kind {
                     case "task_started", "turn_started", "user_message": row.phase = .working; row.pending = []
-                    case "task_complete", "turn_completed": row.phase = .idle; row.pending = []
+                    case "task_complete", "turn_complete", "turn_completed": row.phase = .idle; row.pending = []
                     case "turn_aborted", "turn_interrupted", "task_failed", "shutdown": row.phase = .interrupted; row.pending = []
                     case "agent_message", "agent_reasoning": if row.phase != .idle { row.phase = .working }
                     default: break
@@ -332,19 +352,36 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             // Only lifecycle/accounting events establish freshness, never file mtime or PID.
             if ["event_msg", "response_item", "user", "assistant"].contains(e.type) { row.lastEvent = date }
         }
+        if !claude, !row.inherited, e.type == "event_msg" {
+            let kind: ExplicitAIRunEvent.Kind?
+            switch p?.type {
+            case "task_started", "turn_started": kind = .start
+            case "task_complete", "turn_complete": kind = .end
+            case "turn_aborted", "turn_interrupted", "task_failed": kind = .abort
+            default: kind = nil
+            }
+            if let kind {
+                if let id = p?.turn_id, !id.isEmpty, id.utf8.count <= 128 {
+                    let event = ExplicitAIRunEvent(id: id, kind: kind, date: date)
+                    if row.runEvents.contains(event) { /* identical replay */ }
+                    else if row.metrics.count + row.runEvents.count < capacity { row.runEvents.insert(event) }
+                    else { row.runIncomplete = true }
+                } else { row.runIncomplete = true }
+            }
+        }
         guard !row.inherited else { return } // A fork may inherit cumulative history: exclude with an explicit partial status.
         if claude, let usage = e.message?.usage {
             guard let tokens = usage.total(claude: true), let id = e.message?.id, id.utf8.count <= 128 else { row.partial = true; return }
             let key = "message:" + id
             if let old = row.metrics[key], old.tokens >= tokens { return }
-            guard row.metrics[key] != nil || row.metrics.count < capacity else { row.partial = true; return }
+            guard row.metrics[key] != nil || row.metrics.count + row.runEvents.count < capacity else { row.partial = true; return }
             row.metrics[key] = Metric(date: row.metrics[key]?.date ?? date, tokens: tokens,
                                       model: row.model, project: row.project)
         } else if !claude, e.type == "event_msg", p?.type == "token_count", let usage = p?.info?.total_token_usage {
             guard let total = usage.total(claude: false) else { row.partial = true; return }
             let key = "counter:" + stamp + ":" + String(total)
             guard !row.seen.contains(key) else { return }
-            guard row.metrics.count < capacity else { row.partial = true; return }
+            guard row.metrics.count + row.runEvents.count < capacity else { row.partial = true; return }
             row.seen.insert(key)
             let delta = total < row.previous ? total : total - row.previous
             row.previous = total

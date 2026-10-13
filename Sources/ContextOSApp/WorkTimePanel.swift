@@ -6,7 +6,7 @@ struct WorkTimePanel: View {
     @ObservedObject var model: WorkTimeController
     @State private var mounted = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        ScrollView { VStack(alignment: .leading, spacing: 18) {
             Text("시간 측정").font(.title2.bold())
             Text("이번 관측의 시간입니다. 전경 체류·타이머를 실제 편집 시간으로 환산하지 않습니다.")
                 .foregroundStyle(.secondary)
@@ -31,8 +31,17 @@ struct WorkTimePanel: View {
             }
             Text("Xcode·VS Code·Cursor의 앱 전경만 관측합니다. 다른 앱과 미지원 에디터는 미관측이며, 읽기·방치와 편집을 구분하지 않습니다.")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("편집 이벤트: 확장 미연결 · 사람/AI 구분 안 됨").font(.caption).foregroundStyle(.secondary)
-            Text("AI 실행구간: 시간 집계 미연동").font(.caption).foregroundStyle(.secondary)
+            Toggle("Observation Bridge 로컬 수신", isOn: Binding(get: { model.bridgeEnabled }, set: { model.setBridgeEnabled($0) }))
+            Text("편집 이벤트: \(model.bridgeEditCount.map { String($0) } ?? "—") · \(model.bridgeStatus)")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("확장 설치는 별도 승인 후 가능합니다. 연결된 한 에디터 창의 콜백 횟수이며 여러 창 동시 집계·시간·키 입력·사람/AI 구분은 지원하지 않습니다.").font(.caption).foregroundStyle(.secondary)
+            if let value = model.aiExecution {
+                Text("오늘 Codex 로그 실행구간: \(value.formatted) · \(value.state.label)").font(.caption)
+                Text("같은 turn ID의 시작·완료 UTC 기록만 합칩니다. 중복·동시 구간은 합집합입니다. 누락 쌍 \(value.missingPairs)개. 대기·승인 시간이 포함될 수 있으며 AI 연산 시간이 아닙니다.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("관측 집계: \(value.generatedAt.formatted(date: .abbreviated, time: .shortened)) · \(value.timeZoneID)").font(.caption).foregroundStyle(.secondary)
+            } else { Text("AI 로그 실행구간: 수집기 미연결").font(.caption).foregroundStyle(.secondary) }
+            Text("Claude·Cursor·Gemini: 명시적 실행구간 어댑터 미지원").font(.caption).foregroundStyle(.secondary)
             if let reason = model.boundaryReason { Text("측정 중지: \(reason). 자동 재개하지 않습니다.").font(.caption) }
             Divider()
             Picker("작은 위젯 항목", selection: $model.smallMetric) {
@@ -41,7 +50,7 @@ struct WorkTimePanel: View {
             Text("위젯은 마지막 확인값을 표시합니다. 갱신 시점은 macOS가 결정합니다.").font(.caption).foregroundStyle(.secondary)
             HStack { Spacer(); Button("관측 초기화") { model.reset() } }
             Spacer(minLength: 0)
-        }.padding(24)
+        }.padding(24) }
             .background(TimeDrawProbe(tick: model.lastPublishTick, onDraw: { model.recordDraw(from: $0) }).frame(width: 1, height: 1).accessibilityHidden(true))
             .onAppear { mounted = true; model.setUIVisible(NSApp.isActive) }
             .onDisappear { mounted = false; model.setUIVisible(false) }

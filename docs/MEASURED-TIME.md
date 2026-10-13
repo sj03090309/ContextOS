@@ -79,3 +79,18 @@ Sources/ContextOSUsage/MeasuredTimeLedger.swift:
 현재 후보에는 에디터 확장 설치나 새로운 시스템 권한이 필요하지 않다. 지속 편집 이벤트를 연결하려면 ContextOS Observation Bridge 로컬 VSIX(우선 VS Code/Insiders)의 설치 승인이 별도로 필요하다. 제안 payload는 버전·정적 editorKind·focus/editCount·sequence·restart nonce이며 중앙 앱이 수신 시각을 기록한다. text/URI/제목/키 입력은 읽거나 저장하지 않는다. 같은 사용자 Unix socket, 작은 패킷 상한, 재시작·공백 상태, 7일 집계/256 KiB 상한은 설계안이며 아직 구현·설치하지 않았다. JetBrains는 제품·버전 선택 이후 별도 검토한다. 접근성·입력 모니터링 권한을 요청하지 않는다. AI 실행 시간 연결도 별도 미완료다.
 
 부모가 알려 준 대기 승인 manager:1a69882170d447c9807fdbf51ae28c9f:1의 정확한 대상 동작은 로컬 실행 결과에 제공되지 않았다. 이 승인과 관련된 설치·권한·설정 동작은 진행하지 않는다.
+
+## 명시적 AI 구간·Observation Bridge 준비 결과
+- Codex 공식 [protocol.rs](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/protocol.rs)를 2026-10-13 확인했다. TurnStarted/TurnComplete는 같은 turn_id를 제공하며 wire 이름 task_started/task_complete, alias turn_started/turn_complete를 사용한다.
+- 기존 메타데이터 읽기에 turn_id와 사건 종류·UTC 기록 시각만 추가했다. 같은 session/turn ID에 유일한 시작·완료 쌍이 있는 경우만 완료 구간이다. user_message·토큰·assistant 메시지·stop_reason·파일 mtime은 시간 근거로 사용하지 않는다. 별도 개인 로그 열람이나 새로운 수집 프로세스는 실행하지 않았다.
+- 복사·재생한 동일 사건은 제거한다. 겹친 완료 구간은 합집합이고, 오늘 현지 일자 경계에서 자른다. DST 일자 길이를 달력으로 계산한다. 종료 없는 구간·고아 완료·서로 다른 중복 시작/완료·abort·시계 역전·미래 종료·ID/시각 누락·수집 제한은 시간에 기여하지 않는다. 누락/partial/unavailable/noRecords와 측정된 0을 구분한다.
+- 이 값은 로그 시작·완료 사건 사이 경과 시간이며 대기·권한 승인 시간을 포함할 수 있다. 모델 CPU/GPU 실행 시간이나 사람의 실제 코딩 시간이 아니다. 앱 단조 타이머와 UTC 로그 구간을 합산하지 않는다. Claude/Cursor/Gemini의 명시 구간 어댑터는 미지원이며 추정값을 표시하지 않는다. 오늘 값·시간대·집계 시각·누락 쌍 수를 시간 화면에서 표시하고 위젯 기본 화면에는 추가하지 않았다.
+- 브리지 소스는 ObservationBridge/vscode, 수신기는 Sources/ContextOSCore/Registry/ObservationBridge.swift이다. 기본 꺼짐, 로컬 trusted macOS VS Code/Insiders 창만 지원한다. remote/virtual/untrusted 창은 미지원이다. 편집 콜백 배열 길이가 0보다 큰 콜백 1회를 이벤트 1개로 센다. 배열 내용·document·URI는 읽지 않는다. undo/redo·AI·프로그램 변경과 사람 편집을 구분하지 못한다.
+- 전달 필드: version=1, 정적 editor 종류, 연결별 임의 UUID nonce, sequence, kind, focus boolean 또는 1–256 callback count. heartbeat/gap에는 추가 데이터·시각이 없다. 수신 앱 메모리에서만 순서·연결·횟수를 유지한다. 어떤 이벤트 간격도 편집 시간으로 환산하지 않는다.
+- 위치: 사용자가 후보 수신을 켜면 ~/Library/Application Support/ContextOS Observation Candidate/observations.sock. 디렉터리 0700·소켓 0600, macOS getpeereid로 같은 UID만 허용, 연결 1개·프레임 1 KiB·초당 64패킷·불완전 프레임 5초/무통신 180초 상한. 기존 경로는 덮어쓰지 않으며 중지 시 자신의 inode인 소켓만 제거한다. 앱 종료·절전/세션/일자 경계에서는 자동 재개하지 않는다.
+- 외부 전송: 없음. TCP endpoint·원격 서비스·원문/키/제목/경로/프로젝트/언어·로그 파일·원시 이벤트 저장 없음. 이번 구현은 프로세스 메모리 집계만이며 7일 저장 기능은 없다. 확장의 enabled 설정만 에디터의 사용자 설정으로 남는다. 같은 UID의 다른 프로그램이 패킷을 흉내 낼 수 있어 서명된 확장 출처 인증으로 주장하지 않는다.
+- 승인 범위: 로컬 VSIX 설치, 사용자 enabled 설정, 후보 앱의 로컬 수신을 켜는 동작. 새로운 Accessibility/Input Monitoring, Apple 인증서, 계정 로그인, 네트워크 권한, 결제는 요구하지 않는다. 실제 설치·활성화는 진행하지 않았다. 알려지지 않은 manager 승인 ID는 이를 승인한 것으로 취급하지 않는다.
+- 제거: enabled 설정 끄기 → 후보 앱 수신 끄기 → VS Code/Insiders에서 contextos.observation-bridge 제거. 남은 빈 ContextOS Observation Candidate 디렉터리는 별도로 제거할 수 있다. 원본 AI 로그·프로젝트·운영 앱은 변경하지 않는다.
+- 로컬 패키지: artifacts/contextos-observation-bridge-0.1.0-candidate.vsix. ZIP/XML/기본 꺼짐 검사 완료. 실제 VS Code Extension Host 로드·설치·macOS 화면은 미검증이다. 패키지는 로컬 검토용이며 Marketplace에 게시하지 않았다.
+
+정상 앱 종료는 소켓을 동기 정리한다. 강제 종료/크래시로 소켓 파일이 남으면 다음 수신 시작은 기존 경로를 덮어쓰지 않고 실패를 표시한다. 승인 후 검토한 후보 소켓만 수동 제거할 수 있으며 자동 광범위 삭제는 없다. 합성 관련 Swift 검사 34개·브리지 JS 검사 5개가 통과했다. 소켓 실전달 검사는 /tmp의 합성 패킷이며 실제 에디터 Extension Host 검증과 구분한다.

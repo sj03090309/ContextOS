@@ -128,8 +128,9 @@ public struct ObservedSession: Sendable, Equatable, Identifiable {
 public struct ConcurrentUsageSnapshot: Sendable, Equatable {
     public var widget: WidgetUsageSnapshot
     public var sessions: [ObservedSession]
-    public init(widget: WidgetUsageSnapshot = .init(), sessions: [ObservedSession] = []) {
-        self.widget = widget; self.sessions = sessions
+    public var aiExecution: AIExecutionSummary
+    public init(widget: WidgetUsageSnapshot = .init(), sessions: [ObservedSession] = [], aiExecution: AIExecutionSummary = .init()) {
+        self.widget = widget; self.sessions = sessions; self.aiExecution = aiExecution
     }
 }
 

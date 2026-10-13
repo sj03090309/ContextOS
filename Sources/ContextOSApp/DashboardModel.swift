@@ -416,6 +416,7 @@ final class DashboardModel: ObservableObject {
                 reader.snapshot(dailyBudget: budget)
             }.value
             concurrentUsage = usage
+            WorkTimeController.shared.updateAIExecution(usage.aiExecution)
             let apps = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
             usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
             shareMeasuredTime()
