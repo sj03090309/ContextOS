@@ -26,13 +26,20 @@ struct ConcurrentUsageSummary: View {
 
 struct UsageDetailRoot: View {
     @ObservedObject var model: DashboardModel
+    @StateObject private var workTime = WorkTimeController.shared
     @State private var budget = ""
     var body: some View {
+        TabView {
         ConcurrentUsageView(snapshot: model.concurrentUsage, appPresence: model.usageAppPresence,
             bridgeStatus: model.widgetBridgeStatus, budget: $budget,
             refresh: { model.refresh() }, saveBudget: { model.setDailyBudget(budget) })
+            .tabItem { Text("AI 사용량") }
+        WorkTimePanel(model: workTime).tabItem { Text("시간 측정") }
+        }
             .onAppear { budget = model.dailyTokenBudget.map(String.init) ?? ""; model.panelDidOpen() }
             .onDisappear { model.panelDidClose() }
+            .onChange(of: workTime.snapshot) { _, _ in model.shareMeasuredTime() }
+            .onChange(of: workTime.smallMetric) { _, _ in model.shareMeasuredTime(force: true) }
     }
 }
 

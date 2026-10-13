@@ -23,7 +23,8 @@ struct UsageTimelineProvider: TimelineProvider {
         calendar.timeZone = TimeZone(identifier: first.snapshot.timeZoneID) ?? .current
         let midnight = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
         let stale = max(now.addingTimeInterval(5 * 60), first.snapshot.generatedAt.addingTimeInterval(30 * 60 + 1))
-        let dates = Set([now, stale, midnight]).sorted()
+        let timeStale = first.snapshot.timing.map { max(now.addingTimeInterval(5 * 60), $0.generatedAt.addingTimeInterval(30 * 60 + 1)) }
+        let dates = Set([now, stale, midnight] + (timeStale.map { [$0] } ?? [])).sorted()
         completion(Timeline(entries: dates.map { UsageEntry(date: $0, snapshot: first.snapshot) },
                             policy: .after(now.addingTimeInterval(30 * 60))))
     }

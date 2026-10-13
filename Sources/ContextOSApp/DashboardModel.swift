@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import AppKit
 import ContextOSCore
 import ContextOSUsage
@@ -26,6 +27,26 @@ final class DashboardModel: ObservableObject {
     @Published var dailyTokenBudget: Int64? = UserDefaults.standard.object(forKey: "contextos.dailyTokenBudget") as? Int64
     private let concurrentReader = ConcurrentUsageReader()
     private var lastWidgetReload = Date.distantPast
+    private var lastMeasuredShare = Date.distantPast
+    private var timeSubscriptions = Set<AnyCancellable>()
+    private var lastTimeStates: [TimeObservationState] = []
+    private var queuedTokenRefresh: Timer?
+
+    func shareMeasuredTime(force: Bool = false, timing: WidgetTimeSnapshot? = nil, metric: SmallWidgetMetric? = nil) {
+        guard force || Date().timeIntervalSince(lastMeasuredShare) >= 60 else { return }
+        guard let container = WidgetSnapshotStore.container() else { return }
+        var payload = concurrentUsage.widget
+        payload.timing = timing ?? WorkTimeController.shared.snapshot
+        payload.smallMetric = metric ?? WorkTimeController.shared.smallMetric
+        do {
+            try WidgetSnapshotStore.write(payload, to: container)
+            lastMeasuredShare = Date(); widgetBridgeStatus = "집계 공유됨"
+            if Date().timeIntervalSince(lastWidgetReload) >= 15 * 60 {
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
+                lastWidgetReload = Date()
+            }
+        } catch { widgetBridgeStatus = "공유 저장 실패 · 이전 집계 유지" }
+    }
 
     func setDailyBudget(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
@@ -151,7 +172,10 @@ final class DashboardModel: ObservableObject {
         // A real MCP tool call wakes the log reader; protocol pings do not.
         activityObserver = center.addObserver(
             forName: UsageStore.activityNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.evaluateWorking() }
+            Task { @MainActor in
+                self?.evaluateWorking()
+                self?.queueTokenRefresh()
+            }
         }
 
         watchSessionLogs()
@@ -164,6 +188,32 @@ final class DashboardModel: ObservableObject {
             self?.refreshFast()
         }
         scheduleUsageRefresh()
+        WorkTimeController.shared.$snapshot.sink { [weak self] value in
+            guard let self else { return }
+            let states = [value.manualState, value.foregroundState]
+            let changed = states != self.lastTimeStates
+            self.lastTimeStates = states
+            self.shareMeasuredTime(force: changed, timing: value)
+        }.store(in: &timeSubscriptions)
+        WorkTimeController.shared.$smallMetric.sink { [weak self] value in
+            self?.shareMeasuredTime(force: true, metric: value)
+        }.store(in: &timeSubscriptions)
+    }
+
+    /// Coalesce existing log-write notifications; keep the slow timer as a
+    /// recovery path. This is not a promise of a fixed physical-display latency.
+    private func queueTokenRefresh() {
+        guard queuedTokenRefresh == nil else { return }
+        let delay: TimeInterval = panelOpen ? 0.2 : 2
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.queuedTokenRefresh = nil
+                self.refreshSlow(includeWeek: false, priority: self.panelOpen ? .userInitiated : .utility)
+            }
+        }
+        queuedTokenRefresh = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     deinit {
@@ -269,7 +319,10 @@ final class DashboardModel: ObservableObject {
             }
             if lost { monitor.rescan() }
             guard wrote || lost else { return }
-            Task { @MainActor in self?.evaluateWorking() }
+            Task { @MainActor in
+                self?.evaluateWorking()
+                self?.queueTokenRefresh()
+            }
         }
         if stream.start() {
             logEvents = stream
@@ -365,16 +418,7 @@ final class DashboardModel: ObservableObject {
             concurrentUsage = usage
             let apps = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
             usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
-            if let container = WidgetSnapshotStore.container() {
-                do {
-                    try WidgetSnapshotStore.write(usage.widget, to: container)
-                    widgetBridgeStatus = "집계 공유됨"
-                    if Date().timeIntervalSince(lastWidgetReload) >= 15 * 60 {
-                        WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
-                        lastWidgetReload = Date()
-                    }
-                } catch { widgetBridgeStatus = "공유 저장 실패 · 이전 집계 유지" }
-            }
+            shareMeasuredTime()
             let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
             usageRefreshInFlight = false
             update(\.aiTokens, a.aiTokens)

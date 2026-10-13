@@ -15,7 +15,7 @@
 - VS Code: [Extension API](https://code.visualstudio.com/api/references/vscode-api)의 workspace.onDidChangeTextDocument와 window.onDidChangeWindowState. 문서 변경 콜백은 dirty 상태 등에서도 발생하므로 내용 변경 배열이 비어 있지 않은 경우만 횟수로 세는 후보이다. text/uri/전체 창 제목을 읽거나 저장하지 않는다. focused는 창 포커스이며, active는 에디터가 제공하는 최근 활동 상태여서 실제 편집시간으로 사용하지 않는다. 확장 설치 승인이 필요하다.
 - JetBrains: [Documents SDK](https://plugins.jetbrains.com/docs/intellij/documents.html)의 Document.addDocumentListener / EditorFactory.getEventMulticaster().addDocumentListener. 콜백 발생만 집계하고 Document 원문·파일 경로를 취득하지 않는다. 사람/AI 분류를 보장하지 않는다. 플러그인 설치·대상 제품/버전 검토가 필요하다.
 - Xcode: [XcodeKit](https://developer.apple.com/documentation/xcodekit)은 소스 편집기 커맨드와 텍스트 버퍼 API를 제공한다. 일반 편집 이벤트를 지속 관측하는 지원 API는 이번 조사에서 확인하지 못했다. 현재 최소 범위는 명시적 타이머와 전경 체류이며, 타이핑 시간을 지원한다고 주장하지 않는다. 소스 버퍼 읽기는 요구 범위 밖이다.
-- macOS 전경: [NSWorkspace.didActivateApplicationNotification](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)의 앱 활성화 알림을 후보로 사용한다. API 알림 수신 시각은 실제 편집 동작의 시작 시각이 아니다. bundle ID 허용 목록만 취급하며 창 제목·키 내용·경로를 수집하지 않는다. 후보 코어에서는 이 관측기도 아직 활성화하지 않았다.
+- macOS 전경: [NSWorkspace.didActivateApplicationNotification](https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification)의 앱 활성화 알림을 후보로 사용한다. API 알림 수신 시각은 실제 편집 동작의 시작 시각이 아니다. bundle ID 허용 목록만 취급하며 창 제목·키 내용·경로를 수집하지 않는다. 현재 후보는 사용자가 전경 관측을 켠 경우에만 이 API를 연결한다. 실제 앱 전환 전달 지연은 화면 검증이 남아 있다.
 - 위젯: [Keeping a widget up to date](https://developer.apple.com/documentation/widgetkit/keeping-a-widget-up-to-date). OS가 갱신 시점을 결정한다. 타이머가 중단됐는데도 위젯이 임의로 시간을 계속 늘리는 표현을 피하고, 마지막 확인된 값·시각을 공유한다. 무제한 reload를 하지 않는다.
 
 ## 작성된 격리 코어
@@ -28,7 +28,7 @@ Sources/ContextOSUsage/MeasuredTimeLedger.swift:
 - 파일·키보드·에디터·네트워크 접근이나 저장 기능은 없다.
 - 신규 경계 검사 6개 통과. 동시 구간 중복, 빈 간격, 종류 분리, 중단·재시작, 재생 이벤트/0, 시계 역전·메모리 한도를 검사했다.
 
-이 코어는 후보이며 대시보드/위젯에 연결하거나 실제 코딩 시간을 수집한 상태가 아니다. AI 과거 로그의 UTC 시각을 단조 시계 tick으로 임의 변환하지 않는다. 어댑터별 시계 domain과 일자 귀속은 다음 단계에서 따로 검증해야 한다.
+이 코어는 아래 격리 후보의 시간 UI와 선택형 위젯 payload에 연결됐다. 실제 자동 코딩 시간 수집이 완료됐다는 뜻은 아니다. AI 과거 로그의 UTC 시각을 단조 시계 tick으로 임의 변환하지 않는다. 어댑터별 시계 domain과 일자 귀속은 다음 단계에서 따로 검증해야 한다.
 
 ## 최소 구현 순서와 필요한 승인
 1. 앱의 명시적 시작/일시정지 타이머 및 집계 UI. ‘작업 타이머’로 표시하고 관측 없음·부분 관측 상태를 보존한다.
@@ -39,7 +39,7 @@ Sources/ContextOSUsage/MeasuredTimeLedger.swift:
 
 접근성·입력 모니터링 권한, 지속 에디터 확장 접근, 새 폴더/계정 권한은 이 단계에서 허용된 것으로 간주하지 않는다. 설치본 교체는 시안/권한 검토 후 진행한다.
 
-## 현재 성능 구조와 확인된 개선 대상
+## 후보 수정 전 조사한 성능 구조
 - ConcurrentUsageReader는 inode·mtime·size·파일 offset과 이벤트 중복 처리를 이미 갖고 있다.
 - 대시보드 기존 타이머는 열림 32초, 닫힘 10분이다. 새 AI 로그 감지는 아직 순수 이벤트 기반이 아니다. 이 간격은 코드 설정이며 실측 표시 지연이 아니다.
 - LineReader chunk는 256 KiB이나, 한 개의 매우 긴/미완성 줄의 pending buffer에는 하드 상한이 없다.
@@ -56,4 +56,26 @@ Sources/ContextOSUsage/MeasuredTimeLedger.swift:
 | 큰 로그 | cold/warm 시간, 긴 단일 줄과 이벤트 history의 메모리 상한 |
 | 회전/교체 | inode 변화, 불완전 줄, replay 중복, 재시작 후 미관측 경계 |
 
-변경 후보는 파일 이벤트·증분 bucket 집계·짧은 병합 갱신·화면 비활성 감속·상한 있는 캐시다. 큐 지연과 실제 화면 표시 지연을 구분한다. WidgetKit OS 지연은 별도 기록한다. 이번 1단계에서는 이 시나리오들의 CPU/RSS/디스크/표시 지연을 아직 측정하지 않았으며 수치 목표나 개선률을 보장하지 않는다.
+변경 후보는 파일 이벤트·증분 bucket 집계·짧은 병합 갱신·화면 비활성 감속·상한 있는 캐시다. 큐 지연과 실제 화면 표시 지연을 구분한다. WidgetKit OS 지연은 별도 기록한다. 아래 결과는 수집기 CPU/RSS/디스크 후보 측정이다. 앱 표시·물리 화면·WidgetKit 지연은 아직 미측정이며 수치 목표나 개선률을 보장하지 않는다.
+
+
+## 2026-10-13 UI·성능 후보 결과
+- WorkTimeController / WorkTimePanel: 작업 타이머 시작·일시정지·초기화, 사용자가 켠 전경 에디터 체류, 관측 경계 안내. 앱 시작 시 두 관측 모두 꺼져 있다. 창 제목·문서·키보드·파일 경로를 읽지 않는다.
+- 시간은 이 프로세스의 관측 구간이다. 하루 코딩 시간이나 영구 이력으로 표시하지 않는다. 절전·세션 비활성·일자/시간대 변경·시계 불일치에서 열린 구간을 폐기하고 자동 재개하지 않는다.
+- 작은 위젯 선택: 오늘 토큰 / 작업 타이머 / 전경 에디터 체류. 시간은 마지막 집계 값과 관측 시각을 표시하며 WidgetKit이 실시간 갱신한다는 약속은 없다. 중간·큰 위젯은 기존 토큰 구성을 유지한다.
+- 앱 화면이 활성일 때 관측 checkpoint는 1초, 비활성일 때는 60초이며 관측 대상이 없으면 타이머가 없다. 공유 저장은 일반 갱신 60초 간격, 상태·선택 변경은 별도 반영하며 WidgetKit reload는 15분으로 제한한다.
+- 이미 존재하는 로그 쓰기 알림을 앱 화면 열림 0.2초 / 닫힘 2초 큐로 합친다. 이 설정은 실제 화면 표시 지연 실측이 아니다. 기존 복구용 주기 갱신도 유지한다.
+- 수집기: 변경 없는 집계 메모, 긴 줄 2 MiB / 호출당 읽기 4 MiB, 제공자당 탐색 4096항목·최신 128파일, 파일당 4096 / 전체 20000 metric 상한. 손실·잘린 범위는 partial로 표시한다. 기존 다른 수집기 전체가 상한 구조로 바뀐 것은 아니다.
+
+### 검증과 한계
+- 시간 코어·수집기·통합 3개 suite의 27개 검사가 통과했다. nil/0, 중복 구간, 중단, 캐시 상태 노화, append, 긴 줄·읽기 상한, 최신 파일 선택·partial을 포함한다.
+- WidgetKit 확장 및 앱 Debug 빌드 성공. 합성 시안 54개를 렌더링했고 시간 작은 위젯 라이트·다크와 미관측 시안을 확인했다.
+- 성능 근거: artifacts/usage-baseline.json, usage-improved-final.json, usage-performance-comparison.json. 같은 Mac의 합성 데이터 수집기 Debug 단일 실행이며 전체 GUI 프로세스 측정이 아니다. cold 시나리오에는 fixture 생성 비용이 포함된다.
+- 큰 로그 변경 없는 5회 읽기: wall 82.219→4.068 ms, CPU 75.710→4.030 ms. RSS 약 30 MB로 거의 같았다. 작은 로그 5회는 wall 2.621→5.649 ms로 악화됐다. 모든 시나리오의 개선이나 메모리 최소화를 보장하지 않는다.
+- 별도 com.contextos.timecandidate 앱을 artifacts/time-candidate-inspection 안에 만들었다. App Group·위젯 확장·설치 기능이 없는 격리 UI 후보다. 운영 앱과 기존 설치된 Review 앱은 교체하지 않았다.
+- 마지막 GUI 시도에서 Mac 잠금이 확인됐다. 실제 타이머 버튼·전경 전환·AppKit draw 진단·물리 화면 표시 지연은 확인하지 못했다. 최신 시간/뭉치 디자인은 설치 위젯에 적용되지 않았다. 이전 설치 위젯의 합성 공유 파일 읽기 확인과 새 시간 기능 검증을 구분한다.
+
+### 추가 승인이 필요한 범위
+현재 후보에는 에디터 확장 설치나 새로운 시스템 권한이 필요하지 않다. 지속 편집 이벤트를 연결하려면 ContextOS Observation Bridge 로컬 VSIX(우선 VS Code/Insiders)의 설치 승인이 별도로 필요하다. 제안 payload는 버전·정적 editorKind·focus/editCount·sequence·restart nonce이며 중앙 앱이 수신 시각을 기록한다. text/URI/제목/키 입력은 읽거나 저장하지 않는다. 같은 사용자 Unix socket, 작은 패킷 상한, 재시작·공백 상태, 7일 집계/256 KiB 상한은 설계안이며 아직 구현·설치하지 않았다. JetBrains는 제품·버전 선택 이후 별도 검토한다. 접근성·입력 모니터링 권한을 요청하지 않는다. AI 실행 시간 연결도 별도 미완료다.
+
+부모가 알려 준 대기 승인 manager:1a69882170d447c9807fdbf51ae28c9f:1의 정확한 대상 동작은 로컬 실행 결과에 제공되지 않았다. 이 승인과 관련된 설치·권한·설정 동작은 진행하지 않는다.

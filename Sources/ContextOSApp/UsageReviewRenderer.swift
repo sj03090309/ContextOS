@@ -19,7 +19,12 @@ enum UsageReviewRenderer {
         large.days[6].tokens = Int64.max
         large.models = [.init(String(repeating: "very-long-model-name-", count: 5), .max), .init("Second model", 4_500_000_000), .init("Third model", 1_300_000)]
         large.agents = [.init(String(repeating: "very-long-ai-name-", count: 5), .max), .init("Second AI", 4_500_000_000), .init("Third AI", 1_300_000)]
-        return [("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large)]
+        var timer = sample
+        timer.smallMetric = .workTimer
+        timer.timing = .init(generatedAt: now, manualNanoseconds: 5_432_000_000_000, manualState: .paused, isSample: true)
+        var unobserved = sample; unobserved.smallMetric = .editorForeground
+        unobserved.timing = .init(generatedAt: now, isSample: true)
+        return [("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large), ("timer", timer), ("time-unobserved", unobserved)]
     }
     static func render(to directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

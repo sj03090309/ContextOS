@@ -64,6 +64,8 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
     public var providers: [UsageProvider]
     public var dailyBudget: Int64?
     public var isSample: Bool
+    public var timing: WidgetTimeSnapshot?
+    public var smallMetric: SmallWidgetMetric?
 
     public init(generatedAt: Date = Date(), timeZoneID: String = TimeZone.current.identifier,
                 days: [UsageDay] = [], models: [UsageRank] = [], agents: [UsageRank] = [],

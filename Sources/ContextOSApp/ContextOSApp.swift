@@ -50,11 +50,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         showUsage()
     }
     private var isUsageReview: Bool {
-        Bundle.main.bundleIdentifier == "com.contextos.review" || ProcessInfo.processInfo.arguments.contains("--usage-review")
+        Bundle.main.bundleIdentifier == "com.contextos.review" || Bundle.main.bundleIdentifier == "com.contextos.timecandidate"
+            || ProcessInfo.processInfo.arguments.contains("--usage-review")
+    }
+    private var reviewTitle: String {
+        Bundle.main.bundleIdentifier == "com.contextos.timecandidate" ? "ContextOS · 시간 후보" : "ContextOS Review · 합성 데이터"
     }
     private func showUsage() {
         if isUsageReview {
-            usageWindow.show(UsageReviewRoot(), title: "ContextOS Review · 합성 데이터")
+            usageWindow.show(UsageReviewRoot(), title: reviewTitle)
         } else {
             usageWindow.show(UsageDetailRoot(model: model), title: "ContextOS · AI 사용 현황")
         }
@@ -78,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
                 NSApp.terminate(nil)
                 return
             }
-            usageWindow.show(UsageReviewRoot(), title: "ContextOS Review · 합성 데이터")
+            usageWindow.show(UsageReviewRoot(), title: reviewTitle)
             hideLifecycleWindow()
             return
         }

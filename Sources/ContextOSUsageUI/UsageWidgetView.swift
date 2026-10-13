@@ -48,8 +48,15 @@ public struct UsageWidgetView: View {
         VStack(alignment: .leading, spacing: size == .medium && snapshot.agents.count >= 3 ? 4 : 12) {
             switch size {
             case .small:
-                title(old ? "마지막 집계 토큰" : "오늘 토큰", branded: true)
-                number(snapshot.today, points: 36)
+                if let metric = snapshot.smallMetric, metric != .tokens {
+                    title(metric.label, branded: true)
+                    Text(WidgetTimeSnapshot.duration(metric == .workTimer ? snapshot.timing?.manualNanoseconds : snapshot.timing?.foregroundNanoseconds))
+                        .font(.system(size: 30, weight: .semibold)).monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                } else {
+                    title(old ? "마지막 집계 토큰" : "오늘 토큰", branded: true)
+                    number(snapshot.today, points: 36)
+                }
             case .medium:
                 title(old ? "AI 토큰 · 이전 집계" : "오늘 AI 토큰", branded: true)
                 if snapshot.agents.isEmpty { empty }
@@ -138,6 +145,23 @@ public struct UsageWidgetView: View {
         }
     }
     private var footer: some View {
+        if size == .small, let metric = snapshot.smallMetric, metric != .tokens {
+            return AnyView(timeFooter(metric))
+        }
+        return AnyView(tokenFooter)
+    }
+    private func timeFooter(_ metric: SmallWidgetMetric) -> some View {
+        let timing = snapshot.timing
+        let state = metric == .workTimer ? timing?.manualState : timing?.foregroundState
+        let stamp = timing?.generatedAt ?? snapshot.generatedAt
+        let label = timing?.stale(at: now) == true ? "오래됨" : state == .running ? "최근 관측" : state?.label ?? "관측 안 됨"
+        return HStack(spacing: 4) {
+            Text((timing?.isSample == true ? "합성 · " : "") + label).lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 2)
+            Text(stamp, format: .dateTime.hour().minute()).lineLimit(1).minimumScaleFactor(0.8)
+        }.font(.system(size: 9)).foregroundStyle(muted)
+    }
+    private var tokenFooter: some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             Text(status).lineLimit(1).minimumScaleFactor(0.8)
             Spacer(minLength: 2)
