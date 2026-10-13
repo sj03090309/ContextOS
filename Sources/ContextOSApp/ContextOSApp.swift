@@ -75,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             if let index = args.firstIndex(of: "--usage-render-dir"), args.indices.contains(index + 1) {
                 do { try UsageReviewRenderer.render(to: URL(fileURLWithPath: args[index + 1])) }
                 catch { NSLog("Usage review rendering failed: %@", error.localizedDescription) }
+                NSApp.terminate(nil)
+                return
             }
             usageWindow.show(UsageReviewRoot(), title: "ContextOS Review · 합성 데이터")
             hideLifecycleWindow()

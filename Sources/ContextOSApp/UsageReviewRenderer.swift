@@ -11,14 +11,14 @@ enum UsageReviewRenderer {
         empty.days = empty.days.map { .init(date: $0.date, tokens: nil) }
         empty.agents = []; empty.models = []; empty.projects = []; empty.dailyBudget = nil
         empty.providers = [.init(name: "Codex", state: .noRecords)]
-        var unsupported = empty; unsupported.isSample = false; unsupported.providers = [.init(name: "Other AI", state: .unsupported)]
+        var unsupported = empty; unsupported.providers = [.init(name: "Other AI", state: .unsupported)]
         var zero = empty; zero.days[6].tokens = 0; zero.days[5].tokens = 0
         var stale = sample; stale.generatedAt = now.addingTimeInterval(-3700)
         var disconnected = sample; disconnected.providers = [.init(name: "Codex", state: .unavailable)]
-        disconnected.isSample = false
         var large = sample
         large.days[6].tokens = Int64.max
         large.models = [.init(String(repeating: "very-long-model-name-", count: 5), .max), .init("Second model", 4_500_000_000), .init("Third model", 1_300_000)]
+        large.agents = [.init(String(repeating: "very-long-ai-name-", count: 5), .max), .init("Second AI", 4_500_000_000), .init("Third AI", 1_300_000)]
         return [("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large)]
     }
     static func render(to directory: URL) throws {
