@@ -12,7 +12,7 @@ xml = '''<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
 <Metadata><Identity Language="en-US" Id="observation-bridge" Version="0.1.0" Publisher="contextos"/>
 <DisplayName>ContextOS Observation Bridge (Local Candidate)</DisplayName>
-<Description xml:space="preserve">Local opt-in callback counts; no coding-time inference.</Description>
+<Description xml:space="preserve">Local automatic activity estimate with a declared five-minute idle rule.</Description>
 <Tags>local</Tags><Categories>Other</Categories>
 <Properties><Property Id="Microsoft.VisualStudio.Code.Engine" Value="^1.95.0"/>
 <Property Id="Microsoft.VisualStudio.Code.ExtensionKind" Value="ui"/>
@@ -24,7 +24,7 @@ xml = '''<?xml version="1.0" encoding="utf-8"?>
 content = '''<?xml version="1.0" encoding="utf-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="json" ContentType="application/json"/><Default Extension="js" ContentType="application/javascript"/><Default Extension="md" ContentType="text/markdown"/><Default Extension="vsixmanifest" ContentType="text/xml"/><Default Extension="xml" ContentType="text/xml"/><Override PartName="/extension/LICENSE" ContentType="text/plain"/></Types>'''
 out.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(out, 'x', zipfile.ZIP_DEFLATED) as z:
-    z.writestr('extension.vsixmanifest', xml); z.writestr('[Content_Types].xml', content)
+    z.writestr('extension.vsixmanifest', xml.replace('Version="0.1.0"', 'Version="'+manifest['version']+'"')); z.writestr('[Content_Types].xml', content)
     for name in ['package.json', 'extension.js', 'protocol.js', 'README.md', 'LICENSE']:
         z.write(source/name, 'extension/'+name)
 with zipfile.ZipFile(out) as z:

@@ -30,6 +30,7 @@ final class DashboardModel: ObservableObject {
     private var lastMeasuredShare = Date.distantPast
     private var timeSubscriptions = Set<AnyCancellable>()
     private var lastTimeStates: [TimeObservationState] = []
+    private var lastActivityPhase: EstimatedActivitySnapshot.Phase?
     private var queuedTokenRefresh: Timer?
 
     func shareMeasuredTime(force: Bool = false, timing: WidgetTimeSnapshot? = nil, metric: SmallWidgetMetric? = nil) {
@@ -191,8 +192,8 @@ final class DashboardModel: ObservableObject {
         WorkTimeController.shared.$snapshot.sink { [weak self] value in
             guard let self else { return }
             let states = [value.manualState, value.foregroundState]
-            let changed = states != self.lastTimeStates
-            self.lastTimeStates = states
+            let changed = states != self.lastTimeStates || value.activity?.phase != self.lastActivityPhase
+            self.lastTimeStates = states; self.lastActivityPhase = value.activity?.phase
             self.shareMeasuredTime(force: changed, timing: value)
         }.store(in: &timeSubscriptions)
         WorkTimeController.shared.$smallMetric.sink { [weak self] value in

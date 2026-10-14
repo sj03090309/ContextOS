@@ -1,9 +1,10 @@
 import Foundation
 import Darwin
 import CoreFoundation
+import ContextOSUsage
 
 public struct ObservationPacket: Decodable, Sendable {
-    public enum Kind: String, Decodable, Sendable { case focus, edits, heartbeat, gap }
+    public enum Kind: String, Decodable, Sendable { case focus, edits, activity, heartbeat, gap }
     public var version: Int
     public var editor: String
     public var nonce: String
@@ -11,26 +12,30 @@ public struct ObservationPacket: Decodable, Sendable {
     public var kind: Kind
     public var focused: Bool?
     public var count: Int?
+    public var activity: String?
     public static func decode(_ data: Data) throws -> Self {
         guard data.count <= 1024, let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let kind = object["kind"] as? String else { throw BridgeError.invalidPacket }
-        let keys = Set(["version", "editor", "nonce", "sequence", "kind"] + (kind == "focus" ? ["focused"] : kind == "edits" ? ["count"] : []))
+        let v2 = (object["version"] as? NSNumber)?.intValue == 2
+        let extra = kind == "focus" ? ["focused"] : kind == "edits" ? (v2 ? ["count","focused"] : ["count"]) : kind == "activity" && v2 ? ["activity","focused"] : []
+        let keys = Set(["version", "editor", "nonce", "sequence", "kind"] + extra)
         guard Set(object.keys) == keys else { throw BridgeError.invalidPacket }
         for name in ["version", "sequence"] + (kind == "edits" ? ["count"] : []) {
             guard let value = object[name] as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { throw BridgeError.invalidPacket }
         }
-        if kind == "focus" {
+        if kind == "focus" || (v2 && ["edits","activity"].contains(kind)) {
             guard let value = object["focused"] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() else { throw BridgeError.invalidPacket }
         }
         let packet = try JSONDecoder().decode(Self.self, from: data)
-        guard packet.version == 1, ["vscode", "vscode-insiders"].contains(packet.editor),
+        guard [1,2].contains(packet.version), ["vscode", "vscode-insiders"].contains(packet.editor),
               UUID(uuidString: packet.nonce) != nil, packet.sequence > 0, packet.sequence <= Int32.max,
-              packet.kind != .edits || (1...256).contains(packet.count ?? 0) else { throw BridgeError.invalidPacket }
+              packet.kind != .edits || (1...256).contains(packet.count ?? 0),
+              packet.kind != .activity || (packet.version == 2 && ["selection","scroll"].contains(packet.activity ?? "")) else { throw BridgeError.invalidPacket }
         return packet
     }
 }
 public enum BridgeError: Error { case invalidPacket, unsafeLocation, socketFailure }
-public enum ObservationBridgeEvent: Sendable { case packet(ObservationPacket), disconnected, failed }
+public enum ObservationBridgeEvent: Sendable { case packet(ObservationPacket), disconnected(String?), failed }
 
 /// In-memory counts only. Nonce/sequence/focus are never converted into time.
 public struct ObservationBridgeLedger: Sendable {
@@ -54,7 +59,7 @@ public struct ObservationBridgeLedger: Sendable {
             let (sum, overflow) = (editCount ?? 0).addingReportingOverflow(UInt64(packet.count ?? 0))
             editCount = overflow ? .max : sum; partial = partial || overflow
         case .gap: partial = true
-        case .heartbeat: break
+        case .activity, .heartbeat: break
         }
     }
     public mutating func disconnect() { focused = nil; partial = true; nonce = nil; sequence = 0 }
@@ -70,6 +75,7 @@ public final class ObservationBridgeServer: @unchecked Sendable {
         var buffer = Data()
         var windowStart = DispatchTime.now().uptimeNanoseconds
         var packetCount = 0
+        var nonce: String?
         init(_ fd: Int32) { self.fd = fd }
     }
     private let queue = DispatchQueue(label: "contextos.observation-bridge", qos: .utility)
@@ -81,6 +87,18 @@ public final class ObservationBridgeServer: @unchecked Sendable {
     private var ownedInode: ino_t?
     public init(callback: @escaping @Sendable (ObservationBridgeEvent) -> Void) { self.callback = callback }
     public func start(directory: URL) { queue.async { self.open(directory) } }
+    public func publish(_ snapshot: EstimatedActivitySnapshot) {
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        guard var bytes = try? encoder.encode(snapshot), bytes.count <= 1024 else { return }
+        bytes.append(10)
+        let frame = bytes
+        queue.async {
+            for fd in Array(self.clients.keys) {
+                let n = frame.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
+                if n != frame.count { self.drop(fd) } // Bound output; never buffer a backlog.
+            }
+        }
+    }
     public func stop() { queue.async { self.shutdown() } }
     /// App termination cleanup; callbacks never synchronously wait for the main queue.
     public func stopSynchronously() { queue.sync { self.shutdown() } }
@@ -119,12 +137,14 @@ public final class ObservationBridgeServer: @unchecked Sendable {
             let fd = accept(socketFD, nil, nil)
             guard fd >= 0 else { break }
             var uid: uid_t = 0, gid: gid_t = 0
-            guard clients.isEmpty, getpeereid(fd, &uid, &gid) == 0, uid == getuid(),
+            guard clients.count < 4, getpeereid(fd, &uid, &gid) == 0, uid == getuid(),
                   fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { close(fd); continue }
+            var one: Int32 = 1
+            _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             let client = Client(fd); clients[fd] = client
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
             client.source = source; source.setEventHandler { [weak self] in self?.readClient(fd) }; source.resume()
-            resetTimeout(client, seconds: 180)
+            resetTimeout(client, seconds: 75)
         }
     }
     private func resetTimeout(_ client: Client, seconds: Int) {
@@ -151,16 +171,20 @@ public final class ObservationBridgeServer: @unchecked Sendable {
             guard client.packetCount <= 64 else { drop(fd); return }
             guard packets <= 4 else { drop(fd); return }
             let frame = client.buffer.prefix(upTo: newline)
-            do { callback(.packet(try ObservationPacket.decode(Data(frame)))) }
+            do {
+                let packet = try ObservationPacket.decode(Data(frame))
+                guard client.nonce == nil || client.nonce == packet.nonce else { drop(fd); return }
+                client.nonce = packet.nonce; callback(.packet(packet))
+            }
             catch { drop(fd); return }
             client.buffer.removeSubrange(...newline)
         }
         guard client.buffer.count <= 1024 else { drop(fd); return }
-        resetTimeout(client, seconds: client.buffer.isEmpty ? 180 : 5)
+        resetTimeout(client, seconds: client.buffer.isEmpty ? 75 : 5)
     }
     private func drop(_ fd: Int32) {
         guard let client = clients.removeValue(forKey: fd) else { return }
-        client.source?.cancel(); client.timer?.cancel(); close(fd); callback(.disconnected)
+        client.source?.cancel(); client.timer?.cancel(); close(fd); callback(.disconnected(client.nonce))
     }
     private func shutdown() {
         for fd in Array(clients.keys) { drop(fd) }

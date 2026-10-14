@@ -50,7 +50,7 @@ public struct UsageWidgetView: View {
             case .small:
                 if let metric = snapshot.smallMetric, metric != .tokens {
                     title(metric.label, branded: true)
-                    Text(WidgetTimeSnapshot.duration(metric == .workTimer ? snapshot.timing?.manualNanoseconds : snapshot.timing?.foregroundNanoseconds))
+                    Text(WidgetTimeSnapshot.duration(metric == .activity ? snapshot.timing?.activity?.estimatedNanoseconds : metric == .workTimer ? snapshot.timing?.manualNanoseconds : snapshot.timing?.foregroundNanoseconds))
                         .font(.system(size: 30, weight: .semibold)).monospacedDigit()
                         .lineLimit(1).minimumScaleFactor(0.7)
                 } else {
@@ -150,16 +150,24 @@ public struct UsageWidgetView: View {
         }
         return AnyView(tokenFooter)
     }
-    private func timeFooter(_ metric: SmallWidgetMetric) -> some View {
+    private func timeFooter(_ metric: SmallWidgetMetric) -> AnyView {
         let timing = snapshot.timing
+        if metric == .activity {
+            let activity = timing?.activity
+            let label = activity.map { $0.stale(at: now) ? "이전 집계 · 추정" : $0.phase == .paused ? ($0.partial ? "정지 · 일부 누락" : "자동 일시정지") : $0.partial ? "일부 누락 · 추정" : "활동 추정 · 최근 집계" } ?? "확장 연결 필요"
+            return AnyView(VStack(alignment: .leading, spacing: 3) {
+                Text((timing?.isSample == true ? "합성 · " : "") + label).lineLimit(1).minimumScaleFactor(0.8)
+                Text(activity?.generatedAt ?? snapshot.generatedAt, style: .time)
+            }.font(.system(size: 10)).foregroundStyle(muted))
+        }
         let state = metric == .workTimer ? timing?.manualState : timing?.foregroundState
         let stamp = timing?.generatedAt ?? snapshot.generatedAt
         let label = timing?.stale(at: now) == true ? "오래됨" : state == .running ? "최근 관측" : state?.label ?? "관측 안 됨"
-        return HStack(spacing: 4) {
+        return AnyView(HStack(spacing: 4) {
             Text((timing?.isSample == true ? "합성 · " : "") + label).lineLimit(1).minimumScaleFactor(0.8)
             Spacer(minLength: 2)
             Text(stamp, format: .dateTime.hour().minute()).lineLimit(1).minimumScaleFactor(0.8)
-        }.font(.system(size: 9)).foregroundStyle(muted)
+        }.font(.system(size: 9)).foregroundStyle(muted))
     }
     private var tokenFooter: some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {

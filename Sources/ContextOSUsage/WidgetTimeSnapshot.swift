@@ -1,10 +1,11 @@
 import Foundation
 
 public enum SmallWidgetMetric: String, Codable, CaseIterable, Sendable {
-    case tokens, workTimer, editorForeground
+    case tokens, activity, workTimer, editorForeground
     public var label: String {
         switch self {
         case .tokens: "오늘 토큰"
+        case .activity: "오늘 활동 · 추정"
         case .workTimer: "작업 타이머"
         case .editorForeground: "전경 에디터 체류"
         }
@@ -34,14 +35,15 @@ public struct WidgetTimeSnapshot: Codable, Sendable, Equatable {
     public var foregroundNanoseconds: UInt64?
     public var manualState: TimeObservationState
     public var foregroundState: TimeObservationState
+    public var activity: EstimatedActivitySnapshot?
     public var isSample: Bool
     public init(generatedAt: Date = Date(), timeZoneID: String = TimeZone.current.identifier,
                 manualNanoseconds: UInt64? = nil, foregroundNanoseconds: UInt64? = nil,
                 manualState: TimeObservationState = .notObserved,
-                foregroundState: TimeObservationState = .notObserved, isSample: Bool = false) {
+                foregroundState: TimeObservationState = .notObserved, isSample: Bool = false, activity: EstimatedActivitySnapshot? = nil) {
         self.generatedAt = generatedAt; self.timeZoneID = timeZoneID
         self.manualNanoseconds = manualNanoseconds; self.foregroundNanoseconds = foregroundNanoseconds
-        self.manualState = manualState; self.foregroundState = foregroundState; self.isSample = isSample
+        self.manualState = manualState; self.foregroundState = foregroundState; self.isSample = isSample; self.activity = activity
     }
     public func stale(at now: Date) -> Bool {
         now.timeIntervalSince(generatedAt) > 30 * 60 || generatedAt > now.addingTimeInterval(300)

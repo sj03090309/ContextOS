@@ -39,6 +39,7 @@ struct UsageReviewRoot: View {
             .onChange(of: workTime.smallMetric) { _, _ in publishSample() }
             .onChange(of: workTime.snapshot.manualState) { _, _ in publishSample() }
             .onChange(of: workTime.snapshot.foregroundState) { _, _ in publishSample() }
+            .onChange(of: workTime.snapshot.activity?.phase) { _, _ in publishSample() }
     }
     /// The isolated review app shares fixtures only. Real log collectors remain
     /// confined to the normal host app; review mode never creates DashboardModel.

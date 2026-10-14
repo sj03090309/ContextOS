@@ -13,7 +13,7 @@ final class WorkTimeController: ObservableObject {
     @Published private(set) var foregroundEnabled = false
     @Published private(set) var editorLabel: String?
     @Published private(set) var boundaryReason: String?
-    @Published var smallMetric: SmallWidgetMetric = SmallWidgetMetric(rawValue: UserDefaults.standard.string(forKey: "contextos.smallWidgetMetric") ?? "") ?? .tokens {
+    @Published var smallMetric: SmallWidgetMetric = SmallWidgetMetric(rawValue: UserDefaults.standard.string(forKey: "contextos.smallWidgetMetric") ?? "") ?? .activity {
         didSet { UserDefaults.standard.set(smallMetric.rawValue, forKey: "contextos.smallWidgetMetric") }
     }
     @Published private(set) var aiExecution: AIExecutionSummary?
@@ -21,13 +21,58 @@ final class WorkTimeController: ObservableObject {
     @Published private(set) var bridgeStatus = "확장 미연결"
     @Published private(set) var bridgeEditCount: UInt64?
     @Published private(set) var bridgeFocused: Bool?
-    private var bridgeLedger = ObservationBridgeLedger()
+    @Published private(set) var estimatedActivity = EstimatedActivitySnapshot()
+    @Published private(set) var activityStoreStatus: String?
+    private var activityLedger = EstimatedActivityLedger()
+    private var activityTimer: Timer?
+    private var lastActivityStore = Date.distantPast
+    private var lastActivityPhase = EstimatedActivitySnapshot.Phase.notObserved
+    private var activityFile: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ContextOS Observation Candidate/activity-day-v1.json")
+    }
+    private func activityPoint(_ body: (inout EstimatedActivityLedger, UInt64, Date) -> Void) {
+        let wall = Date(), tick = DispatchTime.now().uptimeNanoseconds
+        body(&activityLedger, tick, wall)
+        publishActivity()
+    }
+    private func publishActivity() {
+        estimatedActivity = activityLedger.snapshot
+        publish() // One snapshot shared by dashboard, widget writer and editor clients.
+        bridgeServer?.publish(estimatedActivity)
+        if bridgeEnabled && (Date().timeIntervalSince(lastActivityStore) >= 60 || lastActivityPhase != estimatedActivity.phase) {
+            do { try EstimatedActivityStore.write(estimatedActivity, to: activityFile); lastActivityStore = Date(); activityStoreStatus = nil }
+            catch { activityStoreStatus = "오늘 집계 저장 실패 · 메모리 값만 표시" }
+        }
+        lastActivityPhase = estimatedActivity.phase
+        activityTimer?.invalidate(); activityTimer = nil
+        if bridgeEnabled && estimatedActivity.phase == .active {
+            activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.activityPoint { ledger, tick, wall in ledger.advance(tick: tick, wall: wall, timeZone: .current) } }
+            }
+            activityTimer?.tolerance = 0.1
+        }
+    }
+    private func suspendAutomaticActivity() {
+        activityPoint { ledger, tick, wall in ledger.interrupt(tick: tick, wall: wall, timeZone: .current) }
+    }
+    private var bridgeLedgers: [String: ObservationBridgeLedger] = [:]
+    private var closedEditCount: UInt64?
     private var bridgeServer: ObservationBridgeServer?
+    init() {
+        // Only a prior explicit host opt-in restores receiver startup. Fresh
+        // candidates remain off; never infer consent from an installed VSIX.
+        if UserDefaults.standard.bool(forKey: "contextos.automaticActivityReceiverEnabled") {
+            Task { @MainActor [weak self] in self?.setBridgeEnabled(true) }
+        }
+    }
     func updateAIExecution(_ value: AIExecutionSummary) { aiExecution = value }
     func setBridgeEnabled(_ enabled: Bool) {
         guard enabled != bridgeEnabled else { return }
         bridgeEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: "contextos.automaticActivityReceiverEnabled")
         if enabled {
+            if let stored = try? EstimatedActivityStore.read(from: activityFile) { activityLedger.restore(stored, now: Date(), timeZone: .current) }
+            estimatedActivity = activityLedger.snapshot; publish()
             ensureBoundaries()
             bridgeStatus = "로컬 연결 대기 · 설치 승인 필요"
             let server = ObservationBridgeServer { [weak self] event in
@@ -35,14 +80,31 @@ final class WorkTimeController: ObservableObject {
                     guard let self, self.bridgeEnabled else { return }
                     switch event {
                     case .packet(let packet):
-                        self.bridgeLedger.consume(packet)
-                        self.bridgeEditCount = self.bridgeLedger.editCount
-                        self.bridgeFocused = self.bridgeLedger.focused
-                        self.bridgeStatus = self.bridgeLedger.partial ? "일부 관측 · 누락 있음" : "연결됨 · 콜백 횟수 관측"
-                    case .disconnected:
-                        self.bridgeLedger.disconnect(); self.bridgeFocused = nil; self.bridgeStatus = "연결 끊김 · 일부 관측"
+                        if packet.version == 2 {
+                            let signal: EstimatedActivitySignal
+                            switch packet.kind {
+                            case .focus: signal = .focus(packet.focused == true)
+                            case .edits, .activity: signal = .activity(focused: packet.focused == true)
+                            case .heartbeat: signal = .heartbeat
+                            case .gap: signal = .gap
+                            }
+                            self.activityPoint { ledger, tick, wall in ledger.receive(id: packet.nonce, sequence: packet.sequence, signal: signal, tick: tick, wall: wall, timeZone: .current) }
+                        }
+                        var counter = self.bridgeLedgers[packet.nonce] ?? ObservationBridgeLedger()
+                        counter.consume(packet); self.bridgeLedgers[packet.nonce] = counter
+                        let counts = self.bridgeLedgers.values.compactMap(\.editCount) + (self.closedEditCount.map { [$0] } ?? [])
+                        self.bridgeEditCount = counts.isEmpty ? nil : counts.reduce(0) { sum, value in let (n,o) = sum.addingReportingOverflow(value); return o ? .max : n }
+                        self.bridgeFocused = self.bridgeLedgers.values.contains { $0.focused == true }
+                        self.bridgeStatus = packet.version == 1 ? "구형 확장 · 자동 활동 미지원" : "연결됨 · 자동 활동 추정"
+                    case .disconnected(let nonce):
+                        if let nonce { self.activityPoint { ledger, tick, wall in ledger.disconnect(id: nonce, tick: tick, wall: wall, timeZone: .current) } }
+                        if let nonce, let closed = self.bridgeLedgers.removeValue(forKey: nonce)?.editCount {
+                            let (n,o) = (self.closedEditCount ?? 0).addingReportingOverflow(closed); self.closedEditCount = o ? .max : n
+                        }
+                        self.bridgeFocused = nil; self.bridgeStatus = "일부 연결 끊김 · 마지막 집계 유지"
                     case .failed:
                         self.bridgeStatus = "수신 시작 실패 · 기존 경로 보존"; self.bridgeEnabled = false
+                        UserDefaults.standard.set(false, forKey: "contextos.automaticActivityReceiverEnabled")
                         self.bridgeServer = nil; self.releaseUnusedBoundaries()
                     }
                 }
@@ -51,7 +113,10 @@ final class WorkTimeController: ObservableObject {
             let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ContextOS Observation Candidate", isDirectory: true)
             server.start(directory: directory)
         } else {
-            bridgeServer?.stop(); bridgeServer = nil; bridgeLedger.disconnect()
+            activityPoint { ledger, tick, wall in ledger.disconnect(id: nil, tick: tick, wall: wall, timeZone: .current) }
+            try? EstimatedActivityStore.write(estimatedActivity, to: activityFile)
+            activityTimer?.invalidate(); activityTimer = nil
+            bridgeServer?.stop(); bridgeServer = nil; closedEditCount = bridgeEditCount; bridgeLedgers.removeAll()
             bridgeFocused = nil; bridgeStatus = "수신 꺼짐 · 관측 중지"; releaseUnusedBoundaries()
         }
     }
@@ -144,7 +209,8 @@ final class WorkTimeController: ObservableObject {
         let manual = ledger.value(for: .manualTimer), foreground = ledger.value(for: .editorForeground)
         snapshot = WidgetTimeSnapshot(manualNanoseconds: manual.nanoseconds, foregroundNanoseconds: foreground.nanoseconds,
             manualState: manual.partial ? .partial : manualRunning ? .running : interrupted ? .interrupted : manual.nanoseconds == nil ? .notObserved : .paused,
-            foregroundState: foreground.partial ? .partial : foregroundActive ? .running : foregroundEnabled ? .waitingForEditor : interrupted ? .interrupted : foreground.nanoseconds == nil ? .notObserved : .paused)
+            foregroundState: foreground.partial ? .partial : foregroundActive ? .running : foregroundEnabled ? .waitingForEditor : interrupted ? .interrupted : foreground.nanoseconds == nil ? .notObserved : .paused,
+            activity: estimatedActivity)
         revision &+= 1
     }
     func recordDraw(from tick: UInt64) {
@@ -167,14 +233,14 @@ final class WorkTimeController: ObservableObject {
     }
     private func interrupt(_ reason: String) {
         ledger.interrupt(); manualRunning = false; foregroundActive = false; foregroundEnabled = false
-        setBridgeEnabled(false)
+        suspendAutomaticActivity()
         editorLabel = nil; interrupted = true; boundaryReason = reason
         if let activationObserver { workspace.notificationCenter.removeObserver(activationObserver) }
         activationObserver = nil; timer?.invalidate(); timer = nil
         publish(); releaseUnusedBoundaries()
     }
     func reset() {
-        interrupt("초기화"); setBridgeEnabled(false); bridgeLedger = ObservationBridgeLedger(); bridgeEditCount = nil
+        interrupt("초기화"); setBridgeEnabled(false); bridgeLedgers.removeAll(); closedEditCount = nil; bridgeEditCount = nil
         ledger = MeasuredTimeLedger(); interrupted = false; boundaryReason = nil
         lastTick = DispatchTime.now().uptimeNanoseconds; lastWall = Date(); publish()
     }
@@ -190,7 +256,10 @@ final class WorkTimeController: ObservableObject {
     private func observe(_ center: NotificationCenter, _ name: Notification.Name, _ reason: String) {
         let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                if name == NSApplication.willTerminateNotification { self?.bridgeServer?.stopSynchronously() }
+                if name == NSApplication.willTerminateNotification {
+                    if let self, self.bridgeEnabled { try? EstimatedActivityStore.write(self.estimatedActivity, to: self.activityFile) }
+                    self?.bridgeServer?.stopSynchronously()
+                }
                 self?.interrupt(reason)
             }
         }

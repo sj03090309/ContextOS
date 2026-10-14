@@ -98,6 +98,15 @@ struct ObservationTests {
         let sent=bytes.withUnsafeBytes{Darwin.write(fd,$0.baseAddress,$0.count)};#expect(sent == bytes.count)
         for _ in 0..<100 {if await box.count()>0{break};try await Task.sleep(for:.milliseconds(10))}
         #expect(await box.count()>0)
+        let shared = EstimatedActivitySnapshot(now: now, timeZone: .gmt, estimatedNanoseconds: 10_000_000_000, phase: .active)
+        server.publish(shared)
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var response = [UInt8](repeating: 0, count: 2048)
+        let received = Darwin.read(fd, &response, response.count)
+        try #require(received > 0)
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        #expect(try decoder.decode(EstimatedActivitySnapshot.self, from: Data(response.prefix(received))) == shared)
         server.stopSynchronously()
         for _ in 0..<100 {if lstat(path,&st) != 0{break};try await Task.sleep(for:.milliseconds(10))}
         let sentinel=Data("preserve".utf8);try sentinel.write(to:URL(fileURLWithPath:path))

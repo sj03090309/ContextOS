@@ -24,7 +24,12 @@ enum UsageReviewRenderer {
         timer.timing = .init(generatedAt: now, manualNanoseconds: 5_432_000_000_000, manualState: .paused, isSample: true)
         var unobserved = sample; unobserved.smallMetric = .editorForeground
         unobserved.timing = .init(generatedAt: now, isSample: true)
-        return [("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large), ("timer", timer), ("time-unobserved", unobserved)]
+        var automatic = sample; automatic.smallMetric = .activity
+        automatic.timing = .init(generatedAt: now, isSample: true, activity: .init(now: now, estimatedNanoseconds: 9_032_000_000_000, phase: .active))
+        var automaticPaused = automatic
+        automaticPaused.timing?.activity?.phase = .paused; automaticPaused.timing?.activity?.partial = true
+        var automaticEmpty = automatic; automaticEmpty.timing?.activity = nil
+        return [("activity", automatic), ("activity-paused", automaticPaused), ("activity-unobserved", automaticEmpty), ("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large), ("timer", timer), ("time-unobserved", unobserved)]
     }
     static func render(to directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
