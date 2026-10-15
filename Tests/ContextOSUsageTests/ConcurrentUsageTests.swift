@@ -185,6 +185,19 @@ import ContextOSUsage
         let s = ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(s.widget.today == nil); #expect(s.widget.providers.first?.state == .partial)
     }
+    @Test func productionRejectsSampleWithoutOverwritingLastRealAggregate() throws {
+        let container = try home(); defer { try? FileManager.default.removeItem(at: container) }
+        var real = UsagePreviewData.snapshot().widget; real.isSample = false
+        try WidgetSnapshotStore.write(real, to: container)
+        let original = try Data(contentsOf: container.appendingPathComponent(WidgetSnapshotStore.fileName))
+        #expect(throws: CocoaError.self) { try WidgetSnapshotStore.write(UsagePreviewData.snapshot().widget, to: container) }
+        #expect(try Data(contentsOf: container.appendingPathComponent(WidgetSnapshotStore.fileName)) == original)
+        #expect(WidgetSnapshotStore.read(from: container) == real)
+        let sample = UsagePreviewData.snapshot().widget
+        try WidgetSnapshotStore.write(sample, to: container, channel: .review)
+        #expect(WidgetSnapshotStore.read(from: container) == nil)
+        #expect(WidgetSnapshotStore.read(from: container, channel: .review) == sample)
+    }
     @Test func legacyBudgetIsIgnoredWithoutChangingUsage() throws {
         let original = UsagePreviewData.snapshot().widget
         let encoded = try JSONEncoder().encode(original)

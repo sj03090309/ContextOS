@@ -35,7 +35,7 @@ public struct UsageWidgetView: View {
             value = snapshot.today == nil ? "연결 끊김" : "일부 수집 불가"
         } else if snapshot.providers.contains(where: { $0.state == .partial }) { value = "일부 기록" }
         else { value = snapshot.today == nil ? "기록 없음" : "정상" }
-        return snapshot.isSample ? (value == "정상" ? "합성 데이터" : "합성 · " + value) : value
+        return snapshot.isSample ? (value == "정상" ? "샘플 · 실제값 아님" : "샘플 · " + value) : value
     }
     private func millions(_ value: Int64?) -> String {
         guard let value else { return "—" }
@@ -81,7 +81,7 @@ public struct UsageWidgetView: View {
         .privacySensitive().accessibilityElement(children: .contain)
     }
     private func title(_ text: String, branded: Bool = false) -> some View {
-        Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(muted)
+        Text((branded && snapshot.isSample ? "테스트 · " : "") + text).font(.system(size: 12, weight: .medium)).foregroundStyle(muted)
             .lineLimit(1).minimumScaleFactor(0.9)
             .padding(.trailing, branded && snapshot.showMascot != false ? 24 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)

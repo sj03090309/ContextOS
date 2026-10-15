@@ -52,7 +52,7 @@ struct UsageReviewRoot: View {
             payload.timing = workTime.snapshot
             payload.smallMetric = workTime.smallMetric
             payload.showMascot = workTime.showWidgetMascot
-            try WidgetSnapshotStore.write(payload, to: container)
+            try WidgetSnapshotStore.write(payload, to: container, channel: .review)
             lastShare = Date()
             bridgeStatus = "합성 집계 공유됨 · 실제 사용량 아님"
             if Date().timeIntervalSince(lastReload) >= 15 * 60 {

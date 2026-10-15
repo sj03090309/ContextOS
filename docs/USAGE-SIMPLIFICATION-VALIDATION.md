@@ -41,3 +41,6 @@ Rollback: terminate only the app at the target path, preserve the current bundle
 - `artifacts/install-backups/20261015T154917Z/`: original 2101 production app and Oct13 original review app, preserved before any replacement. Later timestamps retain intermediate 2102 as well.
 
 No normal-profile VS Code setting was enabled or rewritten; prior isolated Extension Host and synthetic IPC tests are documented separately. Real connected status-bar equality, five-minute idle/resume, native desktop-widget rendering and long-duration performance are not claimed complete. No new accessibility/screen-capture grant was requested: both preflight checks returned true before the targeted window capture and tab press.
+
+
+Follow-up build 2104 adds explicit test headers/gallery naming and defaults production storage to rejecting samples, while keeping App Group rights unchanged. Its 347-test result, deployment record and proposed permission boundary are documented in [Production widget connection plan](PRODUCTION-WIDGET-CONNECTION-PLAN.md). The new group's creation and real production widget connection are still unapproved and unexecuted.

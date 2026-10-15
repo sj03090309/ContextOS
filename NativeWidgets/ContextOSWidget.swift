@@ -12,7 +12,7 @@ struct UsageTimelineProvider: TimelineProvider {
         completion(entry(at: Date()))
     }
     private func entry(at date: Date) -> UsageEntry {
-        let snapshot = WidgetSnapshotStore.container().flatMap { WidgetSnapshotStore.read(from: $0) }
+        let snapshot = WidgetSnapshotStore.container().flatMap { WidgetSnapshotStore.read(from: $0, channel: Bundle.main.bundleIdentifier == "com.contextos.review.widgets" ? .review : .production) }
             ?? WidgetUsageSnapshot(generatedAt: date)
         return .init(date: date, snapshot: snapshot)
     }
@@ -49,7 +49,7 @@ struct ContextOSUsageWidget: Widget {
         StaticConfiguration(kind: WidgetSnapshotStore.kind, provider: UsageTimelineProvider()) { entry in
             WidgetBody(entry: entry)
         }
-        .configurationDisplayName("ContextOS · AI 사용량")
+        .configurationDisplayName(Bundle.main.bundleIdentifier == "com.contextos.review.widgets" ? "ContextOS 테스트 · 샘플" : "ContextOS · AI 사용량")
         .description("관측된 로컬 토큰, 모델 순위와 주간 추이. 갱신 시점은 macOS가 결정합니다.")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }

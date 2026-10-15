@@ -11,18 +11,20 @@ public enum WidgetSnapshotStore {
               !group.isEmpty, !group.contains("$(") else { return nil }
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)
     }
-    public static func write(_ snapshot: WidgetUsageSnapshot, to container: URL) throws {
+    public enum Channel: Sendable { case production, review }
+    public static func write(_ snapshot: WidgetUsageSnapshot, to container: URL, channel: Channel = .production) throws {
+        guard !snapshot.isSample || channel == .review else { throw CocoaError(.fileWriteNoPermission) }
         let data = try JSONEncoder().encode(snapshot)
         guard data.count <= maximumBytes else { throw CocoaError(.fileWriteUnknown) }
         try data.write(to: container.appendingPathComponent(fileName), options: .atomic)
     }
-    public static func read(from container: URL) -> WidgetUsageSnapshot? {
+    public static func read(from container: URL, channel: Channel = .production) -> WidgetUsageSnapshot? {
         let url = container.appendingPathComponent(fileName)
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attrs[.size] as? NSNumber, size.intValue <= maximumBytes,
               let data = try? Data(contentsOf: url),
               let snapshot = try? JSONDecoder().decode(WidgetUsageSnapshot.self, from: data),
-              snapshot.version == 1, snapshot.days.count <= 7,
+              snapshot.version == 1, (!snapshot.isSample || channel == .review), snapshot.days.count <= 7,
               snapshot.days.allSatisfy({ $0.tokens == nil || $0.tokens! >= 0 }),
               snapshot.models.count <= 3, snapshot.agents.count <= 3, snapshot.projects.count <= 3
         else { return nil }
