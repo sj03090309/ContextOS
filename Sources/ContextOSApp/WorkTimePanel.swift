@@ -24,6 +24,7 @@ struct WorkTimePanel: View {
             Picker("작은 위젯 항목", selection: $model.smallMetric) {
                 ForEach(SmallWidgetMetric.allCases, id: \.self) { Text($0.label).tag($0) }
             }
+            Toggle("위젯에 작은 뭉치 표시", isOn: $model.showWidgetMascot)
             Text("위젯은 같은 집계의 마지막 값을 표시합니다. macOS 갱신 제한으로 상태 표시줄과 동시에 갱신되지는 않습니다.").font(.caption).foregroundStyle(.secondary)
             DisclosureGroup("별도 측정 도구") {
                 HStack {

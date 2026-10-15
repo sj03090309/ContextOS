@@ -27,18 +27,18 @@ struct ConcurrentUsageSummary: View {
 struct UsageDetailRoot: View {
     @ObservedObject var model: DashboardModel
     @StateObject private var workTime = WorkTimeController.shared
-    @State private var budget = ""
     var body: some View {
         TabView {
         ConcurrentUsageView(snapshot: model.concurrentUsage, appPresence: model.usageAppPresence,
-            bridgeStatus: model.widgetBridgeStatus, budget: $budget,
-            refresh: { model.refresh() }, saveBudget: { model.setDailyBudget(budget) })
+            bridgeStatus: model.widgetBridgeStatus,
+            refresh: { model.refresh() })
             .tabItem { Text("AI 사용량") }
         WorkTimePanel(model: workTime).tabItem { Text("시간 측정") }
         }
-            .onAppear { budget = model.dailyTokenBudget.map(String.init) ?? ""; model.panelDidOpen() }
+            .onAppear { model.panelDidOpen() }
             .onDisappear { model.panelDidClose() }
             .onChange(of: workTime.snapshot) { _, _ in model.shareMeasuredTime() }
+            .onChange(of: workTime.showWidgetMascot) { _, _ in model.shareMeasuredTime(force: true) }
             .onChange(of: workTime.smallMetric) { _, _ in model.shareMeasuredTime(force: true) }
     }
 }
@@ -47,9 +47,7 @@ struct ConcurrentUsageView: View {
     var snapshot: ConcurrentUsageSnapshot
     var appPresence: [String: Bool] = [:]
     var bridgeStatus: String
-    @Binding var budget: String
     var refresh: () -> Void
-    var saveBudget: () -> Void
     private var data: WidgetUsageSnapshot { snapshot.widget }
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -71,17 +69,14 @@ struct ConcurrentUsageView: View {
                 Spacer()
                 Text(data.timeZoneID).font(.caption).foregroundStyle(.secondary)
             }
-            HStack(spacing: 12) {
-                Text("내 일일 토큰 예산").font(.caption)
-                TextField("미설정", text: $budget).frame(width: 110)
-                Button("저장", action: saveBudget)
-                if data.nearBudget { Text("예산 80% 이상").foregroundStyle(.orange).font(.caption) }
-                Spacer()
-                Text("구독 잔여량과 무관").font(.caption).foregroundStyle(.secondary)
-            }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(data.providers) { provider in providerSection(provider) }
+                    ForEach(data.providers.filter { $0.state != .unsupported }) { provider in providerSection(provider) }
+                    let unsupported = data.providers.filter { $0.state == .unsupported }.map(\.name)
+                    if !unsupported.isEmpty {
+                        Text("수집 미지원: " + unsupported.joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     HStack(alignment: .top, spacing: 22) {
                         ranks("오늘 모델 순위", data.models)
                         ranks("7일 프로젝트 순위", data.projects)

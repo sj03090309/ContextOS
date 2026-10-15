@@ -7,7 +7,6 @@ import WidgetKit
 /// the user's logs, project registry, usage DB or credentials.
 struct UsageReviewRoot: View {
     @State private var snapshot = UsagePreviewData.snapshot()
-    @State private var budget = "1000000"
     @State private var bridgeStatus = "공유 그룹 미연결"
     @StateObject private var workTime = WorkTimeController.shared
     @State private var lastShare = Date.distantPast
@@ -15,8 +14,7 @@ struct UsageReviewRoot: View {
     var body: some View {
         TabView {
             ConcurrentUsageView(snapshot: snapshot, appPresence: ["Codex": true], bridgeStatus: bridgeStatus,
-                budget: $budget, refresh: { snapshot = UsagePreviewData.snapshot(); publishSample() },
-                saveBudget: { snapshot.widget.dailyBudget = Int64(budget); publishSample() })
+                refresh: { snapshot = UsagePreviewData.snapshot(); publishSample() })
                 .tabItem { Text("대시보드 · 예시") }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -36,6 +34,7 @@ struct UsageReviewRoot: View {
         }.frame(width: 800, height: 780)
             .onAppear { publishSample() }
             .onChange(of: workTime.snapshot) { _, _ in publishSample(force: false) }
+            .onChange(of: workTime.showWidgetMascot) { _, _ in publishSample() }
             .onChange(of: workTime.smallMetric) { _, _ in publishSample() }
             .onChange(of: workTime.snapshot.manualState) { _, _ in publishSample() }
             .onChange(of: workTime.snapshot.foregroundState) { _, _ in publishSample() }
@@ -52,6 +51,7 @@ struct UsageReviewRoot: View {
             var payload = snapshot.widget
             payload.timing = workTime.snapshot
             payload.smallMetric = workTime.smallMetric
+            payload.showMascot = workTime.showWidgetMascot
             try WidgetSnapshotStore.write(payload, to: container)
             lastShare = Date()
             bridgeStatus = "합성 집계 공유됨 · 실제 사용량 아님"
@@ -64,6 +64,7 @@ struct UsageReviewRoot: View {
     private func widget(_ size: UsageWidgetView.Size, width: CGFloat, height: CGFloat, scheme: ColorScheme) -> some View {
         var payload = snapshot.widget
         payload.timing = workTime.snapshot; payload.smallMetric = workTime.smallMetric
+        payload.showMascot = workTime.showWidgetMascot
         return UsageWidgetView(snapshot: payload, size: size)
             .padding(14).frame(width: width, height: height)
             .background { UsageWidgetBackground().clipShape(RoundedRectangle(cornerRadius: 20)) }

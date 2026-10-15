@@ -8,7 +8,7 @@ public enum CollectionState: String, Codable, Sendable {
         case .noRecords: "기록 없음"
         case .unavailable: "연결 끊김 · 수집 불가"
         case .partial: "일부 기록만 수집"
-        case .unsupported: "지원 예정 · 수집 불가"
+        case .unsupported: "수집 미지원"
         }
     }
 }
@@ -62,18 +62,18 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
     public var agents: [UsageRank]
     public var projects: [UsageRank]
     public var providers: [UsageProvider]
-    public var dailyBudget: Int64?
     public var isSample: Bool
     public var timing: WidgetTimeSnapshot?
     public var smallMetric: SmallWidgetMetric?
+    public var showMascot: Bool?
 
     public init(generatedAt: Date = Date(), timeZoneID: String = TimeZone.current.identifier,
                 days: [UsageDay] = [], models: [UsageRank] = [], agents: [UsageRank] = [],
-                projects: [UsageRank] = [], providers: [UsageProvider] = [], dailyBudget: Int64? = nil,
+                projects: [UsageRank] = [], providers: [UsageProvider] = [],
                 isSample: Bool = false) {
         self.generatedAt = generatedAt; self.timeZoneID = timeZoneID; self.days = days
         self.models = models; self.agents = agents; self.projects = projects; self.providers = providers
-        self.dailyBudget = dailyBudget.flatMap { $0 > 0 ? $0 : nil }; self.isSample = isSample
+        self.isSample = isSample
     }
     public var today: Int64? { days.last?.tokens }
     public var yesterday: Int64? { days.dropLast().last?.tokens }
@@ -95,10 +95,6 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
             || generatedAt > date.addingTimeInterval(300)
             || !calendar.isDate(generatedAt, inSameDayAs: date)
             || timeZoneID != TimeZone.current.identifier
-    }
-    public var nearBudget: Bool {
-        guard let dailyBudget, let today else { return false }
-        return Double(today) >= Double(dailyBudget) * 0.8
     }
     public var health: String {
         if isSample { return "미리보기 · 예시 데이터" }

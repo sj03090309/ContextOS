@@ -83,10 +83,10 @@ public struct UsageWidgetView: View {
     private func title(_ text: String, branded: Bool = false) -> some View {
         Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(muted)
             .lineLimit(1).minimumScaleFactor(0.9)
-            .padding(.trailing, branded ? 24 : 0)
+            .padding(.trailing, branded && snapshot.showMascot != false ? 24 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
             .overlay(alignment: .trailing) {
-                if branded {
+                if branded && snapshot.showMascot != false {
                     MungchiWidgetMark().fill(ink.opacity(0.8), style: FillStyle(eoFill: true))
                         .frame(width: 20, height: 20).accessibilityHidden(true)
                 }
@@ -154,7 +154,7 @@ public struct UsageWidgetView: View {
         let timing = snapshot.timing
         if metric == .activity {
             let activity = timing?.activity
-            let label = activity.map { $0.stale(at: now) ? "이전 집계 · 추정" : $0.phase == .paused ? ($0.partial ? "정지 · 일부 누락" : "자동 일시정지") : $0.partial ? "일부 누락 · 추정" : "활동 추정 · 최근 집계" } ?? "확장 연결 필요"
+            let label = activity.map { $0.stale(at: now) ? "이전 집계 · 추정" : $0.label } ?? "확장 연결 필요"
             return AnyView(VStack(alignment: .leading, spacing: 3) {
                 Text((timing?.isSample == true ? "합성 · " : "") + label).lineLimit(1).minimumScaleFactor(0.8)
                 Text(activity?.generatedAt ?? snapshot.generatedAt, style: .time)

@@ -185,10 +185,20 @@ import ContextOSUsage
         let s = ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(s.widget.today == nil); #expect(s.widget.providers.first?.state == .partial)
     }
-    @Test func widgetBudgetStaleLargeValuesAndDeepLinkValidation() {
-        var s = UsagePreviewData.snapshot().widget
-        s.dailyBudget = 1_000_000
-        #expect(s.nearBudget)
+    @Test func legacyBudgetIsIgnoredWithoutChangingUsage() throws {
+        let original = UsagePreviewData.snapshot().widget
+        let encoded = try JSONEncoder().encode(original)
+        var legacy = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacy["dailyBudget"] = 1
+        let restored = try JSONDecoder().decode(WidgetUsageSnapshot.self, from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(restored == original)
+        let rewritten = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(restored)) as? [String: Any])
+        #expect(rewritten["dailyBudget"] == nil)
+        #expect(restored.today == original.today)
+        #expect(restored.providers == original.providers)
+    }
+    @Test func widgetStaleLargeValuesAndDeepLinkValidation() {
+        let s = UsagePreviewData.snapshot().widget
         #expect(s.stale(at:s.generatedAt.addingTimeInterval(1801)))
         #expect(UsageNumbers.add(.max, 100) == .max)
         #expect(UsageNumbers.compact(.max) == "9.2e18")

@@ -16,7 +16,7 @@ public enum UsagePreviewData {
             providers: [.init(name: "Codex", state: .ready, latestEvent: now),
                         .init(name: "Claude Code", state: .ready, latestEvent: now),
                         .init(name: "Gemini CLI", state: .unsupported), .init(name: "Cursor", state: .unsupported)],
-            dailyBudget: 1_000_000, isSample: true)
+            isSample: true)
         return .init(widget: widget, sessions: [
             .init(id: "sample-codex-a", agent: "Codex", project: "ContextOS · a1b2", model: "gpt-example-long-model-name", state: .working, lastEvent: now, todayTokens: 400_000, totalTokens: 1_200_000),
             .init(id: "sample-codex-b", agent: "Codex", project: "Demo project · c3d4", model: "gpt-example", state: .waiting, lastEvent: now.addingTimeInterval(-60), todayTokens: 220_000, totalTokens: 450_000),

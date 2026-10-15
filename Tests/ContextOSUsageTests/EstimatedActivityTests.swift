@@ -12,6 +12,12 @@ struct EstimatedActivityTests {
     func tick(_ ledger: inout EstimatedActivityLedger, _ second: UInt64) {
         ledger.advance(tick:second*1_000_000_000,wall:base.addingTimeInterval(Double(second)),timeZone:.gmt)
     }
+    @Test func missingActivityRemainsMissingAndKeepsConnectionWarning() {
+        let value = EstimatedActivitySnapshot(now: base, estimatedNanoseconds: nil, partial: true)
+        #expect(value.formatted == "—")
+        #expect(value.label.contains("연결 필요"))
+        #expect(value.label.contains("일부 누락"))
+    }
     @Test func focusAutomaticallyStartsButIsExplicitlyEstimated() {
         var l=EstimatedActivityLedger(now:base,timeZone:.gmt)
         #expect(l.snapshot.estimatedNanoseconds == nil)

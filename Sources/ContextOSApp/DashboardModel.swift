@@ -24,7 +24,6 @@ final class DashboardModel: ObservableObject {
     @Published var concurrentUsage = ConcurrentUsageSnapshot()
     @Published var usageAppPresence: [String: Bool] = [:]
     @Published var widgetBridgeStatus = "공유 권한 설정 필요"
-    @Published var dailyTokenBudget: Int64? = UserDefaults.standard.object(forKey: "contextos.dailyTokenBudget") as? Int64
     private let concurrentReader = ConcurrentUsageReader()
     private var lastWidgetReload = Date.distantPast
     private var lastMeasuredShare = Date.distantPast
@@ -39,6 +38,7 @@ final class DashboardModel: ObservableObject {
         var payload = concurrentUsage.widget
         payload.timing = timing ?? WorkTimeController.shared.snapshot
         payload.smallMetric = metric ?? WorkTimeController.shared.smallMetric
+        payload.showMascot = WorkTimeController.shared.showWidgetMascot
         do {
             try WidgetSnapshotStore.write(payload, to: container)
             lastMeasuredShare = Date(); widgetBridgeStatus = "집계 공유됨"
@@ -47,16 +47,6 @@ final class DashboardModel: ObservableObject {
                 lastWidgetReload = Date()
             }
         } catch { widgetBridgeStatus = "공유 저장 실패 · 이전 집계 유지" }
-    }
-
-    func setDailyBudget(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard trimmed.isEmpty || (Int64(trimmed).map { $0 > 0 } ?? false) else {
-            notice = "예산은 양의 정수로 입력하세요."; return
-        }
-        dailyTokenBudget = Int64(trimmed)
-        UserDefaults.standard.set(dailyTokenBudget, forKey: "contextos.dailyTokenBudget")
-        refresh()
     }
 
     @Published var connectionPreview: ConnectionPreview?
@@ -412,9 +402,8 @@ final class DashboardModel: ObservableObject {
         usageRefreshInFlight = true
         Task(priority: priority) {
             let reader = concurrentReader
-            let budget = dailyTokenBudget
             let usage = await Task.detached(priority: priority) {
-                reader.snapshot(dailyBudget: budget)
+                reader.snapshot()
             }.value
             concurrentUsage = usage
             WorkTimeController.shared.updateAIExecution(usage.aiExecution)

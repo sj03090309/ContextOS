@@ -2,7 +2,7 @@
 
 This candidate adds a real WidgetKit app extension, `NativeWidgets/ContextOSWidgets.xcodeproj`, targeting macOS 14 (the existing app minimum). It is embedded under `Contents/PlugIns` by `scripts/package_widgets.sh`. The three families share a single widget kind:
 
-- Small: today's observed tokens, comparison against the full previous day, budget threshold, source health, last aggregation time.
+- Small: today's observed tokens, comparison against the full previous day, source health, last aggregation time.
 - Medium: today's total, seven-day spark bars, and tool usage bars (Codex/Claude Code).
 - Large: seven-day bars and observed sum, today's model ranking, seven-day project ranking.
 
@@ -16,10 +16,10 @@ The menu-bar dashboard also has an **AI 동시 세션** entry opening a larger l
 - Claude counts `input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens`. These cache counters are disjoint from uncached input. Repeated/streamed `message.id` usages replace the earlier message total with the larger observed total. Top-level main sessions only; sidechains and subagent directories are excluded.
 - Session identity uses tool + provider session ID, never PID. Inode/replacement/truncation invalidates a file's incremental state. Logs without stable session IDs are excluded and flagged partial because copied logs cannot then be safely deduplicated; do not interpret these as complete account usage.
 - Dates are re-bucketed from event timestamps with a Gregorian calendar in the selected local time zone, including DST. A day without an accounting event is `nil`/`—`, not a fabricated zero. The previous-day comparison is explicitly against that **whole** day. Unknown dates, malformed/future/negative counters and unreadable logs are not zero.
-- Combined tokens are an observed-count total, not comparable compute units, money, or subscription remaining. No costs or subscription estimates are shown. The daily token budget is a user-entered local threshold only.
+- Combined tokens are an observed-count total, not comparable compute units, money, or subscription remaining. No costs or subscription estimates are shown. Daily usage budgets are not part of this product.
 - Work uses lifecycle metadata. Quiet unfinished work becomes waiting, then unknown after one hour; silence never invents completion. A desktop application can remain open while all observed turns are idle.
 
-Widget JSON contains only version, aggregation date/time zone, seven daily totals, top-three tool/model/project display labels and counts, provider source states/timestamps, an optional user budget and an explicit preview marker. It excludes session IDs, full paths and raw events. Project labels use only basename plus a short disambiguator. A missing/invalid/version-mismatched shared snapshot displays a connection-needed state. Atomic writes retain the old valid snapshot after failure; stale/midnight timeline entries label it as old data.
+Widget JSON contains only version, aggregation date/time zone, seven daily totals, top-three tool/model/project display labels and counts, provider source states/timestamps, an explicit preview marker. It excludes session IDs, full paths and raw events. Project labels use only basename plus a short disambiguator. A missing/invalid/version-mismatched shared snapshot displays a connection-needed state. Atomic writes retain the old valid snapshot after failure; stale/midnight timeline entries label it as old data.
 
 ## Build and review
 
@@ -57,7 +57,7 @@ These local log adapters are format-specific. A newly unsupported format is inco
 
 The 2026-10-12 candidate is isolated from the original checkout's uncommitted Windows preparation work. Tests use disposable generated logs, including parallel Codex/Claude sessions. The review app uses fixtures and is labelled accordingly. Validation does not inspect the user's real prompts or unrelated project logs; therefore simultaneous live-provider operation is not claimed as exercised on this Mac. The Mac review window and exported render matrix verify the UI, while installed WidgetKit delivery and App Group sharing require the approved signing step above.
 
-The visual revision uses a small ContextOS character, a mint surface in light appearance and a forest surface in dark appearance. Small prioritizes today's count, medium shows tool shares, and large gives the week more space. Source problems, stale data, last aggregation time and budget warnings remain visible. Extremely large counts switch to short scientific notation rather than truncating the number.
+The visual revision uses a small ContextOS character, a mint surface in light appearance and a forest surface in dark appearance. Small prioritizes today's count, medium shows tool shares, and large gives the week more space. Source problems, stale data, last aggregation time remain visible. Extremely large counts switch to short scientific notation rather than truncating the number.
 # Approved local review signing
 
 The isolated review app can be packaged with `scripts/sign_review_widgets.sh

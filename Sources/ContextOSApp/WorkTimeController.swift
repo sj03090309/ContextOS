@@ -13,6 +13,9 @@ final class WorkTimeController: ObservableObject {
     @Published private(set) var foregroundEnabled = false
     @Published private(set) var editorLabel: String?
     @Published private(set) var boundaryReason: String?
+    @Published var showWidgetMascot = UserDefaults.standard.object(forKey: "contextos.showWidgetMascot") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showWidgetMascot, forKey: "contextos.showWidgetMascot") }
+    }
     @Published var smallMetric: SmallWidgetMetric = SmallWidgetMetric(rawValue: UserDefaults.standard.string(forKey: "contextos.smallWidgetMetric") ?? "") ?? .activity {
         didSet { UserDefaults.standard.set(smallMetric.rawValue, forKey: "contextos.smallWidgetMetric") }
     }
@@ -74,7 +77,7 @@ final class WorkTimeController: ObservableObject {
             if let stored = try? EstimatedActivityStore.read(from: activityFile) { activityLedger.restore(stored, now: Date(), timeZone: .current) }
             estimatedActivity = activityLedger.snapshot; publish()
             ensureBoundaries()
-            bridgeStatus = "로컬 연결 대기 · 설치 승인 필요"
+            bridgeStatus = "로컬 수신 대기 · VS Code 확장 연결 필요"
             let server = ObservationBridgeServer { [weak self] event in
                 Task { @MainActor in
                     guard let self, self.bridgeEnabled else { return }

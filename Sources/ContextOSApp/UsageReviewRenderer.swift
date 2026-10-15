@@ -9,7 +9,7 @@ enum UsageReviewRenderer {
         let sample = UsagePreviewData.snapshot(now: now).widget
         var empty = sample
         empty.days = empty.days.map { .init(date: $0.date, tokens: nil) }
-        empty.agents = []; empty.models = []; empty.projects = []; empty.dailyBudget = nil
+        empty.agents = []; empty.models = []; empty.projects = []
         empty.providers = [.init(name: "Codex", state: .noRecords)]
         var unsupported = empty; unsupported.providers = [.init(name: "Other AI", state: .unsupported)]
         var zero = empty; zero.days[6].tokens = 0; zero.days[5].tokens = 0
@@ -29,7 +29,10 @@ enum UsageReviewRenderer {
         var automaticPaused = automatic
         automaticPaused.timing?.activity?.phase = .paused; automaticPaused.timing?.activity?.partial = true
         var automaticEmpty = automatic; automaticEmpty.timing?.activity = nil
-        return [("activity", automatic), ("activity-paused", automaticPaused), ("activity-unobserved", automaticEmpty), ("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large), ("timer", timer), ("time-unobserved", unobserved)]
+        var missingActivity = automatic
+        missingActivity.timing?.activity = .init(now: now, partial: true)
+        var plain = sample; plain.showMascot = false
+        return [("activity-missing", missingActivity), ("plain", plain), ("activity", automatic), ("activity-paused", automaticPaused), ("activity-unobserved", automaticEmpty), ("normal", sample), ("empty", empty), ("zero", zero), ("unsupported", unsupported), ("stale", stale), ("disconnected", disconnected), ("large-long-names", large), ("timer", timer), ("time-unobserved", unobserved)]
     }
     static func render(to directory: URL) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

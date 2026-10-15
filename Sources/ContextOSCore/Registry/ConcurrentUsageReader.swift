@@ -66,7 +66,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
     }
     private var rows: [String: Row] = [:]
     private struct MemoKey: Equatable {
-        var revision: UInt64; var day: Date; var zone: String; var budget: Int64?
+        var revision: UInt64; var day: Date; var zone: String
         var live: Set<String>; var discovery: [CollectionState]
     }
     private var memo: (key: MemoKey, value: ConcurrentUsageSnapshot, phases: [String: WorkState])?
@@ -86,8 +86,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
     }
 
     public func snapshot(home: URL = FileManager.default.homeDirectoryForCurrentUser,
-                         now: Date = Date(), timeZone: TimeZone = .current,
-                         dailyBudget: Int64? = nil) -> ConcurrentUsageSnapshot {
+                         now: Date = Date(), timeZone: TimeZone = .current) -> ConcurrentUsageSnapshot {
         lock.lock(); defer { lock.unlock() }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
         let today = calendar.startOfDay(for: now)
@@ -135,7 +134,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             }
             decodedRows.append((agent, merged, state, latest))
         }
-        let key = MemoKey(revision: revision, day: today, zone: timeZone.identifier, budget: dailyBudget,
+        let key = MemoKey(revision: revision, day: today, zone: timeZone.identifier,
                           live: live, discovery: discoveryStates)
         if !readFailure, let memo, memo.key == key {
             var value = memo.value
@@ -211,7 +210,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         }
         let value = ConcurrentUsageSnapshot(widget: .init(generatedAt: now, timeZoneID: timeZone.identifier,
             days: days, models: ranks(modelTotals), agents: ranks(agentTotals), projects: ranks(projectTotals),
-            providers: providers, dailyBudget: dailyBudget),
+            providers: providers),
             sessions: sessions.sorted { ($0.lastEvent ?? .distantPast) > ($1.lastEvent ?? .distantPast) },
             aiExecution: ExplicitAIRuns.summarize(runEvents, now: now, timeZone: timeZone,
                 incomplete: runIncomplete || readFailure, available: discoveries[0].state != .unavailable))
