@@ -1,7 +1,7 @@
 # 비 GUI 브리지 통합 검증
 
-## 공식 VS Code 경로와 이번 실행 범위
-[VS Code 공식 Testing Extensions](https://code.visualstudio.com/api/working-with-extensions/testing-extension)는 `--extensionDevelopmentPath`와 `--extensionTestsPath`를 이용해 별도 Extension Development Host를 실행하는 경로를 제공한다. 기존 VS Code 바이너리를 이용할 수 있지만 Workbench/Extension Host 인스턴스를 실행하는 검사이며, 단순 Node 검사와 다르다. 공식 npm runner는 별도 test-cli/test-electron 의존성과 다운로드도 지원한다. 이번 작업에서는 새 패키지를 설치하거나 GUI 인스턴스를 실행하지 않았다.
+## 공식 VS Code 경로와 초기 비 GUI 실행 범위
+[VS Code 공식 Testing Extensions](https://code.visualstudio.com/api/working-with-extensions/testing-extension)는 `--extensionDevelopmentPath`와 `--extensionTestsPath`를 이용해 별도 Extension Development Host를 실행하는 경로를 제공한다. 기존 VS Code 바이너리를 이용할 수 있지만 Workbench/Extension Host 인스턴스를 실행하는 검사이며, 단순 Node 검사와 다르다. 공식 npm runner는 별도 test-cli/test-electron 의존성과 다운로드도 지원한다. 초기 비 GUI 검사에서는 새 패키지를 설치하거나 GUI 인스턴스를 실행하지 않았다. 아래 추가 smoke에서 공식 Extension Host 실행을 별도로 확인했다.
 
 대신 **확장의 실제 activate 코드 + 모의 VS Code API + 실제 Unix 소켓 + 운영 코드와 같은 Swift 집계/저장**을 연결했다. 실제 VS Code API 활성화·물리적 창 포커스·화면 상태 표시줄·사용자 활동은 검증하지 않았다고 명시한다. 시간은 테스트가 직접 공급한 합성 단조 시계이며 실제 5분 대기 측정과 구분한다.
 
@@ -33,4 +33,12 @@ node --test ObservationBridge/vscode/integration.test.js
 
 근거: `artifacts/bridge-coalesced-before.log`(재현 실패), `bridge-patch-unit-tests.log`, `bridge-cross-process-test.log`, `bridge-cross-process-integration.json`. 실제 GUI 및 Extension Host 확인은 별도 잔여 항목이다.
 
-최종 결과: Node 단위 10개, 교차 프로세스 통합 1개, 기존 관련 Swift 46개 통과. 실제 Extension Host/GUI/물리적 절전 복귀는 미검증이다. 수정 패키지는 v0.2.1이며 설치된 v0.2.0은 그대로 유지한다.
+최종 결과: Node 단위 10개, 교차 프로세스 통합 1개, 기존 관련 Swift 46개 통과. 이 초기 결과의 실제 Extension Host 확인은 아래 추가 smoke로 보완했으며, 실제 사용자 GUI 활동/물리적 절전 복귀는 미검증이다. 수정 패키지는 v0.2.1이며 설치된 v0.2.0은 그대로 유지한다.
+
+
+## 실제 공식 Extension Host smoke 추가 확인 (2026-10-15)
+기존 VS Code 1.140.0 바이너리의 공식 `--extensionDevelopmentPath` / `--extensionTestsPath` 경로를 임시 user-data/extensions 디렉터리에서 실행했다. 새 npm 패키지·VS Code 다운로드·추가 권한 없이 v0.2.1 명시 활성화와 실제 VS Code API의 합성 untitled 문서 변경 콜백 1회를 확인했다. 검사한 extension.js 해시는 설치본과 같은 `92c9b467c45c95b9a61ced8393cd4412d437f0166fa0a4b01b632c7be8f2c414`이다.
+
+이 smoke는 **브리지 설정 OFF를 먼저 확인**하고 명시적으로 activate한다. 운영 소켓·집계·사용자 설정을 사용하지 않는다. 임시 manifest에서 자동 activationEvents를 제거해 안전 검사 이전에 자동 연결되지 않게 했다. 따라서 자동 시작·실제 상태바 값·실제 사용자 활동·실제 5분 정지/재개를 검증했다고 하지 않는다. 기존 비 GUI IPC 검사의 모의 API와 이번 실제 Extension Host/API 확인을 구분한다.
+
+실행기: `python3 scripts/run_vscode_host_smoke.py`. 별도 개발 호스트 창이 잠시 나타날 수 있으므로 사용 가능한 시점에 실행한다. 실제 연결은 켜지 않는다. CLI가 먼저 종료되는 macOS 동작 때문에 결과 파일을 별도로 기다리고, 테스트 프로필 프로세스가 없을 때만 그 임시 폴더를 정리한다. 실행 중 한정된 잠자기 방지는 종료 때 해제한다. 결과는 `artifacts/vscode-extension-host-smoke.json`에 기록한다.
