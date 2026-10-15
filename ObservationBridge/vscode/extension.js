@@ -3,7 +3,7 @@ const vscode = require('vscode');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
-const {PacketEncoder, hasContentChange, decodeSnapshot, statusText} = require('./protocol');
+const {PacketEncoder, hasContentChange, SnapshotStreamDecoder, statusText} = require('./protocol');
 let stop;
 function activate(context) {
   const status=vscode.window.createStatusBarItem('contextos.activity',vscode.StatusBarAlignment.Left,1);
@@ -14,7 +14,7 @@ function activate(context) {
     status.text=statusText();
     if (process.platform !== 'darwin' || vscode.env.remoteName || !vscode.workspace.isTrusted ||
         !vscode.workspace.getConfiguration('contextosObservation').get('enabled', false)) return;
-    const subscriptions=[];let socket,encoder,retry,batch,heartbeat,stale,pending=0,activity,loss=false,disposed=false,buffer='',lastSnapshot;
+    const subscriptions=[];let socket,encoder,retry,batch,heartbeat,stale,pending=0,activity,loss=false,disposed=false,stream,lastSnapshot;
     let lastFocus=vscode.window.state.focused;
     const socketPath=path.join(os.homedir(),'Library','Application Support','ContextOS Observation Candidate','observations.sock');
     function send(kind,value,focused) {
@@ -36,24 +36,20 @@ function activate(context) {
     }
     function connect() {
       if(disposed)return;
-      buffer='';socket=net.createConnection({path:socketPath});
+      stream=new SnapshotStreamDecoder();socket=net.createConnection({path:socketPath});
       socket.on('connect',()=>{
         encoder=new PacketEncoder(vscode.env.appName.includes('Insiders')?'vscode-insiders':'vscode');
         if(loss)send('gap');loss=false;
         lastFocus=vscode.window.state.focused;send('focus',lastFocus);
       });
       socket.on('data',data=>{
-        buffer+=data.toString('utf8');
-        if(Buffer.byteLength(buffer)>2048){socket.destroy();return;}
-        let index;
-        while((index=buffer.indexOf('\n'))>=0){
-          const line=buffer.slice(0,index);buffer=buffer.slice(index+1);
-          try {
-            lastSnapshot=decodeSnapshot(line);status.text=statusText(lastSnapshot);
+        try {
+          for(const snapshot of stream.push(data)) {
+            lastSnapshot=snapshot;status.text=statusText(lastSnapshot);
             status.tooltip=`오늘 활동 추정 · ${lastSnapshot.timeZoneID}\n포커스/편집/커서/스크롤 후 최대 5분, 이후 자동 정지. 읽기·생각·사람/AI를 정확히 구분하지 못합니다.\n${lastSnapshot.partial?'일부 관측 누락 · ':''}중앙 앱과 같은 마지막 집계값. 연결이 없을 때 시간을 늘리지 않습니다.`;
             clearTimeout(stale);stale=setTimeout(()=>{status.text=statusText(lastSnapshot,true);},45000);
-          }catch{socket.destroy();return;}
-        }
+          }
+        }catch{socket.destroy();return;}
       });
       socket.on('error',()=>{loss=true;});
       socket.on('close',()=>{encoder=undefined;clearTimeout(stale);status.text=statusText(lastSnapshot,true);if(!disposed)retry=setTimeout(connect,30000);});

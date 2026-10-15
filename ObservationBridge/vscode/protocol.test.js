@@ -27,3 +27,14 @@ test('status bar uses host value without a client timer or extrapolation',()=>{
   assert.throws(()=>decodeSnapshot(JSON.stringify({...s,estimatedNanoseconds:-1})));
   assert.match(statusText({...s,estimatedNanoseconds:undefined}),/—/);
 });
+test('stream decoder accepts fragmented UTF-8 and bounds incomplete frames',()=>{
+  const {SnapshotStreamDecoder}=require('./protocol');
+  const s={version:1,day:'2026-10-15',timeZoneID:'테스트',estimatedNanoseconds:0,phase:'paused',partial:true,idleSeconds:300,generatedAt:1};
+  const bytes=Buffer.from(JSON.stringify(s)+'\n'),cut=bytes.indexOf(Buffer.from('테'))+1,decoder=new SnapshotStreamDecoder();
+  assert.deepEqual(decoder.push(bytes.subarray(0,cut)),[]);
+  assert.deepEqual(decoder.push(bytes.subarray(cut)),[s]);
+  const count=Math.floor(60000/bytes.length);
+  assert.equal(new SnapshotStreamDecoder().push(Buffer.concat(Array(count).fill(bytes))).length,count);
+  assert.throws(()=>new SnapshotStreamDecoder().push(Buffer.alloc(1025,120)));
+  assert.throws(()=>new SnapshotStreamDecoder().push(Buffer.alloc(65537,120)));
+});

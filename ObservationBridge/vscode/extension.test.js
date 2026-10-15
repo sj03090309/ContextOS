@@ -47,3 +47,11 @@ test('same host snapshot is rendered, never locally incremented',()=>{
   assert.match(f.status.text,/00:00:10/);assert.match(f.status.tooltip,/일부 관측 누락/);
   assert.equal(f.tasks.some(t=>t.delay===1000),false);
 });
+test('coalesced valid host frames do not cause a false disconnect',()=>{
+  const f=fixture(true);f.handlers.connect();
+  const snapshot={version:1,day:'2026-10-15',timeZoneID:'Asia/Seoul',estimatedNanoseconds:2000000000,phase:'active',partial:false,idleSeconds:300,generatedAt:1};
+  const burst=(JSON.stringify(snapshot)+'\n').repeat(20);
+  assert.ok(Buffer.byteLength(burst)>2048);
+  f.handlers.data(Buffer.from(burst));
+  assert.match(f.status.text,/00:00:02/);
+});

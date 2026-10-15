@@ -11,7 +11,8 @@ let package = Package(
         .executable(name: "contextos", targets: ["contextos"]),
         .executable(name: "contextos-mcp", targets: ["contextos-mcp"]),
         .executable(name: "ContextOSApp", targets: ["ContextOSApp"]),
-        .executable(name: "contextos-usage-bench", targets: ["contextos-usage-bench"])
+        .executable(name: "contextos-usage-bench", targets: ["contextos-usage-bench"]),
+        .executable(name: "contextos-bridge-integration-host", targets: ["contextos-bridge-integration-host"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", exact: "1.8.2")
@@ -45,6 +46,7 @@ let package = Package(
         // Disposable synthetic workloads; never included in the app bundle.
         .executableTarget(name: "contextos-bench", dependencies: ["ContextOSCore"], path: "Benchmarks"),
         .executableTarget(name: "contextos-usage-bench", dependencies: ["ContextOSCore", "ContextOSUsage"], path: "UsageBenchmarks"),
+        .executableTarget(name: "contextos-bridge-integration-host", dependencies: ["ContextOSCore", "ContextOSUsage"], path: "TestSupport/BridgeIntegrationHost"),
         .testTarget(
             name: "ContextOSCoreTests",
             dependencies: ["ContextOSCore"]

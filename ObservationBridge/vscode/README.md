@@ -1,4 +1,4 @@
-# ContextOS Observation Bridge — local v0.2 candidate
+# ContextOS Observation Bridge — local v0.2.1 candidate
 Not installed or enabled. Initial setup requires approval. After explicit opt-in, local macOS trusted VS Code / Insiders windows connect automatically and show a native status bar activity estimate. No daily Start button or idle confirmation prompt.
 
 The host receives focus, nonempty document-change callback counts and selection/visible-range callback kinds. It estimates activity for at most five minutes after a focused signal, then pauses automatically. These are product assumptions, not exact coding/reading/thinking time. Programmatic/AI actions cannot be distinguished from human work. Terminal/web/other-app work is out of scope. Callbacks never inspect document text, URI, selection coordinates, visible ranges, paths, titles, keys, language or credentials.
@@ -10,3 +10,9 @@ Local Unix socket only: `~/Library/Application Support/ContextOS Observation Can
 The host stores only today's bounded (16 KiB) estimate, day, timezone, rule and partial/state metadata in `activity-day-v1.json` in that private directory. No raw events, window IDs, nonces, paths or source content are persisted. The host saves every 60 seconds or state boundary. Only an already-saved aggregate resumes after restart, paused/partial; open intervals and gaps are never restored. The extension enabled preference and host receiver preference persist after explicit opt-in; a fresh candidate defaults off. Remote/virtual/untrusted windows are unsupported.
 
 To remove: disable `contextosObservation.enabled`, switch off the candidate host receiver, then uninstall `contextos.observation-bridge`. The host removes only its socket on normal shutdown. The aggregate file remains until the user removes `activity-day-v1.json` and the now-unused private candidate directory. Crashed sockets are preserved for reviewed manual cleanup; arbitrary existing paths are never overwritten. No Accessibility/Input Monitoring, Apple credentials, payment or external service access is required.
+
+
+## v0.2.1 receive fix and offline evidence
+The v0.2.0 receiver rejected a valid stream batch above 2 KiB before splitting its frames. The patch accepts complete concatenated frames, retains a 1 KiB incomplete/per-frame limit and 64 KiB per-chunk bound, and preserves UTF-8 split across chunks. No observation fields, settings, endpoint or retention policy changed. The installed v0.2.0 is not automatically replaced by tests or packaging.
+
+`node --test protocol.test.js extension.test.js` runs privacy/framing tests. After building `contextos-bridge-integration-host` from the repository root, `node --test integration.test.js` runs actual Unix IPC against the production Swift ledger/store in `/tmp/cxi-*`. It calls the real extension module's activate function with a mocked VS Code API and synthetic clock. It does not run a real Extension Development Host, user activity or GUI, and it never uses the user's socket, aggregate or settings.

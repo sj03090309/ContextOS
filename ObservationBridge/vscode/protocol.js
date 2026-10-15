@@ -1,5 +1,6 @@
 'use strict';
 const {randomUUID} = require('node:crypto');
+const {StringDecoder} = require('node:string_decoder');
 class PacketEncoder {
   constructor(editor, nonce = randomUUID()) { this.editor = editor; this.nonce = nonce; this.sequence = 0; }
   frame(kind, value, focused) {
@@ -27,6 +28,21 @@ function decodeSnapshot(data) {
       (s.estimatedNanoseconds!=null && (!Number.isSafeInteger(s.estimatedNanoseconds) || s.estimatedNanoseconds<0 || s.estimatedNanoseconds>93600000000000))) throw Error('schema');
   return s;
 }
+class SnapshotStreamDecoder {
+  constructor(){this.pending='';this.utf8=new StringDecoder('utf8');}
+  push(data){
+    if(data.length>65536)throw Error('chunk size');
+    const text=this.utf8.write(data),frames=[];let start=0,index;
+    while((index=text.indexOf('\n',start))>=0){
+      const part=text.slice(start,index);
+      if(Buffer.byteLength(this.pending)+Buffer.byteLength(part)>1024)throw Error('frame size');
+      frames.push(decodeSnapshot(this.pending+part));this.pending='';start=index+1;
+    }
+    const tail=text.slice(start);
+    if(Buffer.byteLength(this.pending)+Buffer.byteLength(tail)>1024)throw Error('frame size');
+    this.pending+=tail;return frames;
+  }
+}
 function statusText(s, disconnected=false) {
   let value='—';
   if (s && s.estimatedNanoseconds!=null) {
@@ -35,4 +51,4 @@ function statusText(s, disconnected=false) {
   }
   return `$(watch) ${value} · ${disconnected?'연결 끊김':s&&s.phase==='paused'?'일시정지 · 추정':'활동 추정'}`;
 }
-module.exports = {PacketEncoder, hasContentChange, decodeSnapshot, statusText};
+module.exports = {PacketEncoder, hasContentChange, decodeSnapshot, statusText, SnapshotStreamDecoder};
