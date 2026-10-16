@@ -51,7 +51,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var message: Message?; var payload: Payload?
     }
     private struct Metric {
-        var date: Date; var tokens: Int64; var model: String; var project: String; var cumulative: Int64? = nil
+        var date: Date; var tokens: Int64; var model: String; var project: String; var cumulative: Int64? = nil; var sequence = 0
     }
     private struct Row {
         var inode: UInt64 = 0; var offset = 0; var size = 0; var mtime = Date.distantPast
@@ -119,7 +119,12 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 if var old = merged[identity] {
                     var combined = old.metrics
                     for (key, metric) in row.metrics {
-                        if combined[key] == nil || combined[key]!.tokens < metric.tokens { combined[key] = metric }
+                        if let previous = combined[key] {
+                            // Cumulative values are reconstructed below. Prefer the
+                            // copy with more preceding accounting events, not a
+                            // larger file-local delta from a truncated copy.
+                            if metric.cumulative != nil ? previous.sequence < metric.sequence : previous.tokens < metric.tokens { combined[key] = metric }
+                        } else { combined[key] = metric }
                     }
                     let combinedRuns = old.runEvents.union(row.runEvents)
                     let incompleteRuns = old.runIncomplete || row.runIncomplete
@@ -164,9 +169,25 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 var total: Int64?, todayTotal: Int64?, previous: Int64 = 0
                 // Reconstruct one canonical counter stream across copied/resumed files.
                 // Claude messages choose the largest observed streamed total per message ID.
-                for (_, metric) in row.metrics.sorted(by: {
-                    $0.value.date == $1.value.date ? $0.key < $1.key : $0.value.date < $1.value.date
-                }) {
+                let ordered = row.metrics.sorted(by: {
+                    if $0.value.date != $1.value.date { return $0.value.date < $1.value.date }
+                    if $0.value.sequence != $1.value.sequence { return $0.value.sequence < $1.value.sequence }
+                    return $0.key < $1.key
+                })
+                var metricIndex = 0
+                while metricIndex < ordered.count {
+                    var metric = ordered[metricIndex].value
+                    metricIndex += 1
+                    while metricIndex < ordered.count {
+                        let next = ordered[metricIndex].value
+                        guard next.date == metric.date, next.sequence == metric.sequence,
+                              let nextCounter = next.cumulative, let counter = metric.cumulative else { break }
+                        // Independent fragments do not establish order. Retain
+                        // their observed high-water counter, not a guessed reset.
+                        state = .partial
+                        if nextCounter > counter { metric = next }
+                        metricIndex += 1
+                    }
                     let tokens: Int64
                     if let cumulative = metric.cumulative {
                         tokens = cumulative < previous ? cumulative : cumulative - previous
@@ -387,7 +408,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             row.seen.insert(key)
             let delta = total < row.previous ? total : total - row.previous
             row.previous = total
-            row.metrics[key] = Metric(date: date, tokens: delta, model: row.model, project: row.project, cumulative: total)
+            row.metrics[key] = Metric(date: date, tokens: delta, model: row.model, project: row.project, cumulative: total, sequence: row.metrics.count)
         }
     }
 }

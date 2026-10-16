@@ -2,9 +2,9 @@
 
 This candidate adds a real WidgetKit app extension, `NativeWidgets/ContextOSWidgets.xcodeproj`, targeting macOS 14 (the existing app minimum). It is embedded under `Contents/PlugIns` by `scripts/package_widgets.sh`. The three families share a single widget kind:
 
-- Small: today's observed tokens, comparison against the full previous day, source health, last aggregation time.
-- Medium: today's total, seven-day spark bars, and tool usage bars (Codex/Claude Code).
-- Large: seven-day bars and observed sum, today's model ranking, seven-day project ranking.
+- Small: today's observed tokens by default, or the saved activity/timer/foreground selection; source state and last aggregation time.
+- Medium: today's top-three model counts and relative bars, falling back to AI/tool ranks when model ranks are absent.
+- Large: seven-day bars and observed sum, plus today's model ranks (AI/tool fallback). Project ranks and the previous-day comparison remain in the app detail dashboard.
 
 The menu-bar dashboard also has an **AI 동시 세션** entry opening a larger live dashboard. This is independent of the widgets. It lists every discovered supported main session, its last lifecycle evidence, today's tokens and its retained-log total. App presence is a separate desktop-app observation and never establishes work or tokens. CLI process presence is not observed; the UI says so. Unsupported sources have no invented zero or workload.
 

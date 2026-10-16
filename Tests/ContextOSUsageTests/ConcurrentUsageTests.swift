@@ -53,6 +53,24 @@ import ContextOSUsage
         let s = ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(s.widget.today == 138) // Cached input is already inside total_tokens.
     }
+    @Test func unorderedEqualTimestampFragmentsDoNotInventAReset() throws {
+        let h=try home(); defer { try? FileManager.default.removeItem(at:h) }
+        _=try write(meta("fragment")+[counter(999)],".codex/sessions/rollout-a.jsonl",home:h)
+        _=try write(meta("fragment")+[counter(1000)],".codex/sessions/rollout-b.jsonl",home:h)
+        let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(value.widget.today == 1000)
+        #expect(value.widget.providers.first?.state == .partial)
+    }
+    @Test func equalTimestampCounterOrderSurvivesDecimalGrowthResetAndShortCopy() throws {
+        for (first,second,expected) in [(999,1000,1000),(1000,10,1010)] {
+            let h=try home(); defer { try? FileManager.default.removeItem(at:h) }
+            let lines=meta("equal-time")+[counter(first),counter(second)]
+            _=try write(lines,".codex/sessions/rollout-full.jsonl",home:h)
+            _=try write(meta("equal-time")+[counter(second)],".codex/sessions/rollout-short.jsonl",home:h)
+            let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+            #expect(value.widget.today == Int64(expected))
+        }
+    }
     @Test func syntheticClaudeZeroIsMissingRatherThanObservedZero() throws {
         let h=try home(); defer { try? FileManager.default.removeItem(at:h) }
         var synthetic=claude()

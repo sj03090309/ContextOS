@@ -1,5 +1,8 @@
 # Production widget connection — installed build 2106
 
+Current status: build **2107 is installed**, with real non-sample group delivery verified. See [final installed status and locked-session limitations](PRODUCTION-WIDGET-FINAL-STATUS.md). Version-specific and blocked-stage descriptions below are historical.
+
+
 ## Actual deployment
 
 After direct approval of normal termination, backup, replacement, widget registration and launch, the previously rejected operation succeeded. The operating app at `~/Desktop/ContextOS.app` is now version 2.1.0, build **2106**, with embedded WidgetKit extension `com.contextos.app.widgets`. Both use only approved group `Y56BH9PULD.com.contextos.usage` and existing Apple Development signing team `Y56BH9PULD`. Review remains unchanged on its separate review group. No new certificate/profile, wider collection or public deployment occurred.

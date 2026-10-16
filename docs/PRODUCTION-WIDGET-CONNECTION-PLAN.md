@@ -1,5 +1,8 @@
 # Production widget connection: boundary and approval plan
 
+Current status: build **2107 is installed**, with real non-sample group delivery verified. See [final installed status and locked-session limitations](PRODUCTION-WIDGET-FINAL-STATUS.md). Version-specific and blocked-stage descriptions below are historical.
+
+
 Latest status: direct approval resolved the earlier execution-policy block. Production build 2106 is installed and writes real non-sample aggregates to the approved group. See [current verification and remaining locked-screen checks](PRODUCTION-WIDGET-VALIDATION-2106.md). Earlier blocked/proposal descriptions below are historical.
 
 
