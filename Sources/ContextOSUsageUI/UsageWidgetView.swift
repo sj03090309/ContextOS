@@ -97,10 +97,10 @@ public struct UsageWidgetView: View {
     private func number(_ value: Int64?, points: CGFloat) -> some View {
         Text(millions(value)).font(.system(size: points, weight: .semibold))
             .tracking(-0.8).monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
-            .accessibilityLabel(value.map { "\($0) 토큰" } ?? "사용 기록 없음")
+            .accessibilityLabel(value.map { "\($0) 토큰" } ?? "확인 가능한 집계 없음")
     }
     private var empty: some View {
-        Text("사용 기록 없음").font(.system(size: 14)).foregroundStyle(muted)
+        Text("확인 가능한 집계 없음").font(.system(size: 14)).foregroundStyle(muted)
     }
     private func rankRow(_ rank: UsageRank, points: CGFloat) -> some View {
         HStack(spacing: 8) {
