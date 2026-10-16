@@ -33,6 +33,33 @@ import ContextOSUsage
          "message":["id":id,"model":"claude-test","stop_reason":"end_turn", "content":[["type":"text","text":"SECRET PROMPT NEVER DECODE"]],
                     "usage":["input_tokens":100,"output_tokens":output,"cache_read_input_tokens":50,"cache_creation_input_tokens":30]]]
     }
+    @Test func explicitDesktopAndCLIOriginsDeduplicateAndNeverInventMissingDotUsage() throws {
+        let h=try home();defer {try? FileManager.default.removeItem(at:h)}
+        let cli:[String:Any]=["type":"session_meta","timestamp":stamp(-100),"payload":["id":"cli","source":"cli","cwd":"/cli/project"]]
+        let desktop:[String:Any]=["type":"session_meta","timestamp":stamp(-100),"payload":["id":"desktop","source":"vscode","originator":"codex_work_desktop","cwd":"/desktop/project"]]
+        _=try write([cli,counter(100)],".codex/sessions/rollout-cli.jsonl",home:h)
+        _=try write([desktop,counter(300)],".codex/sessions/rollout-desktop.jsonl",home:h)
+        _=try write([desktop,counter(300)],".codex/sessions/rollout-desktop-copy.jsonl",home:h)
+        let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(value.widget.today == 400)
+        #expect(value.sessions.count == 2)
+        #expect(Set(value.sessions.map(\.origin)) == [.cli,.desktop])
+        #expect(value.widget.projects.count == 2)
+        let later=ConcurrentUsageReader().snapshot(home:h,now:now.addingTimeInterval(86400),timeZone:.gmt)
+        #expect(later.widget.today == nil) // Never date a lifetime/session total by current discovery time.
+    }
+    @Test func explicitSubagentSourceWithoutForkFieldCannotDoubleCountParent() throws {
+        let h=try home();defer {try? FileManager.default.removeItem(at:h)}
+        _=try write(meta("parent")+[counter(100)],".codex/sessions/rollout-parent.jsonl",home:h)
+        let child:[String:Any]=["type":"session_meta","timestamp":stamp(-100),"payload":["id":"child","source":["subagent":["thread_spawn":["parent_thread_id":"parent"]]]]]
+        _=try write([child,counter(900)],".codex/sessions/rollout-child.jsonl",home:h)
+        let namedChild:[String:Any]=["type":"session_meta","timestamp":stamp(-100),"payload":["id":"named-child","source":"subagent"]]
+        _=try write([namedChild,counter(800)],".codex/sessions/rollout-named-child.jsonl",home:h)
+        let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(value.widget.today == 100)
+        #expect(value.widget.providers.first?.state == .partial)
+        #expect(value.sessions.first{$0.origin == .subagent}?.totalTokens == nil)
+    }
     @Test func simultaneousSessionsAndToolTotals() throws {
         let h = try home(); defer { try? FileManager.default.removeItem(at: h) }
         _ = try write(meta("a") + [counter(100), phase("task_started")], ".codex/sessions/rollout-a.jsonl", home:h)

@@ -106,6 +106,19 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
 }
 
 public struct ObservedSession: Sendable, Equatable, Identifiable {
+    public enum Origin: String, Sendable {
+        case cli, desktop, editor, sdk, subagent, unknown
+        public var label: String {
+            switch self {
+            case .cli: "CLI"
+            case .desktop: "Codex 앱"
+            case .editor: "에디터 연결"
+            case .sdk: "SDK / exec"
+            case .subagent: "하위 작업 · 집계 제외"
+            case .unknown: "실행 원천 미상"
+            }
+        }
+    }
     public var id: String
     public var agent: String
     public var project: String
@@ -114,10 +127,12 @@ public struct ObservedSession: Sendable, Equatable, Identifiable {
     public var lastEvent: Date?
     public var todayTokens: Int64?
     public var totalTokens: Int64?
+    public var origin: Origin
     public init(id: String, agent: String, project: String, model: String, state: WorkState,
-                lastEvent: Date?, todayTokens: Int64?, totalTokens: Int64?) {
+                lastEvent: Date?, todayTokens: Int64?, totalTokens: Int64?, origin: Origin = .unknown) {
         self.id = id; self.agent = agent; self.project = project; self.model = model
         self.state = state; self.lastEvent = lastEvent; self.todayTokens = todayTokens; self.totalTokens = totalTokens
+        self.origin = origin
     }
 }
 

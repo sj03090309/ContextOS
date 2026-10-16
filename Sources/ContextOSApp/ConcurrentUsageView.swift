@@ -54,12 +54,18 @@ struct ConcurrentUsageView: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("AI 사용 현황").font(.system(size: 25, weight: .semibold))
-                    Text(data.isSample ? "검증용 예시 · 실제 사용량이 아닙니다" : "Codex · Claude Code 로컬 주 세션 기록")
+                    Text(data.isSample ? "검증용 예시 · 실제 사용량이 아닙니다" : "Codex · Claude Code의 관측 가능한 로컬 기록")
                         .font(.system(size: 12)).foregroundStyle(data.isSample ? .orange : .secondary)
                 }
                 Spacer()
                 Button(action: refresh) { Label("새로고침", systemImage: "arrow.clockwise") }
             }
+            if data.providers.isEmpty {
+                Label("로컬 집계를 준비하고 있습니다. 잠시 후 새로고침해 주세요.", systemImage: "hourglass")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Text("수집 범위: 로컬 세션 기록만 포함합니다. dot·클라우드의 전체 사용량이 아니며, 제공되지 않은 사용량은 확인할 수 없습니다.")
+                .font(.caption).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(UsageNumbers.compact(data.today)).font(.system(size: 40, weight: .semibold, design: .rounded)).monospacedDigit()
                 VStack(alignment: .leading) {
@@ -85,7 +91,7 @@ struct ConcurrentUsageView: View {
             }
             VStack(alignment: .leading, spacing: 5) {
                 Text("마지막 집계 \(data.generatedAt.formatted(date: .abbreviated, time: .standard)) · \(data.health)")
-                Text("— 기록 없음 · 0은 명시된 사용량 0 · 앱 실행 여부는 작업·사용량의 증거가 아닙니다.")
+                Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0 · 앱 실행 여부는 작업·사용량의 증거가 아닙니다.")
                 Text("도구별 토큰 정의가 달라 합계는 관측 토큰 수입니다. 하위 에이전트·fork 기록은 제외될 수 있습니다.")
                 Text("위젯: \(bridgeStatus) · macOS가 갱신 시점을 결정합니다.")
             }.font(.system(size: 10)).foregroundStyle(.secondary)
@@ -96,7 +102,7 @@ struct ConcurrentUsageView: View {
         let sessions = snapshot.sessions.filter { $0.agent == provider.name }
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(provider.name).font(.system(size: 15, weight: .semibold))
+                Text(provider.name == "Codex" ? "Codex · 로컬 기록" : provider.name).font(.system(size: 15, weight: .semibold))
                 Text(provider.state.label).font(.caption).foregroundStyle(provider.state == .ready ? .green : .secondary)
                 Spacer()
                 Text(appPresence[provider.name].map { $0 ? "데스크톱 앱 실행 중" : "데스크톱 앱 미실행" } ?? "앱/CLI 실행 여부 미확인")
@@ -111,6 +117,7 @@ struct ConcurrentUsageView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(session.project).lineLimit(1)
                         Text("\(session.model) · 세션 \(session.id.prefix(8))").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        if session.agent == "Codex" { Text(session.origin.label).font(.system(size: 10)).foregroundStyle(.secondary) }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                     VStack(alignment: .trailing, spacing: 4) {
                         Text(session.state.label).font(.system(size: 11))
@@ -143,7 +150,9 @@ final class UsageWindowController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 780, height: 760),
             styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = title; window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: view)
+        window.identifier = NSUserInterfaceItemIdentifier("contextos-usage-detail")
+        window.contentViewController = NSHostingController(rootView: view)
+        window.minSize = NSSize(width: 720, height: 640)
         window.center(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         self.window = window
     }

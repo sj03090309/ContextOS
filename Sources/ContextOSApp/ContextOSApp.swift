@@ -5,29 +5,17 @@ import ContextOSCore
 import ContextOSUsage
 
 @main
-struct ContextOSApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    var body: some Scene {
-        // SwiftUI requires one scene even though ContextOS is a menu-bar-only
-        // app. `Settings { EmptyView() }` made macOS open a blank “ContextOS
-        // Settings” window at launch. Keep an inert scene solely for the app
-        // lifecycle, hide it immediately, and remove the Settings menu command.
-        WindowGroup("ContextOS", id: "contextos-lifecycle") {
-            LifecycleSceneView()
+enum ContextOSApp {
+    @MainActor static func main() {
+        // AppKit owns every window. A transparent SwiftUI WindowGroup still
+        // opens a real default window on URL/reopen events; hiding guessed
+        // scene identifiers cannot make that lifecycle reliable.
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        withExtendedLifetime(delegate) {
+            application.run()
         }
-        .commands {
-            CommandGroup(replacing: .appSettings) { }
-        }
-    }
-}
-
-/// An invisible lifecycle host for the SwiftUI `App` protocol. The real UI is
-/// the AppKit status item and its popover, installed by `AppDelegate`.
-private struct LifecycleSceneView: View {
-    var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
     }
 }
 
@@ -37,17 +25,22 @@ private struct LifecycleSceneView: View {
 /// menu-bar icon, the way native status-bar apps do.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, ObservableObject {
-    private static let lifecycleWindowPrefix = "contextos-lifecycle-"
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private lazy var model = DashboardModel()
     private let usageWindow = UsageWindowController()
     private var usageObserver: NSObjectProtocol?
+    private var didLaunch = false
+    private var pendingUsage = false
 
     func application(_ application: NSApplication, open urls: [URL]) {
         let scheme = Bundle.main.object(forInfoDictionaryKey: "ContextOSURLScheme") as? String ?? "contextos"
         guard urls.contains(where: { WidgetSnapshotStore.accepts($0, scheme: scheme) }) else { return }
-        showUsage()
+        if didLaunch { showUsage() } else { pendingUsage = true }
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if didLaunch { showUsage() } else { pendingUsage = true }
+        return false
     }
     private var isUsageReview: Bool {
         Bundle.main.bundleIdentifier == "com.contextos.review" || Bundle.main.bundleIdentifier == "com.contextos.timecandidate"
@@ -73,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private static let panelReleaseDelay: TimeInterval = 120
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        defer {
+            didLaunch = true
+            if pendingUsage { pendingUsage = false; showUsage() }
+        }
+        let menu = NSMenu()
+        let item = NSMenuItem(); menu.addItem(item)
+        let appMenu = NSMenu(title: "ContextOS"); item.submenu = appMenu
+        let detail = NSMenuItem(title: "AI 사용 현황…", action: #selector(openUsageFromMenu), keyEquivalent: "")
+        detail.target = self; appMenu.addItem(detail)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "ContextOS 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        NSApp.mainMenu = menu
         if isUsageReview {
             NSApp.setActivationPolicy(.regular)
             let args = ProcessInfo.processInfo.arguments
@@ -83,7 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
                 return
             }
             usageWindow.show(UsageReviewRoot(), title: reviewTitle)
-            hideLifecycleWindow()
             return
         }
         usageObserver = NotificationCenter.default.addObserver(forName: .openUsageDashboard, object: nil, queue: .main) { [weak self] _ in
@@ -161,7 +165,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             .removeDuplicates()
             .sink { [weak self] title in self?.statusItem.button?.attributedTitle = Self.menuBarTitle(title) }
             .store(in: &subscriptions)
-        hideLifecycleWindow()
     }
 
     /// Today's savings as the menu bar shows it: a notch smaller and a weight
@@ -174,20 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         ])
     }
 
-    /// `WindowGroup` is required by SwiftUI's `App` lifecycle, but ContextOS
-    /// has no document window. Limit this to our scene identifier so project
-    /// windows opened from the dashboard remain visible.
-    func applicationDidBecomeActive(_ notification: Notification) {
-        hideLifecycleWindow()
-    }
-
-    private func hideLifecycleWindow() {
-        DispatchQueue.main.async {
-            NSApp.windows
-                .filter { $0.identifier?.rawValue.hasPrefix(Self.lifecycleWindowPrefix) == true }
-                .forEach { $0.orderOut(nil) }
-        }
-    }
+    @objc private func openUsageFromMenu() { showUsage() }
 
     @objc private func togglePopover() {
         guard let button = statusItem.button else { return }

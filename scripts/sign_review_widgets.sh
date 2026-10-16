@@ -5,9 +5,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 IDENTITY="${1:?Usage: sign_review_widgets.sh <existing identity SHA1> <new output directory>}"
 OUTPUT="${2:?new output directory required}"
+BIN_DIR="${3:-}"
+BUILD_NUMBER="${4:-}"
 [[ "$IDENTITY" =~ ^[A-Fa-f0-9]{40}$ ]] || { echo 'Expected an existing signing identity SHA1'; exit 2; }
 [ ! -e "$OUTPUT" ] || { echo 'Refusing to overwrite output'; exit 2; }
-bash scripts/package_widgets.sh --review --output "$OUTPUT"
+ARGS=(--review --output "$OUTPUT")
+[ -z "$BIN_DIR" ] || ARGS+=(--binary-dir "$BIN_DIR")
+[ -z "$BUILD_NUMBER" ] || ARGS+=(--build-number "$BUILD_NUMBER")
+bash scripts/package_widgets.sh "${ARGS[@]}"
 APP="$OUTPUT/ContextOS Widget Review.app"
 GROUP="Y56BH9PULD.com.contextos.review.usage"
 python3 - "$APP" "$GROUP" <<'PY'

@@ -40,10 +40,20 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         }
     }
     private struct Info: Decodable { var total_token_usage: Counter? }
+    private enum Source: Decodable {
+        case named(String), subagent, unknown
+        private enum Keys: String, CodingKey { case subagent }
+        init(from decoder: Decoder) throws {
+            if let name = try? decoder.singleValueContainer().decode(String.self), name.utf8.count <= 64 { self = .named(name) }
+            else if let c = try? decoder.container(keyedBy: Keys.self), c.contains(.subagent) { self = .subagent }
+            else { self = .unknown }
+        }
+    }
     private struct Payload: Decodable {
         var type: String?; var id: String?; var cwd: String?; var model: String?; var turn_id: String?
         var role: String?; var phase: String?; var call_id: String?
         var forked_from_id: String?; var info: Info?
+        var source: Source?; var originator: String?
     }
     private struct Envelope: Decodable {
         var type: String?; var timestamp: String?; var sessionId: String?; var uuid: String?
@@ -59,6 +69,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var previous: Int64 = 0; var seen = Set<String>(); var metrics: [String: Metric] = [:]
         var lastEvent: Date?; var phase: WorkState = .unknown; var pending = Set<String>()
         var partial = false; var inherited = false
+        var origin: ObservedSession.Origin = .unknown
         var skippingLongLine = false
         var needsMoreRead = false
         var runEvents = Set<ExplicitAIRunEvent>()
@@ -213,7 +224,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 phases[id] = phase
                 sessions.append(ObservedSession(id: id, agent: agent,
                     project: row.project, model: row.model, state: Self.aged(phase, last: row.lastEvent, now: now), lastEvent: row.lastEvent,
-                    todayTokens: todayTotal, totalTokens: total))
+                    todayTokens: todayTotal, totalTokens: total, origin: row.origin))
             }
             if state == .ready && !hasAccounting { state = .noRecords }
             providers.append(.init(name: agent, state: state, latestEvent: latest))
@@ -332,6 +343,14 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 guard id.utf8.count <= 128 else { row.partial = true; return }; row.session = id
             }
             if p?.forked_from_id != nil { row.inherited = true }
+            switch p?.source {
+            case .subagent: row.origin = .subagent; row.inherited = true
+            case .named(let name):
+                if name == "subagent" { row.origin = .subagent; row.inherited = true }
+                else if ["Codex Desktop", "codex_work_desktop"].contains(p?.originator ?? "") { row.origin = .desktop }
+                else { row.origin = name == "cli" ? .cli : name == "vscode" ? .editor : name == "exec" ? .sdk : .unknown }
+            default: break
+            }
         }
         if let cwd = e.cwd ?? p?.cwd {
             row.project = Self.safeLabel(URL(fileURLWithPath: cwd).lastPathComponent, fallback: "프로젝트 미상")
