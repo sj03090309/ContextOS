@@ -316,6 +316,9 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             row.project = Self.safeLabel(URL(fileURLWithPath: cwd).lastPathComponent, fallback: "프로젝트 미상")
                 + " · " + Self.digest(cwd).prefix(4)
         }
+        // Reserved placeholder records are not model accounting or work signals.
+        // Their zero usage must not become a fabricated observed zero/rank.
+        if claude, e.message?.model == "<synthetic>" { row.partial = true; return }
         if let model = e.message?.model ?? (e.type == "turn_context" ? p?.model : nil) {
             row.model = Self.safeLabel(model, fallback: "모델 미상")
         }

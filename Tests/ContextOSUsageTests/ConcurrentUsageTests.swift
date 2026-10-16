@@ -53,6 +53,33 @@ import ContextOSUsage
         let s = ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(s.widget.today == 138) // Cached input is already inside total_tokens.
     }
+    @Test func syntheticClaudeZeroIsMissingRatherThanObservedZero() throws {
+        let h=try home(); defer { try? FileManager.default.removeItem(at:h) }
+        var synthetic=claude()
+        var message=synthetic["message"] as! [String:Any]
+        message["model"]="<synthetic>"; message["usage"]=["input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0]
+        synthetic["message"]=message
+        _=try write([synthetic],".claude/projects/p/a.jsonl",home:h)
+        let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(value.widget.today == nil && value.widget.models.isEmpty)
+        #expect(value.widget.providers.first { $0.name == "Claude Code" }?.state == .partial)
+        // A real model's explicit zero is still an observed zero.
+        message["model"]="claude-real-zero"; synthetic["message"]=message
+        _=try write([synthetic],".claude/projects/p/b.jsonl",home:h)
+        #expect(ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt).widget.today == 0)
+    }
+    @Test func syntheticClaudeRecordDoesNotReplaceRealModelOrAccounting() throws {
+        let h=try home(); defer { try? FileManager.default.removeItem(at:h) }
+        var synthetic=claude("placeholder",output:0)
+        var message=synthetic["message"] as! [String:Any]
+        message["model"]="<synthetic>"; message["usage"]=["input_tokens":0,"output_tokens":0]
+        synthetic["message"]=message
+        _=try write([claude(seconds:-6),synthetic],".claude/projects/p/a.jsonl",home:h)
+        let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(value.widget.today == 200)
+        #expect(value.widget.models.allSatisfy { !$0.name.contains("synthetic") })
+        #expect(value.sessions.first?.model == "claude-test")
+    }
     @Test func claudeCachedInputDisjointAndStreamingMessageReplacement() throws {
         let h = try home(); defer { try? FileManager.default.removeItem(at:h) }
         _ = try write([claude(output:10),claude(output:20),claude(output:20)], ".claude/projects/project/a.jsonl",home:h)

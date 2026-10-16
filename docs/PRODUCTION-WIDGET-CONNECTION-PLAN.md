@@ -1,5 +1,8 @@
 # Production widget connection: boundary and approval plan
 
+Latest status: direct approval resolved the earlier execution-policy block. Production build 2106 is installed and writes real non-sample aggregates to the approved group. See [current verification and remaining locked-screen checks](PRODUCTION-WIDGET-VALIDATION-2106.md). Earlier blocked/proposal descriptions below are historical.
+
+
 Status update: the user has since approved the production group and existing-certificate signing. Build 2105 is prepared and verified, but automatic approval review blocked replacing/registering/launching the operating app. The latest installed build remains 2104 and the production group has not been created. See [build 2105 deployment state](PRODUCTION-WIDGET-ROLLOUT-2105.md). The proposal and approval draft below record the earlier stage; they do not negate the later user approval.
 
 ## What is installed now

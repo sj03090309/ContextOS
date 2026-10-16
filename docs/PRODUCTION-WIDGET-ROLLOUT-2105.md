@@ -1,5 +1,8 @@
 # Build 2105: prepared, operating installation blocked
 
+Latest status: direct approval resolved the earlier execution-policy block. Production build 2106 is installed and writes real non-sample aggregates to the approved group. See [current verification and remaining locked-screen checks](PRODUCTION-WIDGET-VALIDATION-2106.md). Earlier blocked/proposal descriptions below are historical.
+
+
 The user approved production group `Y56BH9PULD.com.contextos.usage` for `com.contextos.app` and embedded `com.contextos.app.widgets`, signed with the existing development identity. No new certificate, account operation or profile was created. Review remains separate.
 
 Prepared candidate: `artifacts/production-widgets-v2105/ContextOS.app`. Existing team `Y56BH9PULD`, exact approved group entitlements and signatures passed verification. Full Swift regression: 93 XCTest + 257 Swift Testing = 350 pass (`artifacts/production-widget-tests.log`). Node unit/real temporary IPC: 11 pass. Release host and native arm64/x86_64 widget builds passed. 84 synthetic layout PNGs were regenerated; they are not desktop-widget screenshots.
