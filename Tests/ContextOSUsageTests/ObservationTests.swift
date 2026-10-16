@@ -77,8 +77,58 @@ struct ObservationTests {
         ledger.consume(try ObservationPacket.decode(packet(nonce:"87654321-1234-1234-1234-123456789abc")))
         #expect(ledger.editCount == 6 && ledger.partial)
     }
+    @Test func receiverLeaseRejectsLateCallbacksAndUnboundPersistence() {
+        var lease = ObservationReceiverLease()
+        let first = lease.begin(); #expect(!lease.isReady)
+        let firstReady = lease.ready(first); #expect(firstReady); #expect(lease.isReady)
+        lease.invalidate(); #expect(!lease.isReady && !lease.accepts(first))
+        let second = lease.begin()
+        let lateReady = lease.ready(first); #expect(!lateReady && !lease.isReady)
+        let secondReady = lease.ready(second); #expect(secondReady && lease.isReady)
+    }
+    @Test func legacyActivityImportIsPausedAndNeverOverwritesOrDeletes() throws {
+        let directory=URL(fileURLWithPath:"/tmp").appendingPathComponent("contextos-import-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let old=directory.appendingPathComponent("legacy.json"),dest=directory.appendingPathComponent("production.json")
+        let value=EstimatedActivitySnapshot(now:now,timeZone:.gmt,estimatedNanoseconds:20_000_000_000,phase:.active)
+        try EstimatedActivityStore.write(value,to:old);let original=try Data(contentsOf:old)
+        #expect(try EstimatedActivityStore.importLegacyIfAbsent(from:old,to:dest,now:now,timeZone:.gmt))
+        let restored=try #require(try EstimatedActivityStore.read(from:dest))
+        #expect(restored.estimatedNanoseconds==value.estimatedNanoseconds && restored.phase == .paused && restored.partial)
+        #expect(try Data(contentsOf:old)==original)
+        #expect(try !EstimatedActivityStore.importLegacyIfAbsent(from:old,to:dest,now:now.addingTimeInterval(30),timeZone:.gmt))
+        #expect(try EstimatedActivityStore.read(from:dest)==restored)
+        let nextDay=directory.appendingPathComponent("next-day.json")
+        #expect(try !EstimatedActivityStore.importLegacyIfAbsent(from:old,to:nextDay,now:now.addingTimeInterval(86400),timeZone:.gmt))
+        #expect(!FileManager.default.fileExists(atPath:nextDay.path))
+    }
+    @Test func occupiedReceiverCannotBecomeReadyOrRemoveTheOwnerSocket() async throws {
+        actor State {
+            var ready = false, failed = false
+            func record(_ event: ObservationBridgeEvent) { if case .ready = event { ready = true }; if case .failed = event { failed = true } }
+            func values() -> (Bool,Bool) { (ready,failed) }
+        }
+        let directory=URL(fileURLWithPath:"/tmp").appendingPathComponent("contextos-owner-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let a=State(),b=State()
+        let owner=ObservationBridgeServer { e in Task { await a.record(e) } }
+        let other=ObservationBridgeServer { e in Task { await b.record(e) } }
+        defer { other.stopSynchronously(); owner.stopSynchronously() }
+        owner.start(directory:directory)
+        for _ in 0..<100 { if await a.values().0 { break }; try await Task.sleep(for:.milliseconds(10)) }
+        #expect(await a.values().0)
+        let path=directory.appendingPathComponent("observations.sock").path
+        var before=stat(); try #require(lstat(path,&before)==0)
+        other.start(directory:directory)
+        for _ in 0..<100 { if await b.values().1 { break }; try await Task.sleep(for:.milliseconds(10)) }
+        let state=await b.values(); #expect(!state.0 && state.1)
+        other.stopSynchronously()
+        var after=stat(); #expect(lstat(path,&after)==0 && before.st_ino==after.st_ino)
+    }
     @Test func unixReceiverAcceptsSyntheticPacketAndPreservesExistingPath() async throws {
-        actor Box { var events:[ObservationBridgeEvent]=[]; func add(_ e:ObservationBridgeEvent){events.append(e)}; func count()->Int{events.count} }
+        actor Box { var events:[ObservationBridgeEvent]=[]; func add(_ e:ObservationBridgeEvent){events.append(e)}; func count()->Int{events.filter { if case .packet = $0 { return true }; return false }.count} }
         let directory=URL(fileURLWithPath:"/tmp",isDirectory:true).appendingPathComponent("contextos-bridge-"+UUID().uuidString)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
         defer{try? FileManager.default.removeItem(at:directory)}

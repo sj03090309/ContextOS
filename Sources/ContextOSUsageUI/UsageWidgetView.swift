@@ -25,6 +25,8 @@ public struct UsageWidgetView: View {
         scheme == .dark ? Color(red: 0.57, green: 0.72, blue: 1)
                         : Color(red: 0.14, green: 0.36, blue: 0.78)
     }
+    private var presentationRanks: [UsageRank] { snapshot.models.isEmpty ? snapshot.agents : snapshot.models }
+    private var rankName: String { snapshot.models.isEmpty ? "AI" : "모델" }
     private var old: Bool { snapshot.stale(at: now) }
     private var status: String {
         let value: String
@@ -45,7 +47,7 @@ public struct UsageWidgetView: View {
         return String(format: "%.2fM", scaled)
     }
     public var body: some View {
-        VStack(alignment: .leading, spacing: size == .medium && snapshot.agents.count >= 3 ? 4 : 12) {
+        VStack(alignment: .leading, spacing: size == .medium && presentationRanks.count >= 3 ? 4 : 12) {
             switch size {
             case .small:
                 if let metric = snapshot.smallMetric, metric != .tokens {
@@ -58,9 +60,9 @@ public struct UsageWidgetView: View {
                     number(snapshot.today, points: 36)
                 }
             case .medium:
-                title(old ? "AI 토큰 · 이전 집계" : "오늘 AI 토큰", branded: true)
-                if snapshot.agents.isEmpty { empty }
-                ForEach(Array(snapshot.agents.prefix(3).enumerated()), id: \.element.id) { index, rank in
+                title(old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName) 토큰", branded: true)
+                if presentationRanks.isEmpty { empty }
+                ForEach(Array(presentationRanks.prefix(3).enumerated()), id: \.element.id) { index, rank in
                     comparison(rank, index: index)
                 }
             case .large:
@@ -69,9 +71,9 @@ public struct UsageWidgetView: View {
                     number(snapshot.weekTotal, points: 38)
                 }
                 if snapshot.days.contains(where: { $0.tokens != nil }) { chart.padding(.top, 3) }
-                title(old ? "AI 토큰 · 이전 집계" : "오늘 AI").padding(.top, 9)
-                if snapshot.agents.isEmpty { empty }
-                ForEach(snapshot.agents.prefix(3)) { rank in rankRow(rank, points: 15) }
+                title(old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName)").padding(.top, 9)
+                if presentationRanks.isEmpty { empty }
+                ForEach(presentationRanks.prefix(3)) { rank in rankRow(rank, points: 15) }
             }
             Spacer(minLength: 0)
             footer
@@ -110,7 +112,7 @@ public struct UsageWidgetView: View {
         .accessibilityLabel("\(rank.name), \(rank.tokens) 토큰")
     }
     private func comparison(_ rank: UsageRank, index: Int) -> some View {
-        let maximum = max(1, snapshot.agents.map(\.tokens).max() ?? 1)
+        let maximum = max(1, presentationRanks.map(\.tokens).max() ?? 1)
         return VStack(alignment: .leading, spacing: 4) {
             rankRow(rank, points: 16)
             GeometryReader { proxy in

@@ -33,6 +33,9 @@ final class DashboardModel: ObservableObject {
     private var queuedTokenRefresh: Timer?
 
     func shareMeasuredTime(force: Bool = false, timing: WidgetTimeSnapshot? = nil, metric: SmallWidgetMetric? = nil) {
+        // Do not publish the empty startup placeholder before the first token
+        // collection; it could otherwise throttle the first real snapshot.
+        guard !concurrentUsage.widget.providers.isEmpty else { return }
         guard force || Date().timeIntervalSince(lastMeasuredShare) >= 60 else { return }
         guard let container = WidgetSnapshotStore.container() else { return }
         var payload = concurrentUsage.widget

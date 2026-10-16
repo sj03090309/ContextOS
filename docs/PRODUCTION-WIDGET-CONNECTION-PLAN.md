@@ -1,6 +1,6 @@
 # Production widget connection: boundary and approval plan
 
-Status: **proposal only**. No production App Group, new entitlement, certificate, profile, account registration or collection opt-in has been added. The latest installed hardening build is 2104.
+Status update: the user has since approved the production group and existing-certificate signing. Build 2105 is prepared and verified, but automatic approval review blocked replacing/registering/launching the operating app. The latest installed build remains 2104 and the production group has not been created. See [build 2105 deployment state](PRODUCTION-WIDGET-ROLLOUT-2105.md). The proposal and approval draft below record the earlier stage; they do not negate the later user approval.
 
 ## What is installed now
 

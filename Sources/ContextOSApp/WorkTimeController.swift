@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Combine
 import ContextOSUsage
 import ContextOSCore
@@ -16,7 +17,7 @@ final class WorkTimeController: ObservableObject {
     @Published var showWidgetMascot = UserDefaults.standard.object(forKey: "contextos.showWidgetMascot") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showWidgetMascot, forKey: "contextos.showWidgetMascot") }
     }
-    @Published var smallMetric: SmallWidgetMetric = SmallWidgetMetric(rawValue: UserDefaults.standard.string(forKey: "contextos.smallWidgetMetric") ?? "") ?? .activity {
+    @Published var smallMetric: SmallWidgetMetric = SmallWidgetMetric(rawValue: UserDefaults.standard.string(forKey: "contextos.smallWidgetMetric") ?? "") ?? .tokens {
         didSet { UserDefaults.standard.set(smallMetric.rawValue, forKey: "contextos.smallWidgetMetric") }
     }
     @Published private(set) var aiExecution: AIExecutionSummary?
@@ -30,8 +31,9 @@ final class WorkTimeController: ObservableObject {
     private var activityTimer: Timer?
     private var lastActivityStore = Date.distantPast
     private var lastActivityPhase = EstimatedActivitySnapshot.Phase.notObserved
+    private var receiverLease = ObservationReceiverLease()
     private var activityFile: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ContextOS Observation Candidate/activity-day-v1.json")
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ContextOS/Activity/activity-day-v1.json")
     }
     private func activityPoint(_ body: (inout EstimatedActivityLedger, UInt64, Date) -> Void) {
         let wall = Date(), tick = DispatchTime.now().uptimeNanoseconds
@@ -42,13 +44,13 @@ final class WorkTimeController: ObservableObject {
         estimatedActivity = activityLedger.snapshot
         publish() // One snapshot shared by dashboard, widget writer and editor clients.
         bridgeServer?.publish(estimatedActivity)
-        if bridgeEnabled && (Date().timeIntervalSince(lastActivityStore) >= 60 || lastActivityPhase != estimatedActivity.phase) {
+        if bridgeEnabled && receiverLease.isReady && (Date().timeIntervalSince(lastActivityStore) >= 60 || lastActivityPhase != estimatedActivity.phase) {
             do { try EstimatedActivityStore.write(estimatedActivity, to: activityFile); lastActivityStore = Date(); activityStoreStatus = nil }
             catch { activityStoreStatus = "오늘 집계 저장 실패 · 메모리 값만 표시" }
         }
         lastActivityPhase = estimatedActivity.phase
         activityTimer?.invalidate(); activityTimer = nil
-        if bridgeEnabled && estimatedActivity.phase == .active {
+        if bridgeEnabled && receiverLease.isReady && estimatedActivity.phase == .active {
             activityTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.activityPoint { ledger, tick, wall in ledger.advance(tick: tick, wall: wall, timeZone: .current) } }
             }
@@ -70,19 +72,40 @@ final class WorkTimeController: ObservableObject {
     }
     func updateAIExecution(_ value: AIExecutionSummary) { aiExecution = value }
     func setBridgeEnabled(_ enabled: Bool) {
+        guard !enabled || Bundle.main.bundleIdentifier == "com.contextos.app" else {
+            bridgeStatus = "테스트 앱 · 자동 활동 연결은 운영 앱에서 켜세요"; return
+        }
         guard enabled != bridgeEnabled else { return }
+        let ownedPersistence = receiverLease.isReady
+        let generation = receiverLease.begin()
         bridgeEnabled = enabled
         UserDefaults.standard.set(enabled, forKey: "contextos.automaticActivityReceiverEnabled")
         if enabled {
-            if let stored = try? EstimatedActivityStore.read(from: activityFile) { activityLedger.restore(stored, now: Date(), timeZone: .current) }
-            estimatedActivity = activityLedger.snapshot; publish()
             ensureBoundaries()
-            bridgeStatus = "로컬 수신 대기 · VS Code 확장 연결 필요"
+            bridgeStatus = "로컬 수신 준비 중"
             let server = ObservationBridgeServer { [weak self] event in
                 Task { @MainActor in
-                    guard let self, self.bridgeEnabled else { return }
+                    guard let self, self.bridgeEnabled, self.receiverLease.accepts(generation) else { return }
                     switch event {
+                    case .ready:
+                        do {
+                            let directory = self.activityFile.deletingLastPathComponent()
+                            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                            var status = stat()
+                            guard lstat(directory.path, &status) == 0, status.st_uid == getuid(), status.st_mode & S_IFMT == S_IFDIR, status.st_mode & 0o077 == 0 else { throw BridgeError.unsafeLocation }
+                            let legacy = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ContextOS Observation Candidate/activity-day-v1.json")
+                            try EstimatedActivityStore.importLegacyIfAbsent(from: legacy, to: self.activityFile, now: Date(), timeZone: .current)
+                            if let stored = try EstimatedActivityStore.read(from: self.activityFile) { self.activityLedger.restore(stored, now: Date(), timeZone: .current) }
+                            self.receiverLease.ready(generation)
+                            self.estimatedActivity = self.activityLedger.snapshot; self.publish()
+                            self.bridgeStatus = "로컬 수신 대기 · VS Code 확장 연결 필요"
+                        } catch {
+                            self.receiverLease.invalidate(); self.bridgeEnabled = false
+                            self.bridgeStatus = "활동 저장 준비 실패 · 기존 기록 보존"
+                            self.bridgeServer?.stop(); self.bridgeServer = nil; self.releaseUnusedBoundaries()
+                        }
                     case .packet(let packet):
+                        guard self.receiverLease.isReady else { return }
                         if packet.version == 2 {
                             let signal: EstimatedActivitySignal
                             switch packet.kind {
@@ -106,8 +129,8 @@ final class WorkTimeController: ObservableObject {
                         }
                         self.bridgeFocused = nil; self.bridgeStatus = "일부 연결 끊김 · 마지막 집계 유지"
                     case .failed:
+                        self.receiverLease.invalidate()
                         self.bridgeStatus = "수신 시작 실패 · 기존 경로 보존"; self.bridgeEnabled = false
-                        UserDefaults.standard.set(false, forKey: "contextos.automaticActivityReceiverEnabled")
                         self.bridgeServer = nil; self.releaseUnusedBoundaries()
                     }
                 }
@@ -117,7 +140,7 @@ final class WorkTimeController: ObservableObject {
             server.start(directory: directory)
         } else {
             activityPoint { ledger, tick, wall in ledger.disconnect(id: nil, tick: tick, wall: wall, timeZone: .current) }
-            try? EstimatedActivityStore.write(estimatedActivity, to: activityFile)
+            if ownedPersistence { try? EstimatedActivityStore.write(estimatedActivity, to: activityFile) }
             activityTimer?.invalidate(); activityTimer = nil
             bridgeServer?.stop(); bridgeServer = nil; closedEditCount = bridgeEditCount; bridgeLedgers.removeAll()
             bridgeFocused = nil; bridgeStatus = "수신 꺼짐 · 관측 중지"; releaseUnusedBoundaries()

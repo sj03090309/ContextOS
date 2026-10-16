@@ -19,6 +19,18 @@ public enum EstimatedActivityStore {
               value.estimatedNanoseconds.map({ $0 <= 93_600_000_000_000 }) ?? true else { throw BridgeError.invalidPacket }
         return value
     }
+    /// Called only by the successfully bound production receiver. Never overwrites
+    /// the destination or deletes the legacy candidate aggregate.
+    @discardableResult public static func importLegacyIfAbsent(from legacy: URL, to destination: URL, now: Date, timeZone: TimeZone) throws -> Bool {
+        guard !FileManager.default.fileExists(atPath: destination.path),
+              let value = try read(from: legacy), value.estimatedNanoseconds != nil,
+              value.day == EstimatedActivitySnapshot.dayKey(now, zone: timeZone),
+              value.timeZoneID == timeZone.identifier else { return false }
+        var ledger = EstimatedActivityLedger(now: now, timeZone: timeZone)
+        ledger.restore(value, now: now, timeZone: timeZone)
+        try write(ledger.snapshot, to: destination)
+        return true
+    }
     public static func write(_ value: EstimatedActivitySnapshot, to file: URL) throws {
         var st = stat()
         guard lstat(file.deletingLastPathComponent().path, &st) == 0, st.st_uid == getuid(),

@@ -6,11 +6,13 @@ cd "$(dirname "$0")/.."
 OUTPUT="dist/widgets"
 BIN_DIR=""
 REVIEW=0
+BUILD_NUMBER=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --binary-dir) BIN_DIR="${2:?binary directory required}"; shift ;;
         --output) OUTPUT="${2:?output directory required}"; shift ;;
         --review) REVIEW=1 ;;
+        --build-number) BUILD_NUMBER="${2:?build number required}"; shift ;;
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -22,6 +24,7 @@ OUTPUT="$(cd "$OUTPUT" && pwd)"
 STAGE="$(mktemp -d "$OUTPUT/.widget-package-XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 ARGS=(--output "$STAGE/base")
+[ -z "$BUILD_NUMBER" ] || ARGS+=(--build-number "$BUILD_NUMBER")
 [ -z "$BIN_DIR" ] || ARGS+=(--binary-dir "$BIN_DIR")
 bash scripts/package_app.sh "${ARGS[@]}"
 xcodebuild -project NativeWidgets/ContextOSWidgets.xcodeproj -target ContextOSWidgets \

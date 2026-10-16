@@ -34,8 +34,21 @@ public struct ObservationPacket: Decodable, Sendable {
         return packet
     }
 }
+/// A receiver generation owns persistence only after its socket is ready.
+public struct ObservationReceiverLease: Sendable {
+    private var generation = UUID()
+    public private(set) var isReady = false
+    public init() {}
+    public mutating func begin() -> UUID { generation = UUID(); isReady = false; return generation }
+    public func accepts(_ value: UUID) -> Bool { generation == value }
+    @discardableResult public mutating func ready(_ value: UUID) -> Bool {
+        guard accepts(value) else { return false }; isReady = true; return true
+    }
+    public mutating func invalidate() { generation = UUID(); isReady = false }
+}
+
 public enum BridgeError: Error { case invalidPacket, unsafeLocation, socketFailure }
-public enum ObservationBridgeEvent: Sendable { case packet(ObservationPacket), disconnected(String?), failed }
+public enum ObservationBridgeEvent: Sendable { case ready, packet(ObservationPacket), disconnected(String?), failed }
 
 /// In-memory counts only. Nonce/sequence/focus are never converted into time.
 public struct ObservationBridgeLedger: Sendable {
@@ -129,7 +142,7 @@ public final class ObservationBridgeServer: @unchecked Sendable {
             if lstat(path, &status) == 0 { ownedInode = status.st_ino }
             guard chmod(path, 0o600) == 0, listen(fd, 4) == 0, fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { throw BridgeError.socketFailure }
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-            listener = source; source.setEventHandler { [weak self] in self?.acceptClients() }; source.resume()
+            listener = source; source.setEventHandler { [weak self] in self?.acceptClients() }; callback(.ready); source.resume()
         } catch { shutdown(); callback(.failed) }
     }
     private func acceptClients() {

@@ -36,6 +36,7 @@ final class IntegrationHost: @unchecked Sendable {
     private func receive(_ event: ObservationBridgeEvent) {
         gate.lock()
         switch event {
+        case .ready: emit(["type":"ready"])
         case .packet(let packet):
             let signal: EstimatedActivitySignal
             switch packet.kind {
