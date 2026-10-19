@@ -99,6 +99,10 @@ struct FooterBar: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                if let openWindow = ui.openWindow {
+                    PanelIconButton(symbol: "macwindow", help: "창으로 열기 (⇧⌘O)", action: openWindow)
+                        .keyboardShortcut("o", modifiers: [.command, .shift])
+                }
                 PanelIconButton(symbol: ui.hidePrivateDetails ? "eye.slash" : "eye", help: "개인 정보 숨기기", isOn: ui.hidePrivateDetails) {
                     ui.hidePrivateDetails.toggle()
                 }

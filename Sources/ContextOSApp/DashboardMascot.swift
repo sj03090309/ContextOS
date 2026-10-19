@@ -17,6 +17,7 @@ struct MeltingMascot: View {
     /// the same instant.
     @ObservedObject var state: MascotState
     @ObservedObject var settings: AppSettings
+    var surface: DashboardSurface = .popover
     /// When this view's melt-in began. Only the *entrance* is timed from here —
     /// the chew itself runs off the absolute clock, so re-opening the popover
     /// replays the drop without knocking the two mascots out of step.
@@ -67,12 +68,14 @@ struct MeltingMascot: View {
         .onAppear { start = Date() }
         // Replay the melt-in each time the popover is opened (the hosted view is
         // reused, so onAppear alone won't fire again).
-        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
+            guard notification.object as? DashboardSurface == surface else { return }
             start = Date()
             settled = false
             hidden = false
         }
-        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { notification in
+            guard notification.object as? DashboardSurface == surface else { return }
             hidden = true
         }
         .task(id: start) {
@@ -367,11 +370,12 @@ final class PopoverContentController: NSViewController {
     /// reserves for it.
     static let mascotHeight: CGFloat = 50
 
-    init(model: DashboardModel, ui: DashboardUIState, workTime: WorkTimeController = .shared) {
+    init(model: DashboardModel, ui: DashboardUIState, workTime: WorkTimeController = .shared,
+         surface: DashboardSurface = .popover) {
         self.model = model
         self.ui = ui
         self.mascotHost = NSHostingView(rootView: MeltingMascot(state: model.mascot,
-                                                                settings: AppSettings.shared))
+                                                                settings: AppSettings.shared, surface: surface))
         self.dashboardHost = NSHostingView(
             rootView: AnyView(DashboardView(workTime: workTime).environmentObject(model).environmentObject(ui)))
         super.init(nibName: nil, bundle: nil)

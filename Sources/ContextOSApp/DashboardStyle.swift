@@ -1,6 +1,25 @@
 import SwiftUI
 import AppKit
 
+enum DashboardSurface: Hashable { case popover, window }
+
+/// One live dashboard may have two presentations. Keep the live cadence until
+/// the last presentation closes, without multiplying collectors or timers.
+struct DashboardVisibility {
+    private var surfaces: Set<DashboardSurface> = []
+    var isVisible: Bool { !surfaces.isEmpty }
+    mutating func open(_ surface: DashboardSurface) -> Bool {
+        let wasVisible = isVisible
+        surfaces.insert(surface)
+        return !wasVisible && isVisible
+    }
+    mutating func close(_ surface: DashboardSurface) -> Bool {
+        let wasVisible = isVisible
+        surfaces.remove(surface)
+        return wasVisible && !isVisible
+    }
+}
+
 /// One short response to an action, with no decorative animation loop.
 enum PanelMotion {
     static func response(reduced: Bool) -> Animation? {

@@ -129,7 +129,8 @@ final class DashboardModel: ObservableObject {
     private var lastQueryCount = -1
     private var savingsTimer: Timer?
     private var usageTimer: Timer?
-    private var panelOpen = false
+    private var dashboardVisibility = DashboardVisibility()
+    private var panelOpen: Bool { dashboardVisibility.isVisible }
     private var historyVisible = false
     @Published private(set) var isRefreshing = false
     /// A refresh asked for while another was running, run as soon as it ends —
@@ -232,8 +233,8 @@ final class DashboardModel: ObservableObject {
 
     /// The panel just opened: bring everything on it up to date now, then keep
     /// it live while it stays open.
-    func panelDidOpen() {
-        panelOpen = true
+    func panelDidOpen(_ surface: DashboardSurface = .popover) {
+        guard dashboardVisibility.open(surface) else { return }
         dayDetails = [:]
         refreshFast()
         refreshSlow(includeWeek: historyVisible, priority: .userInitiated)
@@ -242,8 +243,8 @@ final class DashboardModel: ObservableObject {
     }
 
     /// The panel closed: nothing on it is visible, so drop to the slow cadence.
-    func panelDidClose() {
-        panelOpen = false
+    func panelDidClose(_ surface: DashboardSurface = .popover) {
+        guard dashboardVisibility.close(surface) else { return }
         scheduleUsageRefresh()
     }
 

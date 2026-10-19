@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private let popover = NSPopover()
     private lazy var model = DashboardModel()
     private let usageWindow = UsageWindowController()
+    private lazy var dashboardWindow = DashboardWindowController(model: model, ui: dashboardUI)
     private var usageObserver: NSObjectProtocol?
     private var didLaunch = false
     private var pendingPage: DashboardUIState.Page?
@@ -39,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         if didLaunch { showUsage() } else { pendingPage = .usage }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if didLaunch { showPage(.overview) } else { pendingPage = .overview }
+        if didLaunch { openDashboardWindow() } else { pendingPage = .overview }
         return false
     }
     private var isUsageReview: Bool {
@@ -80,6 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         let menu = NSMenu()
         let item = NSMenuItem(); menu.addItem(item)
         let appMenu = NSMenu(title: "ContextOS"); item.submenu = appMenu
+        let openWindow = NSMenuItem(title: "대시보드를 창으로 열기", action: #selector(openDashboardWindow), keyEquivalent: "o")
+        openWindow.keyEquivalentModifierMask = [.command, .shift]
+        openWindow.target = self
+        appMenu.addItem(openWindow)
+        appMenu.addItem(.separator())
         for (index, page) in DashboardUIState.Page.allCases.enumerated() {
             let pageItem = NSMenuItem(title: page.label, action: #selector(openPageFromMenu(_:)), keyEquivalent: String(index + 1))
             pageItem.target = self
@@ -92,6 +98,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "ContextOS 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         NSApp.mainMenu = menu
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "윈도우")
+        windowItem.submenu = windowMenu
+        menu.addItem(windowItem)
+        windowMenu.addItem(withTitle: "닫기", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "최소화", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "모두 앞으로 가져오기", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        NSApp.windowsMenu = windowMenu
         if isUsageReview {
             NSApp.setActivationPolicy(.regular)
             let args = ProcessInfo.processInfo.arguments
@@ -109,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         }
         // No Dock icon, no standalone window.
         NSApp.setActivationPolicy(.accessory)
+        dashboardUI.openWindow = { [weak self] in self?.openDashboardWindow() }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -195,6 +211,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
 
     @objc private func openUsageFromMenu() { showUsage() }
 
+    @objc private func openDashboardWindow() {
+        guard !isUsageReview else { showUsage(); return }
+        dashboardWindow.show(preferredScreen: statusItem?.button?.window?.screen)
+    }
+
     @objc private func openPageFromMenu(_ sender: NSMenuItem) {
         guard DashboardUIState.Page.allCases.indices.contains(sender.tag) else { return }
         dashboardUI.showSettings = false
@@ -232,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             model.panelDidOpen()
             // NSPopover reuses its hosted view, so onAppear only fires once. Signal
             // the dashboard to replay the droplet melt-in on every open.
-            NotificationCenter.default.post(name: .contextOSPopoverOpened, object: nil)
+            NotificationCenter.default.post(name: .contextOSPopoverOpened, object: DashboardSurface.popover)
         }
     }
 }
@@ -241,8 +262,7 @@ extension AppDelegate {
     /// NSPopover keeps its hosted view alive after dismissal, so the dashboard
     /// has to be told to stop animating; nothing else will.
     func popoverDidClose(_ notification: Notification) {
-        NotificationCenter.default.post(name: .contextOSPopoverClosed, object: nil)
-        dashboardUI.showSettings = false
+        NotificationCenter.default.post(name: .contextOSPopoverClosed, object: DashboardSurface.popover)
         model.panelDidClose()
         schedulePanelRelease()
     }

@@ -114,6 +114,8 @@ final class DashboardUIState: ObservableObject {
     // Display only: never mutates the project store, history or usage snapshot.
     // Safe by default when this release preview is shared or screen recorded.
     @Published var hidePrivateDetails = true
+    /// Wired by the app's public window command; no independent data source.
+    var openWindow: (() -> Void)?
 }
 
 /// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a
