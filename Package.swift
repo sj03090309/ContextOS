@@ -21,6 +21,7 @@ let package = Package(
         .target(name: "ContextOSUsage"),
         .target(name: "ContextOSUsageUI", dependencies: ["ContextOSUsage"]),
         .testTarget(name: "ContextOSUsageTests", dependencies: ["ContextOSCore", "ContextOSUsage"]),
+        .testTarget(name: "ContextOSAppTests", dependencies: ["ContextOSApp"]),
         // Pure logic. No platform / UI dependencies. Everything else is a thin adapter.
         .target(
             name: "ContextOSCore", dependencies: ["ContextOSUsage"]

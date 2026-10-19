@@ -63,7 +63,8 @@ final class WorkTimeController: ObservableObject {
     private var bridgeLedgers: [String: ObservationBridgeLedger] = [:]
     private var closedEditCount: UInt64?
     private var bridgeServer: ObservationBridgeServer?
-    init() {
+    init(restoreConnections: Bool = true) {
+        guard restoreConnections else { return }
         // Only a prior explicit host opt-in restores receiver startup. Fresh
         // candidates remain off; never infer consent from an installed VSIX.
         if UserDefaults.standard.bool(forKey: "contextos.automaticActivityReceiverEnabled") {

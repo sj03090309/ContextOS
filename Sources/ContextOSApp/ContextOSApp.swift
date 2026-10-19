@@ -53,7 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         if isUsageReview {
             usageWindow.show(UsageReviewRoot(), title: reviewTitle)
         } else {
-            usageWindow.show(UsageDetailRoot(model: model), title: "ContextOS · AI 사용 현황")
+            dashboardUI.page = .usage
+            showPopover()
         }
     }
     private lazy var mascot = MascotRenderer(state: model.mascot)
@@ -73,6 +74,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         let menu = NSMenu()
         let item = NSMenuItem(); menu.addItem(item)
         let appMenu = NSMenu(title: "ContextOS"); item.submenu = appMenu
+        for (index, page) in DashboardUIState.Page.allCases.enumerated() {
+            let pageItem = NSMenuItem(title: page.label, action: #selector(openPageFromMenu(_:)), keyEquivalent: String(index + 1))
+            pageItem.target = self
+            pageItem.tag = index
+            appMenu.addItem(pageItem)
+        }
+        appMenu.addItem(.separator())
         let detail = NSMenuItem(title: "AI 사용 현황…", action: #selector(openUsageFromMenu), keyEquivalent: "")
         detail.target = self; appMenu.addItem(detail)
         appMenu.addItem(.separator())
@@ -98,6 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
+            button.setAccessibilityLabel("ContextOS 대시보드")
+            button.toolTip = "ContextOS 대시보드"
             button.imagePosition = .imageLeading
             button.action = #selector(togglePopover)
             button.target = self
@@ -179,17 +189,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
 
     @objc private func openUsageFromMenu() { showUsage() }
 
+    @objc private func openPageFromMenu(_ sender: NSMenuItem) {
+        guard DashboardUIState.Page.allCases.indices.contains(sender.tag) else { return }
+        dashboardUI.showSettings = false
+        dashboardUI.page = DashboardUIState.Page.allCases[sender.tag]
+        showPopover()
+    }
+
     @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
+        guard statusItem?.button != nil else { return }
         mascot.userInteracted()
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            showPopover()
+        }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem?.button else { return }
+        if !popover.isShown {
+            popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             panelRelease?.invalidate()
             panelRelease = nil
             if popover.contentViewController == nil {
                 // Two hosting views, not one: see `PopoverContentController`.
                 popover.contentViewController = PopoverContentController(model: model, ui: dashboardUI)
+            }
+            if let controller = popover.contentViewController as? PopoverContentController {
+                controller.prepare(for: button.window?.screen)
+                popover.contentSize = controller.preferredContentSize
             }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
@@ -318,6 +347,7 @@ final class MascotRenderer: ObservableObject {
     private var eatingChange: AnyCancellable?
     private var motionChange: AnyCancellable?
     private let settings = AppSettings.shared
+    private var reducedMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
     /// The breath's period: `sin(t · 2)` repeats every π seconds.
     private static let idlePeriod = Double.pi
@@ -405,7 +435,7 @@ final class MascotRenderer: ObservableObject {
             return
         }
         let now = Date()
-        let motion = settings.mascotMotion
+        let motion: AppSettings.MascotMotion = reducedMotion ? .off : settings.mascotMotion
         // Set never to chew, 뭉치 ignores the chew state entirely.
         let eating = motion.chews && state.eating
         let k = motion.chews ? state.intensity(at: now) : 0
@@ -503,6 +533,12 @@ final class MascotRenderer: ObservableObject {
         on(distributed, Notification.Name("com.apple.screenIsUnlocked")) { $0.setSuspended(locked: false) }
         on(workspace, NSWorkspace.sessionDidResignActiveNotification) { $0.setSuspended(inactive: true) }
         on(workspace, NSWorkspace.sessionDidBecomeActiveNotification) { $0.setSuspended(inactive: false) }
+        on(workspace, NSWorkspace.accessibilityDisplayOptionsDidChangeNotification) { renderer in
+            renderer.reducedMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            renderer.pace = nil
+            renderer.lastIndex = -1
+            renderer.tick()
+        }
     }
 
     /// 0…1 through one breath.

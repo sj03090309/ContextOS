@@ -120,7 +120,7 @@ final class DashboardModel: ObservableObject {
     private var savingsTimer: Timer?
     private var usageTimer: Timer?
     private var panelOpen = false
-    private var usageRefreshInFlight = false
+    @Published private(set) var isRefreshing = false
     /// A refresh asked for while another was running, run as soon as it ends —
     /// so opening the panel mid-way through a background top-up still gets the
     /// week in code, which the background pass skips.
@@ -141,7 +141,8 @@ final class DashboardModel: ObservableObject {
     /// which is the real trigger.
     private static let savingsInterval: TimeInterval = 60
 
-    init() {
+    init(startServices: Bool = true) {
+        guard startServices else { return }
         refreshFast()
         refreshSlow(includeWeek: true, priority: .utility)
         let center = DistributedNotificationCenter.default()
@@ -396,13 +397,13 @@ final class DashboardModel: ObservableObject {
     private func refreshSlow(force: Bool = false, includeWeek: Bool, priority: TaskPriority) {
         // One at a time: a refresh that lands while another is still parsing
         // would only wait on the same lock and redo its work. Remember it instead.
-        guard !usageRefreshInFlight else {
+        guard !isRefreshing else {
             let queued = queuedUsageRefresh
             queuedUsageRefresh = (force || queued?.force == true, includeWeek || queued?.includeWeek == true,
                                   max(priority, queued?.priority ?? priority))
             return
         }
-        usageRefreshInFlight = true
+        isRefreshing = true
         Task(priority: priority) {
             let reader = concurrentReader
             let usage = await Task.detached(priority: priority) {
@@ -414,7 +415,7 @@ final class DashboardModel: ObservableObject {
             usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
             shareMeasuredTime()
             let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
-            usageRefreshInFlight = false
+            isRefreshing = false
             update(\.aiTokens, a.aiTokens)
             update(\.agents, a.agents)
             update(\.connected, a.connected)

@@ -7,20 +7,169 @@ extension Notification.Name { static let openUsageDashboard = Notification.Name(
 
 struct ConcurrentUsageSummary: View {
     @EnvironmentObject var model: DashboardModel
+    @EnvironmentObject var ui: DashboardUIState
     var body: some View {
-        Button { NotificationCenter.default.post(name: .openUsageDashboard, object: nil) } label: {
+        UsageOverviewCard(snapshot: model.concurrentUsage, expanded: $ui.usageExpanded,
+                          showDetails: ui.page == .usage ? nil : { ui.page = .usage })
+    }
+}
+
+/// A presentation of the existing observed snapshot, with no collector or timer.
+struct UsageOverviewCard: View {
+    let snapshot: ConcurrentUsageSnapshot
+    @Binding var expanded: Bool
+    var showDetails: (() -> Void)? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    private var data: WidgetUsageSnapshot { snapshot.widget }
+    private var working: Int { snapshot.sessions.filter { $0.state == .working }.count }
+    private var waiting: Int { snapshot.sessions.filter { $0.state == .waiting }.count }
+    private var hasObservedSource: Bool {
+        data.providers.contains { $0.state == .ready || $0.state == .partial || $0.state == .noRecords }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
             HStack {
-                Image(systemName: "rectangle.stack").foregroundStyle(Brand.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AI 동시 세션").font(.system(size: 11, weight: .semibold))
-                    Text("\(model.concurrentUsage.sessions.filter { $0.state == .working || $0.state == .waiting }.count)개 작업·대기 · 상세 보기")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
+                Label("오늘 관측 토큰", systemImage: "sparkle")
+                    .font(.system(size: 11, weight: .medium))
                 Spacer()
-                Text(UsageNumbers.compact(model.concurrentUsage.widget.today)).font(.system(size: 16, weight: .semibold, design: .rounded))
-                Image(systemName: "chevron.right").font(.system(size: 9))
-            }.padding(10).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-        }.buttonStyle(.plain)
+                Text("로컬 기록").font(.system(size: 9.5)).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .bottom) {
+                Text(UsageNumbers.compact(data.today))
+                    .font(.system(size: 38, weight: .semibold, design: .rounded))
+                    .tracking(-0.8).monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(PanelMotion.feedback(reduced: reduced), value: data.today)
+                    .accessibilityLabel("오늘 관측 토큰")
+                    .accessibilityValue(data.today.map(String.init) ?? "확인 가능한 집계 없음")
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(data.providers.isEmpty ? "집계 준비 중" : data.health)
+                        .foregroundStyle(data.health == "일부 수집 불가" ? Brand.caution : Color.secondary)
+                    Text(data.comparison).foregroundStyle(.secondary)
+                }.font(.system(size: 9.5))
+            }
+            HStack(spacing: 7) {
+                sessionCount("작업 중", value: working, symbol: "circle.inset.filled", active: working > 0)
+                sessionCount("응답 대기", value: waiting, symbol: "ellipsis", active: false)
+            }
+            Divider().opacity(0.6)
+            Button {
+                withAnimation(PanelMotion.response(reduced: reduced)) { expanded.toggle() }
+            } label: {
+                HStack {
+                    Text("오늘 모델별 사용량").font(.system(size: 11, weight: .medium))
+                    Spacer()
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(expanded ? 180 : 0))
+                }.contentShape(Rectangle()).padding(.vertical, 3)
+            }
+            .buttonStyle(PanelPressStyle())
+            .accessibilityValue(expanded ? "펼쳐짐" : "접힘")
+            .accessibilityHint("확인 가능한 오늘의 상위 모델 기록")
+            if expanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    if data.models.isEmpty {
+                        PanelEmptyState(symbol: "tray", title: "아직 확인할 모델 기록이 없어요",
+                                        detail: "관측 가능한 로컬 기록이 생기면 여기에 표시돼요.")
+                    }
+                    ForEach(data.models) { rank in
+                        VStack(spacing: 5) {
+                            HStack {
+                                Text(rank.name).lineLimit(1).truncationMode(.middle)
+                                Spacer(minLength: 6)
+                                Text(UsageNumbers.compact(rank.tokens)).monospacedDigit()
+                            }.font(.system(size: 10.5))
+                            GeometryReader { geo in
+                                Capsule().fill(Brand.color(forAgent: rank.name.hasPrefix("Codex") ? "Codex" : rank.name.hasPrefix("Claude Code") ? "Claude Code" : "").opacity(0.65))
+                                    .frame(width: geo.size.width * CGFloat(min(1, max(0, Double(rank.tokens) / Double(max(1, data.models.first?.tokens ?? 1))))))
+                            }.frame(height: 3).accessibilityHidden(true)
+                        }
+                    }
+                }.transition(.opacity)
+            }
+            if let showDetails {
+                Button(action: showDetails) {
+                    HStack {
+                        Text("AI 사용량 자세히")
+                        Spacer()
+                        Image(systemName: "arrow.up.right").font(.system(size: 10))
+                    }.font(.system(size: 10.5, weight: .medium)).contentShape(Rectangle())
+                }.buttonStyle(PanelPressStyle()).foregroundStyle(.secondary)
+            }
+            if data.isSample {
+                Text("검증용 예시 · 실제 사용량이 아닙니다").font(.system(size: 10)).foregroundStyle(Brand.caution)
+            }
+        }.padding(16)
+            .background(Brand.accent.opacity(0.065), in: RoundedRectangle(cornerRadius: 21, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 21).strokeBorder(Brand.accent.opacity(0.12), lineWidth: 1))
+    }
+    private func sessionCount(_ title: String, value: Int, symbol: String, active: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol).font(.system(size: 8, weight: .medium)).accessibilityHidden(true)
+            Text(title)
+            Spacer(minLength: 2)
+            Text(hasObservedSource ? "\(value)" : "—").monospacedDigit().fontWeight(.semibold)
+        }.font(.system(size: 10.5))
+            .foregroundStyle(active ? Brand.positive : Color.secondary)
+            .padding(.horizontal, 9).padding(.vertical, 8)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+            .accessibilityElement(children: .combine)
+            .help("관측된 로컬 세션의 상태입니다. 앱 실행 여부나 전체 클라우드 작업 수가 아닙니다.")
+    }
+}
+
+struct PopoverUsageDetail: View {
+    @EnvironmentObject var model: DashboardModel
+    @State private var showScope = false
+    private var data: WidgetUsageSnapshot { model.concurrentUsage.widget }
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ConcurrentUsageSummary()
+                PanelSectionHeading(title: "연결된 기록", detail: "관측 상태")
+                ForEach(data.providers.filter { $0.state != .unsupported }) { provider in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Circle().fill(provider.state == .ready ? Brand.positive : Brand.caution).frame(width: 5, height: 5)
+                            Text(provider.name).font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Text(provider.state.label).font(.system(size: 9.5)).foregroundStyle(.secondary)
+                        }
+                        let sessions = model.concurrentUsage.sessions.filter { $0.agent == provider.name }
+                        ForEach(sessions) { session in
+                            HStack(alignment: .top) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(session.model).lineLimit(1)
+                                    Text(session.state.label).foregroundStyle(.secondary).font(.system(size: 10))
+                                }
+                                Spacer()
+                                Text(UsageNumbers.compact(session.todayTokens)).monospacedDigit()
+                            }.font(.system(size: 11))
+                        }
+                        if sessions.isEmpty {
+                            Text("관측된 세션이 없어요").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }.dashboardCard(radius: 16, padding: 14)
+                }
+                if data.providers.isEmpty {
+                    PanelEmptyState(symbol: "hourglass", title: "로컬 기록을 확인하고 있어요",
+                                    detail: "집계가 준비되면 확인 가능한 범위가 표시돼요.")
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("로컬 기록만 포함하며, dot·클라우드 전체 사용량은 아닙니다.")
+                    DisclosureGroup("집계 범위와 상태", isExpanded: $showScope) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0. 앱 실행 여부는 작업·사용량의 증거가 아닙니다.")
+                            Text("Codex · Claude Code의 로컬 기록만 포함합니다. 하위 에이전트·fork 기록은 제외될 수 있어요.")
+                            Text("수집 미지원: " + data.providers.filter { $0.state == .unsupported }.map(\.name).joined(separator: ", "))
+                            Text("마지막 집계 \(data.generatedAt.formatted(date: .omitted, time: .shortened))")
+                        }.padding(.top, 6)
+                    }
+                }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 2)
+            }.padding(.horizontal, 16).padding(.bottom, 18)
+        }
     }
 }
 
