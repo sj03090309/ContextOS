@@ -109,6 +109,23 @@ struct LiveHeader: View {
 
 // MARK: - Hero
 
+struct CompactSavingsSummary: View {
+    @EnvironmentObject var model: DashboardModel
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("ContextOS 추정 절감").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(TokenEstimator.korean(model.totalSaved)).font(.system(size: 22, weight: .semibold, design: .rounded))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("오늘 +\(TokenEstimator.korean(model.todaySaved))").font(.system(size: 11)).monospacedDigit()
+                Text("누적 기록 \(model.queryCount)회").font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+        }.dashboardCard(radius: 13, padding: 12)
+    }
+}
+
 /// The one number that matters at a glance, with its trend and today's share.
 struct HeroSection: View {
     @EnvironmentObject var model: DashboardModel

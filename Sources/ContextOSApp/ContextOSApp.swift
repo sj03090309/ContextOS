@@ -31,15 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private let usageWindow = UsageWindowController()
     private var usageObserver: NSObjectProtocol?
     private var didLaunch = false
-    private var pendingUsage = false
+    private var pendingPage: DashboardUIState.Page?
 
     func application(_ application: NSApplication, open urls: [URL]) {
         let scheme = Bundle.main.object(forInfoDictionaryKey: "ContextOSURLScheme") as? String ?? "contextos"
         guard urls.contains(where: { WidgetSnapshotStore.accepts($0, scheme: scheme) }) else { return }
-        if didLaunch { showUsage() } else { pendingUsage = true }
+        if didLaunch { showUsage() } else { pendingPage = .usage }
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if didLaunch { showUsage() } else { pendingUsage = true }
+        if didLaunch { showPage(.overview) } else { pendingPage = .overview }
         return false
     }
     private var isUsageReview: Bool {
@@ -57,6 +57,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             showPopover()
         }
     }
+    private func showPage(_ page: DashboardUIState.Page) {
+        if isUsageReview { showUsage(); return }
+        dashboardUI.showSettings = false
+        dashboardUI.page = page
+        showPopover()
+    }
     private lazy var mascot = MascotRenderer(state: model.mascot)
     private var subscriptions: Set<AnyCancellable> = []
     private var glyphLayerHost: NSView?
@@ -69,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     func applicationDidFinishLaunching(_ notification: Notification) {
         defer {
             didLaunch = true
-            if pendingUsage { pendingUsage = false; showUsage() }
+            if let page = pendingPage { pendingPage = nil; showPage(page) }
         }
         let menu = NSMenu()
         let item = NSMenuItem(); menu.addItem(item)

@@ -25,7 +25,7 @@ struct PanelPressStyle: ButtonStyle {
 enum DashboardLayout {
     static let width: CGFloat = 340
     static func height(visibleHeight: CGFloat) -> CGFloat {
-        min(760, max(180, visibleHeight - 56))
+        min(520, max(180, visibleHeight - 56))
     }
 }
 

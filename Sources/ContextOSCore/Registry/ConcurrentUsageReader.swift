@@ -103,7 +103,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         let today = calendar.startOfDay(for: now)
         let start = calendar.date(byAdding: .day, value: -6, to: today)!
         var dayTotals: [Date: Int64] = [:], agentTotals: [String: Int64] = [:]
-        var modelTotals: [String: Int64] = [:], projectTotals: [String: Int64] = [:]
+        var modelTotals: [UsageModelKey: Int64] = [:], projectTotals: [String: Int64] = [:]
         var providers: [UsageProvider] = [], sessions: [ObservedSession] = []
         let sources = [("Codex", ".codex/sessions", false), ("Claude Code", ".claude/projects", true)]
         let discoveries = sources.map { discover(root: home.appendingPathComponent($0.1), claude: $0.2) }
@@ -172,6 +172,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         for (agent, merged, initialState, latest) in decodedRows {
             var state = initialState
             var hasAccounting = false
+            var modelKeys: [String: UsageModelKey] = [:]
             for (identity, row) in merged {
                 if agent == "Codex" {
                     runEvents += row.runEvents.map { .init(id: identity + ":" + $0.id, kind: $0.kind, date: $0.date) }
@@ -214,7 +215,12 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                     if day == today {
                         todayTotal = UsageNumbers.add(todayTotal ?? 0, tokens)
                         agentTotals[agent] = UsageNumbers.add(agentTotals[agent] ?? 0, tokens)
-                        let modelKey = agent + " · " + metric.model
+                        let modelKey: UsageModelKey
+                        if let cached = modelKeys[metric.model] { modelKey = cached }
+                        else {
+                            modelKey = UsageModelKey(provider: agent, model: metric.model)
+                            modelKeys[metric.model] = modelKey
+                        }
                         modelTotals[modelKey] = UsageNumbers.add(modelTotals[modelKey] ?? 0, tokens)
                     }
                 }
@@ -240,12 +246,13 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 $0.tokens == $1.tokens ? $0.name < $1.name : $0.tokens > $1.tokens
             }.prefix(3).map { $0 }
         }
+        let todayModels = TodayModelUsage.ordered(modelTotals.map { TodayModelUsage(provider: $0.key.provider, model: $0.key.model, tokens: $0.value) })
         let value = ConcurrentUsageSnapshot(widget: .init(generatedAt: now, timeZoneID: timeZone.identifier,
-            days: days, models: ranks(modelTotals), agents: ranks(agentTotals), projects: ranks(projectTotals),
+            days: days, models: todayModels.prefix(3).map { UsageRank($0.key.provider + " · " + $0.key.model, $0.tokens) }, agents: ranks(agentTotals), projects: ranks(projectTotals),
             providers: providers),
             sessions: sessions.sorted { ($0.lastEvent ?? .distantPast) > ($1.lastEvent ?? .distantPast) },
             aiExecution: ExplicitAIRuns.summarize(runEvents, now: now, timeZone: timeZone,
-                incomplete: runIncomplete || readFailure, available: discoveries[0].state != .unavailable))
+                incomplete: runIncomplete || readFailure, available: discoveries[0].state != .unavailable), todayModels: todayModels)
         if !readFailure { memo = (key, value, phases) }
         return value
     }

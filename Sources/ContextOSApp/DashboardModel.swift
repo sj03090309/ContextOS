@@ -21,7 +21,17 @@ import WidgetKit
 @MainActor
 final class DashboardModel: ObservableObject {
 
-    @Published var concurrentUsage = ConcurrentUsageSnapshot()
+    @Published var concurrentUsage = ConcurrentUsageSnapshot() {
+        didSet {
+            // Build status groups once per snapshot, not during every render,
+            // hover or disclosure. Token totals remain in the collector.
+            let providers = Dictionary(grouping: concurrentUsage.sessions, by: \.agent)
+            usageSessionGroups = Dictionary(uniqueKeysWithValues: providers.map { provider, sessions in
+                (provider, ModelSessionGroup.groups(sessions, provider: provider))
+            })
+        }
+    }
+    private(set) var usageSessionGroups: [String: [ModelSessionGroup]] = [:]
     @Published var usageAppPresence: [String: Bool] = [:]
     @Published var widgetBridgeStatus = "공유 권한 설정 필요"
     private let concurrentReader = ConcurrentUsageReader()
@@ -120,6 +130,7 @@ final class DashboardModel: ObservableObject {
     private var savingsTimer: Timer?
     private var usageTimer: Timer?
     private var panelOpen = false
+    private var historyVisible = false
     @Published private(set) var isRefreshing = false
     /// A refresh asked for while another was running, run as soon as it ends —
     /// so opening the panel mid-way through a background top-up still gets the
@@ -144,7 +155,7 @@ final class DashboardModel: ObservableObject {
     init(startServices: Bool = true) {
         guard startServices else { return }
         refreshFast()
-        refreshSlow(includeWeek: true, priority: .utility)
+        refreshSlow(includeWeek: false, priority: .utility)
         let center = DistributedNotificationCenter.default()
         // Real-time: the MCP server posts this the instant it records an
         // optimization, so the mascot reacts with no polling lag.
@@ -225,7 +236,7 @@ final class DashboardModel: ObservableObject {
         panelOpen = true
         dayDetails = [:]
         refreshFast()
-        refreshSlow(includeWeek: true, priority: .userInitiated)
+        refreshSlow(includeWeek: historyVisible, priority: .userInitiated)
         rescanWorking()
         scheduleUsageRefresh()
     }
@@ -236,13 +247,19 @@ final class DashboardModel: ObservableObject {
         scheduleUsageRefresh()
     }
 
+    func setHistoryVisible(_ visible: Bool) {
+        guard historyVisible != visible else { return }
+        historyVisible = visible
+        if visible && panelOpen { refreshSlow(includeWeek: true, priority: .userInitiated) }
+    }
+
     private func scheduleUsageRefresh() {
         usageTimer?.invalidate()
         let interval = panelOpen ? Self.openUsageInterval : Self.closedUsageInterval
         usageTimer = Self.repeating(every: interval) { [weak self] in
             guard let self else { return }
             if self.panelOpen {
-                self.refreshSlow(includeWeek: true, priority: .userInitiated)
+                self.refreshSlow(includeWeek: self.historyVisible, priority: .userInitiated)
             } else {
                 // Utility, not background: a panel opened mid-way waits for this
                 // pass to finish, and background work can be throttled for long.
@@ -264,7 +281,7 @@ final class DashboardModel: ObservableObject {
     func refresh() {
         LogoStore.shared.reset()
         refreshFast()
-        refreshSlow(force: true, includeWeek: true, priority: .userInitiated)
+        refreshSlow(force: true, includeWeek: historyVisible, priority: .userInitiated)
     }
 
     // MARK: - Working detection

@@ -10,7 +10,7 @@ public enum UsagePreviewData {
             UsageDay(date: calendar.date(byAdding: .day, value: index - 6, to: today)!, tokens: count)
         }
         let widget = WidgetUsageSnapshot(generatedAt: now, days: days,
-            models: [.init("Codex · gpt-example-long-model-name", 620_000), .init("Claude Code · claude-example", 300_400)],
+            models: [.init("Codex · gpt-example-long-model-name", 400_000), .init("Claude Code · claude-example", 300_400), .init("Codex · gpt-example", 220_000)],
             agents: [.init("Codex", 620_000), .init("Claude Code", 300_400)],
             projects: [.init("ContextOS · a1b2", 2_100_000), .init("Demo project · c3d4", 1_201_800)],
             providers: [.init(name: "Codex", state: .ready, latestEvent: now),
@@ -21,6 +21,8 @@ public enum UsagePreviewData {
             .init(id: "sample-codex-a", agent: "Codex", project: "ContextOS · a1b2", model: "gpt-example-long-model-name", state: .working, lastEvent: now, todayTokens: 400_000, totalTokens: 1_200_000),
             .init(id: "sample-codex-b", agent: "Codex", project: "Demo project · c3d4", model: "gpt-example", state: .waiting, lastEvent: now.addingTimeInterval(-60), todayTokens: 220_000, totalTokens: 450_000),
             .init(id: "sample-claude-a", agent: "Claude Code", project: "ContextOS · a1b2", model: "claude-example", state: .idle, lastEvent: now, todayTokens: 300_400, totalTokens: 900_000)
-        ])
+        ], todayModels: [.init(provider: "Codex", model: "gpt-example-long-model-name", tokens: 400_000),
+                         .init(provider: "Claude Code", model: "claude-example", tokens: 300_400),
+                         .init(provider: "Codex", model: "gpt-example", tokens: 220_000)])
     }
 }

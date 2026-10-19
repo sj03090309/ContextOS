@@ -291,3 +291,54 @@ import ContextOSUsage
         #expect(!WidgetSnapshotStore.accepts(URL(string:"contextos-review://usage?path=/private")!,scheme:"contextos-review"))
     }
 }
+
+extension ConcurrentUsageTests {
+    @Test func allTodayModelsPreserveTotalsAcrossCopiesProvidersAndUnknownNames() throws {
+        let h = try home(); defer { try? FileManager.default.removeItem(at: h) }
+        let unknown = ["unknown", " Unknown ", "모델 미상", "unknown-model"]
+        for n in 0..<16 {
+            let model = n < 8 ? "same" : n < 12 ? unknown[n-8] : "other-\(n)"
+            _ = try write(meta("many-\(n)", model: model) + [counter(n+1)], ".codex/sessions/rollout-many-\(n).jsonl", home: h)
+        }
+        _ = try write(meta("many-0", model: "same") + [counter(1)], ".codex/sessions/rollout-duplicate.jsonl", home: h)
+        var event = claude("separate-provider")
+        var message = event["message"] as! [String:Any]; message["model"] = "same"; event["message"] = message
+        _ = try write([event], ".claude/projects/project/claude.jsonl", home: h)
+        let reader = ConcurrentUsageReader()
+        let s = reader.snapshot(home: h, now: now, timeZone: .gmt)
+        #expect(s.widget.today == 336)
+        #expect(s.sessions.count == 17)
+        #expect(s.todayModels.count == 7)
+        #expect(s.todayModels.map(\.tokens).reduce(0, UsageNumbers.add) == s.widget.today)
+        #expect(s.todayModels.first { $0.key == UsageModelKey(provider: "Codex", model: "same") }?.tokens == 36)
+        #expect(s.todayModels.first { $0.key == UsageModelKey(provider: "Claude Code", model: "same") }?.tokens == 200)
+        #expect(s.todayModels.first { $0.key.model == "모델 미상" }?.tokens == 42)
+        #expect(s.widget.models.count == 3) // Widget projection remains bounded.
+        let preview = ModelUsagePreview(s.todayModels)
+        #expect(preview.visible.count == 3 && preview.hiddenCount == 4)
+        #expect(preview.hiddenTokens + preview.visible.map(\.tokens).reduce(0, UsageNumbers.add) == 336)
+        #expect(reader.snapshot(home: h, now: now.addingTimeInterval(2), timeZone: .gmt).todayModels == s.todayModels)
+        let next = reader.snapshot(home: h, now: now.addingTimeInterval(86400), timeZone: .gmt)
+        #expect(next.widget.today == nil && next.todayModels.isEmpty)
+    }
+    @Test func switchedModelUsesEventDeltasRatherThanWholeSessionTotal() throws {
+        let h = try home(); defer { try? FileManager.default.removeItem(at: h) }
+        var lines = meta("switch", model: "first-model") + [counter(100,-20)]
+        lines += [["type":"turn_context","timestamp":stamp(-15),"payload":["model":"second-model"]],counter(150,-10)]
+        _ = try write(lines, ".codex/sessions/rollout-switch.jsonl", home: h)
+        let s = ConcurrentUsageReader().snapshot(home: h, now: now, timeZone: .gmt)
+        #expect(s.widget.today == 150 && s.sessions.first?.todayTokens == 150)
+        #expect(s.todayModels.first { $0.key.model == "first-model" }?.tokens == 100)
+        #expect(s.todayModels.first { $0.key.model == "second-model" }?.tokens == 50)
+        #expect(s.todayModels.map(\.tokens).reduce(0, UsageNumbers.add) == 150)
+        #expect(ModelSessionGroup.groups(s.sessions, provider: "Codex").first?.key.model == "second-model")
+    }
+    @Test func todayModelTotalsExcludeEarlierDayCounterBaseline() throws {
+        let h = try home(); defer { try? FileManager.default.removeItem(at: h) }
+        let lines = meta("midnight", model: "one-model") + [counter(100,-90000),counter(150,-10)]
+        _ = try write(lines, ".codex/sessions/rollout-midnight.jsonl", home: h)
+        let s = ConcurrentUsageReader().snapshot(home: h, now: now, timeZone: .gmt)
+        #expect(s.widget.today == 50)
+        #expect(s.todayModels.count == 1 && s.todayModels.first?.tokens == 50)
+    }
+}

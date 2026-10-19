@@ -140,8 +140,10 @@ public struct ConcurrentUsageSnapshot: Sendable, Equatable {
     public var widget: WidgetUsageSnapshot
     public var sessions: [ObservedSession]
     public var aiExecution: AIExecutionSummary
-    public init(widget: WidgetUsageSnapshot = .init(), sessions: [ObservedSession] = [], aiExecution: AIExecutionSummary = .init()) {
-        self.widget = widget; self.sessions = sessions; self.aiExecution = aiExecution
+    /// Complete app-only model totals. Widget rankings remain a top-three view.
+    public var todayModels: [TodayModelUsage]
+    public init(widget: WidgetUsageSnapshot = .init(), sessions: [ObservedSession] = [], aiExecution: AIExecutionSummary = .init(), todayModels: [TodayModelUsage] = []) {
+        self.widget = widget; self.sessions = sessions; self.aiExecution = aiExecution; self.todayModels = todayModels
     }
 }
 

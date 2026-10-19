@@ -106,9 +106,10 @@ struct FooterBar: View {
                 PanelIconButton(symbol: model.isRefreshing ? "hourglass" : "arrow.clockwise", help: "새로고침 (⌘R)") { model.refresh() }
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(model.isRefreshing)
-                PanelIconButton(symbol: "list.bullet.rectangle", help: "빌드 로그 (⌘B)") { BuildLogWindow.show() }
-                    .keyboardShortcut("b", modifiers: .command)
-                    .disabled(ui.hidePrivateDetails)
+                if !ui.hidePrivateDetails {
+                    PanelIconButton(symbol: "list.bullet.rectangle", help: "빌드 로그 (⌘B)") { BuildLogWindow.show() }
+                        .keyboardShortcut("b", modifiers: .command)
+                }
                 PanelIconButton(symbol: "gearshape", help: "설정", isOn: ui.showSettings) {
                     ui.showSettings.toggle()
                 }

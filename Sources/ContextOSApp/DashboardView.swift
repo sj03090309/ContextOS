@@ -103,7 +103,8 @@ final class DashboardUIState: ObservableObject {
     }
     @Published var page: Page = .overview
     @Published var usageExpanded = false
-    @Published var panelHeight: CGFloat = 760
+    @Published var panelHeight: CGFloat = 520
+    @Published var historyExpanded = false
     @Published var tab: DashboardTab = .files
     @Published var expanded: Set<String> = []   // expanded project cards
     /// Months back from the current one.
@@ -147,23 +148,33 @@ struct DashboardView: View {
 
             SlidingSegments(options: DashboardUIState.Page.allCases, selection: $ui.page,
                             label: \.label, namespace: navigation, height: 33)
-                .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 14)
+                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 10)
 
             Group {
                 switch ui.page {
                 case .overview:
                     ScrollView(.vertical) {
-                        VStack(spacing: 16) {
+                        VStack(spacing: 10) {
                             ConcurrentUsageSummary()
                             DevelopmentTimeSummary(model: workTime) { ui.page = .time }
-                            HeroSection().dashboardCard(radius: 18, padding: 16)
-                            PanelSectionHeading(title: "기록의 흐름", detail: "관측된 로컬 기록")
-                            CalendarCard()
-                            PanelTabBar(selection: $ui.tab)
-                            switch ui.tab {
-                            case .files: ProjectsList()
-                            case .activity: ActivityList()
-                            case .ai: AgentsList()
+                            CompactSavingsSummary()
+                            Button {
+                                withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
+                            } label: {
+                                HStack {
+                                    Text("달력·프로젝트")
+                                    Spacer()
+                                    Image(systemName: "chevron.down").rotationEffect(.degrees(ui.historyExpanded ? 180 : 0))
+                                }.font(.system(size: 11, weight: .medium)).padding(.vertical, 9).contentShape(Rectangle())
+                            }.buttonStyle(PanelPressStyle()).accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
+                            if ui.historyExpanded {
+                                CalendarCard()
+                                PanelTabBar(selection: $ui.tab)
+                                switch ui.tab {
+                                case .files: ProjectsList()
+                                case .activity: ActivityList()
+                                case .ai: AgentsList()
+                                }
                             }
                         }.padding(.horizontal, 16).padding(.bottom, 16)
                     }
@@ -194,6 +205,9 @@ struct DashboardView: View {
         }
         .animation(PanelMotion.response(reduced: reduced), value: ui.showSettings)
         .transaction { if reduced { $0.animation = nil; $0.disablesAnimations = true } }
+        .onAppear { model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
+        .onChange(of: ui.historyExpanded) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
+        .onChange(of: ui.page) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
         .sheet(item: $model.connectionPreview) { preview in
             ConnectionPreviewSheet(preview: preview)
                 .environmentObject(model)

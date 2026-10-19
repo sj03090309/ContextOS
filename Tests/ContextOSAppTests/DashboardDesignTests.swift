@@ -13,7 +13,7 @@ struct DashboardDesignTests {
         for visibleHeight: CGFloat in [300, 480, 650, 861, 1100] {
             let height = DashboardLayout.height(visibleHeight: visibleHeight)
             #expect(height + 56 <= visibleHeight)
-            #expect(height <= 760)
+            #expect(height <= 520)
             #expect(height >= 180)
         }
     }
@@ -53,6 +53,7 @@ struct DashboardDesignTests {
                                 selectedTokens: 200, fullTokens: 1000, contextScore: 80, fileCount: 2)]
         model.projectUsage = projects; model.recent = events
         if let path = ProcessInfo.processInfo.environment["CONTEXTOS_DESIGN_QA_DIR"] {
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
             for hidden in [true, false] {
                 ui.hidePrivateDetails = hidden
                 let view = VStack(spacing: 16) { ProjectsList(); ActivityList(); Spacer() }
@@ -66,6 +67,53 @@ struct DashboardDesignTests {
         #expect(model.projectUsage == projects)
         #expect(model.recent == events)
         #expect(model.projectUsage.first?.total == 12345)
+    }
+
+    @Test("many models and repeated unknown sessions keep the preview bounded")
+    func manyModelsAndSessions() throws {
+        let now = Date()
+        var sessions: [ObservedSession] = []
+        var models: [TodayModelUsage] = []
+        for n in 0..<20 {
+            let name = n == 19 ? String(repeating: "long-model-", count: 25) : "model-\(n)"
+            models.append(.init(provider: "Codex", model: name, tokens: 30))
+            for index in 0..<3 {
+                sessions.append(.init(id: "known-\(n)-\(index)", agent: "Codex", project: "PRIVATE-PROJECT", model: name,
+                                      state: .idle, lastEvent: now, todayTokens: 10, totalTokens: 100))
+            }
+        }
+        models.append(.init(provider: "Codex", model: "unknown", tokens: 200))
+        for n in 0..<20 {
+            sessions.append(.init(id: "unknown-\(n)", agent: "Codex", project: "PRIVATE-PROJECT", model: n % 2 == 0 ? "unknown" : "모델 미상",
+                                  state: .unknown, lastEvent: now, todayTokens: 10, totalTokens: 100))
+        }
+        let model = DashboardModel(startServices: false)
+        model.concurrentUsage = .init(widget: .init(days: [.init(date: now, tokens: 800)],
+                                                    providers: [.init(name: "Codex", state: .partial)], isSample: true),
+                                      sessions: sessions, todayModels: models)
+        #expect(model.usageSessionGroups["Codex"]?.count == 21)
+        #expect(model.usageSessionGroups["Codex"]?.first?.sessions.count == 20)
+        let preview = ModelUsagePreview(models)
+        #expect(preview.visible.count == 3 && preview.hiddenCount == 18 && preview.hiddenTokens == 540)
+        #expect(preview.totalTokens == 800)
+        if let path = ProcessInfo.processInfo.environment["CONTEXTOS_DESIGN_QA_DIR"] {
+            let directory = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let time = WorkTimeController(restoreConnections: false)
+            let ui = DashboardUIState(); ui.page = .usage; ui.panelHeight = 400
+            for expanded in [false, true] {
+                ui.usageExpanded = expanded
+                let view = DashboardView(workTime: time).environmentObject(model).environmentObject(ui)
+                    .environment(\.colorScheme, .dark).transaction { $0.animation = nil; $0.disablesAnimations = true }
+                try renderNative(view, height: 400, scheme: .dark)
+                    .write(to: directory.appendingPathComponent(expanded ? "many-models-expanded.png" : "many-models-preview.png"))
+            }
+            let provider = ProviderSessionsCard(provider: .init(name: "Codex", state: .partial),
+                                                groups: model.usageSessionGroups["Codex"] ?? [], initiallyExpanded: true)
+                .padding(16).frame(width: 340, height: 400, alignment: .top).background(Brand.canvas).environment(\.colorScheme, .dark)
+            try renderNative(provider, height: 400, scheme: .dark).write(to: directory.appendingPathComponent("many-session-groups.png"))
+        }
+        #expect(model.concurrentUsage.sessions == sessions)
     }
 
     @Test("static native SwiftUI snapshots cover pages, missing and zero usage and long names")
@@ -88,7 +136,7 @@ struct DashboardDesignTests {
         ui.usageExpanded = true
         for scheme in [ColorScheme.dark, .light] {
             for page in DashboardUIState.Page.allCases {
-                for height: CGFloat in [440, 760] {
+                for height: CGFloat in [400, 520] {
                     ui.page = page; ui.panelHeight = height
                     let view = DashboardView(workTime: time)
                         .environmentObject(model).environmentObject(ui)
@@ -116,7 +164,7 @@ struct DashboardDesignTests {
                 snapshot.widget.days = [.init(date: Date(), tokens: state == "missing" ? nil : 0)]
             }
             if state == "long" {
-                snapshot.widget.models = [.init(String(repeating: "long-model-", count: 12), .max), .init("second", 1)]
+                snapshot.todayModels = [.init(provider: "Codex", model: String(repeating: "long-model-", count: 12), tokens: .max), .init(provider: "Codex", model: "second", tokens: 1)]
             }
             let view = UsageOverviewCard(snapshot: snapshot, expanded: .constant(true))
                 .padding(16).frame(width: 340, height: 400, alignment: .top).background(Brand.canvas)
