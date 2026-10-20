@@ -1,5 +1,7 @@
 # Swift / SwiftPM
 .build/
+.build-*/
+.swift-cache/
 .swiftpm/
 .audit/
 Package.resolved

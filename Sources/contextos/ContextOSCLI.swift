@@ -8,9 +8,38 @@ struct ContextOS: ParsableCommand {
         commandName: "contextos",
         abstract: "Local context manager for Claude Code and Codex.",
         version: ContextOSVersion.current,
-        subcommands: [Connect.self, Disconnect.self, RestoreSettings.self, Context.self, Watch.self, Hook.self],
+        subcommands: [Connect.self, Disconnect.self, RestoreSettings.self, Context.self, Watch.self, Hook.self, Doctor.self, Contract.self],
         defaultSubcommand: Connect.self
     )
+}
+
+/// Does not register MCP, read agent settings or index a project.
+struct Doctor: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Check this installation and shared CLI/MCP versions without changing settings.")
+    @Flag(help: "Print a machine-readable installation report.") var json = false
+
+    func run() throws {
+        let report = RuntimeDoctor.inspect(executable: URL(fileURLWithPath: CommandLine.arguments[0]))
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            FileHandle.standardOutput.write(try encoder.encode(report))
+            FileHandle.standardOutput.write(Data([0x0A]))
+        } else {
+            print("ContextOS \(report.version) · \(report.platform.rawValue)")
+            for check in report.checks { print("\(check.passed ? "✓" : "✗") \(check.detail)") }
+            print("AI 도구에서 ContextOS 목록과 실제 호출을 확인해야 연결 확인이 완료됩니다.")
+        }
+        if !report.readyToConnect { throw ExitCode.failure }
+    }
+}
+
+struct Contract: ParsableCommand {
+    static let configuration = CommandConfiguration(abstract: "Print the shared version, CLI commands and MCP tool contract as JSON.")
+    func run() throws {
+        FileHandle.standardOutput.write(try RuntimeContract.jsonData())
+        FileHandle.standardOutput.write(Data([0x0A]))
+    }
 }
 
 // MARK: - contextos connect
@@ -22,6 +51,7 @@ struct Connect: ParsableCommand {
     @Flag(help: "Apply the reviewed settings, with a private local backup.") var apply = false
 
     func run() throws {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         let manager = try Self.manager()
         let names = agent.map { [$0] } ?? AgentDetector.detect(home: manager.home).map(\.name)
         let agents = names.compactMap(ManagedAgent.init(rawValue:))
@@ -29,8 +59,12 @@ struct Connect: ParsableCommand {
         for selected in agents {
             try Self.present(manager.previewConnect(selected), manager: manager, apply: apply)
         }
+        #else
+        try RuntimeSupport.require(.settingsChanges)
+        #endif
     }
 
+    #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
     static func manager() throws -> ConnectionManager {
         guard let binaries = RuntimeBinaries.resolve(executable: URL(fileURLWithPath: CommandLine.arguments[0])) else {
             throw ValidationError("ContextOS 실행 파일을 찾지 못했습니다. 앱 또는 Release 빌드 폴더에서 실행해 주세요.")
@@ -45,13 +79,14 @@ struct Connect: ParsableCommand {
         guard preview.hasChanges else { print("변경할 설정이 없습니다."); return }
         if apply {
             _ = try manager.apply(preview)
-            print("✓ 적용 완료 · 변경 전 백업은 이 Mac의 ~/.contextos-backups에만 보관됩니다.")
+            print("✓ 적용 완료 · 변경 전 백업은 이 컴퓨터의 ~/.contextos-backups에만 보관됩니다.")
             print("도구를 다시 시작하면 설정이 적용됩니다.")
         } else {
             print("설정은 변경하지 않았습니다. 적용하려면 같은 명령에 --apply를 추가하세요.")
         }
     }
 
+    #endif
 }
 
 struct Disconnect: ParsableCommand {
@@ -59,9 +94,13 @@ struct Disconnect: ParsableCommand {
     @Option(help: "Claude Code or Codex.") var agent: String
     @Flag(help: "Apply the reviewed removal.") var apply = false
     func run() throws {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         guard let selected = ManagedAgent(rawValue: agent) else { throw ValidationError("Claude Code 또는 Codex를 지정해 주세요.") }
         let manager = try Connect.manager()
         try Connect.present(manager.previewDisconnect(selected), manager: manager, apply: apply)
+        #else
+        try RuntimeSupport.require(.settingsChanges)
+        #endif
     }
 }
 
@@ -70,9 +109,13 @@ struct RestoreSettings: ParsableCommand {
     @Option(help: "Claude Code or Codex.") var agent: String
     @Flag(help: "Apply the reviewed restoration.") var apply = false
     func run() throws {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         guard let selected = ManagedAgent(rawValue: agent) else { throw ValidationError("Claude Code 또는 Codex를 지정해 주세요.") }
         let manager = try Connect.manager()
         try Connect.present(manager.previewRestore(selected), manager: manager, apply: apply)
+        #else
+        try RuntimeSupport.require(.settingsChanges)
+        #endif
     }
 }
 
@@ -87,6 +130,7 @@ struct Hook: ParsableCommand {
     )
 
     func run() throws {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         guard let data = try? FileHandle.standardInput.readToEnd(),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let event = (obj["hook_event_name"] as? String) ?? "UserPromptSubmit"
@@ -130,10 +174,14 @@ struct Hook: ParsableCommand {
         if let out = try? JSONSerialization.data(withJSONObject: payload) {
             FileHandle.standardOutput.write(out)
         }
+        #else
+        try RuntimeSupport.require(.projectFiles)
+        #endif
     }
 
     /// Fire a cross-process notification to the menu-bar app, giving the daemon
     /// a beat to deliver it before this short-lived process exits.
+    #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
     private static func post(_ name: Notification.Name) {
         DistributedNotificationCenter.default().postNotificationName(
             name, object: nil, userInfo: nil, deliverImmediately: true)
@@ -163,6 +211,7 @@ struct Hook: ParsableCommand {
             try? data.write(to: url)
         }
     }
+    #endif
 }
 
 // MARK: - contextos context
@@ -183,6 +232,7 @@ struct Context: ParsableCommand {
     var path: String = "."
 
     func run() throws {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         let root = URL(fileURLWithPath: path).standardizedFileURL
         let selection = try ContextService().relevantContext(
             query: query, projectRoot: root, tokenBudget: budget
@@ -197,12 +247,15 @@ struct Context: ParsableCommand {
         if let r = selection.refinement, r.changed {
             print("이해:     \(r.explanation)")
         }
-        print("정확도:   \(selection.contextScore)/100")
+        print("관련도:   \(selection.contextScore)/100 (휴리스틱)")
         print("고른 파일 (\(selection.included.count)개, \(TokenEstimator.humanReadable(selection.estimatedTokens))):")
         for file in selection.included {
             print("  • \(file.path)  [\(TokenEstimator.humanReadable(file.estimatedTokens))]")
             if let reason = file.reasons.first { print("      \(reason)") }
         }
+        #else
+        try RuntimeSupport.require(.projectFiles)
+        #endif
     }
 }
 
@@ -218,6 +271,7 @@ struct Watch: ParsableCommand {
     var path: String = "."
 
     func run() throws {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
         setvbuf(stdout, nil, _IONBF, 0)
         let root = URL(fileURLWithPath: path).standardizedFileURL
         let service = ContextService()
@@ -232,5 +286,8 @@ struct Watch: ParsableCommand {
         }
         guard watcher.start() else { throw ValidationError("파일 감시를 시작하지 못했습니다. 프로젝트 경로와 접근 권한을 확인해 주세요.") }
         RunLoop.main.run()
+        #else
+        try RuntimeSupport.require(.fileWatching)
+        #endif
     }
 }
