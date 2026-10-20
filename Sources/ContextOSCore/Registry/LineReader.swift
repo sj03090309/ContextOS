@@ -18,6 +18,63 @@ struct LineReader {
     /// that the footprint stays flat.
     static let chunkSize = 256 * 1024
 
+    struct BoundedResult { var consumed: Int; var bytesRead: Int; var reachedEOF: Bool }
+
+    /// Bounded metadata reader. Oversized records are discarded with explicit
+    /// loss reporting, including across passes; original bytes are never changed.
+    static func boundedLines(of file: URL, from offset: Int, maximumLineBytes: Int,
+                             maximumReadBytes: Int, skippingOversizedLine: inout Bool,
+                             onSkipped: () -> Void,
+                             _ handler: (UnsafeRawBufferPointer) -> Void) -> BoundedResult? {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: UInt64(offset))) != nil else { return nil }
+        var pending: [UInt8] = []; pending.reserveCapacity(min(maximumLineBytes, chunkSize * 2))
+        var consumed = 0, read = 0; var eof = false, failed = false
+        var skipping = skippingOversizedLine
+        while read < maximumReadBytes && !eof && !failed {
+            autoreleasepool {
+                let chunk: Data?
+                do { chunk = try handle.read(upToCount: min(chunkSize, maximumReadBytes - read)) }
+                catch { failed = true; return }
+                guard let data = chunk, !data.isEmpty else { eof = true; return }
+                read += data.count
+                var start = 0
+                if skipping {
+                    let skip = data.withUnsafeBytes { buffer -> Int? in
+                        guard let base = buffer.baseAddress, let nl = memchr(base, 10, buffer.count) else { return nil }
+                        return base.distance(to: UnsafeRawPointer(nl)) + 1
+                    }
+                    guard let skip else { consumed += data.count; return }
+                    consumed += skip; start = skip; skipping = false
+                }
+                data.withUnsafeBytes { buffer in
+                    guard let base = buffer.baseAddress, start < buffer.count else { return }
+                    pending.append(contentsOf: UnsafeBufferPointer(start: (base + start).assumingMemoryBound(to: UInt8.self), count: buffer.count - start))
+                }
+                let complete = pending.withUnsafeBytes { buffer -> Int in
+                    guard let base = buffer.baseAddress else { return 0 }
+                    var at = 0
+                    while at < buffer.count, let nl = memchr(base + at, 10, buffer.count - at) {
+                        let end = base.distance(to: UnsafeRawPointer(nl))
+                        if end - at > maximumLineBytes { onSkipped() }
+                        else if end > at { handler(UnsafeRawBufferPointer(start: base + at, count: end - at)) }
+                        at = end + 1
+                    }
+                    return at
+                }
+                consumed += complete
+                if complete > 0 { pending.removeFirst(complete) }
+                if pending.count > maximumLineBytes {
+                    consumed += pending.count; pending.removeAll(keepingCapacity: true)
+                    skipping = true; onSkipped()
+                }
+            }
+        }
+        skippingOversizedLine = skipping
+        return failed ? nil : BoundedResult(consumed: consumed, bytesRead: read, reachedEOF: eof)
+    }
+
     /// Feed every **complete** line from `offset` that contains at least one of
     /// `needles` to `handler`, as raw bytes, and report how many bytes of
     /// complete lines were consumed. With no needles, every non-empty line is fed.

@@ -1,0 +1,41 @@
+{
+  "name": "observation-bridge",
+  "publisher": "contextos",
+  "version": "0.2.1",
+  "displayName": "ContextOS Observation Bridge (Local Candidate)",
+  "description": "Automatic local status bar activity estimate with a declared five-minute idle rule.",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./extension.js",
+  "extensionKind": [
+    "ui"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "license": "MIT",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "configuration": {
+      "title": "ContextOS Observation Bridge",
+      "properties": {
+        "contextosObservation.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "application",
+          "description": "Connect local activity estimate and status bar. Does not measure exact coding or thinking time."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "test": "node --test protocol.test.js extension.test.js",
+    "test:ipc": "node --test integration.test.js"
+  }
+}

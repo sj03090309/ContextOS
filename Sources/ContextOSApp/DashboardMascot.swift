@@ -12,10 +12,12 @@ import ContextOSCore
 /// in with a neck rather than letting it vanish behind the blob — while 뭉치
 /// chews with happy, squinting eyes and a warm glow around it.
 struct MeltingMascot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduced
     /// Chew state, shared with the menu-bar 뭉치 so both eat the same bite at
     /// the same instant.
     @ObservedObject var state: MascotState
     @ObservedObject var settings: AppSettings
+    var surface: DashboardSurface = .popover
     /// When this view's melt-in began. Only the *entrance* is timed from here —
     /// the chew itself runs off the absolute clock, so re-opening the popover
     /// replays the drop without knocking the two mascots out of step.
@@ -59,19 +61,21 @@ struct MeltingMascot: View {
             // `.animation(paused:)` and not `.periodic`: a periodic schedule
             // keeps firing at a dismissed popover, which pinned the app at ~22%
             // of a core forever after the panel was opened once.
-            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: hidden || isStill)) { timeline in
-                frame(at: timeline.date, start: start, size: geo.size)
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: hidden || staticMotion || isStill)) { timeline in
+                frame(at: staticMotion ? start.addingTimeInterval(settleTime) : timeline.date, start: start, size: geo.size)
             }
         }
         .onAppear { start = Date() }
         // Replay the melt-in each time the popover is opened (the hosted view is
         // reused, so onAppear alone won't fire again).
-        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
+            guard notification.object as? DashboardSurface == surface else { return }
             start = Date()
             settled = false
             hidden = false
         }
-        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { notification in
+            guard notification.object as? DashboardSurface == surface else { return }
             hidden = true
         }
         .task(id: start) {
@@ -91,8 +95,9 @@ struct MeltingMascot: View {
     /// Nothing left to move: settled, not chewing, and set not to breathe.
     private var isStill: Bool {
         _ = stillCheck
-        return settled && !settings.mascotMotion.breathes && !state.isAnimating(at: Date())
+        return settled && !settings.mascotMotion.breathes && (!settings.mascotMotion.chews || !state.isAnimating(at: Date()))
     }
+    private var staticMotion: Bool { reduced || settings.mascotMotion == .off }
 
     // MARK: - One frame
 
@@ -133,7 +138,7 @@ struct MeltingMascot: View {
 
     /// How hard 뭉치 is chewing, 0…1 — zero when it is set not to move.
     private func chewIntensity(at now: Date) -> Double {
-        settings.mascotMotion.chews ? state.intensity(at: now) : 0
+        !staticMotion && settings.mascotMotion.chews ? state.intensity(at: now) : 0
     }
 
     // 0 → ~1 with a slow, visible damped bounce (two settling hops).
@@ -151,7 +156,7 @@ struct MeltingMascot: View {
         if t >= Double(settleTime) {
             // Blend the calm resting breath into the chewing bob by the same
             // eased intensity the menu bar uses, off the same clock.
-            let breath = settings.mascotMotion.breathes ? MascotBeat.breath(now) * 1.4 : 0
+            let breath = !staticMotion && settings.mascotMotion.breathes ? MascotBeat.breath(now) * 1.4 : 0
             let chew = -MascotBeat.chomp(now) * 2.4
             y += CGFloat(breath * (1 - k) + chew * k)
         }
@@ -270,7 +275,7 @@ struct MeltingMascot: View {
     /// happy arcs.
     private func eyes(center c: CGPoint, t: TimeInterval, k: Double, now: Date) -> some View {
         let happy = Self.smoothstep(0.35, 0.8, CGFloat(k))
-        let blink = settings.mascotMotion.breathes ? Self.blink(now) : 0
+        let blink = !staticMotion && settings.mascotMotion.breathes ? Self.blink(now) : 0
         return ZStack {
             ForEach([-1.0, 1.0], id: \.self) { side in
                 let point = CGPoint(x: c.x + CGFloat(side) * 5.2, y: c.y - 1.5)
@@ -358,18 +363,21 @@ private struct HappyEye: Shape {
 final class PopoverContentController: NSViewController {
 
     private let model: DashboardModel
+    private let ui: DashboardUIState
     private let mascotHost: NSHostingView<MeltingMascot>
     private let dashboardHost: NSHostingView<AnyView>
     /// Height of the strip 뭉치 melts into, matching the space the dashboard
     /// reserves for it.
     static let mascotHeight: CGFloat = 50
 
-    init(model: DashboardModel, ui: DashboardUIState) {
+    init(model: DashboardModel, ui: DashboardUIState, workTime: WorkTimeController = .shared,
+         surface: DashboardSurface = .popover) {
         self.model = model
+        self.ui = ui
         self.mascotHost = NSHostingView(rootView: MeltingMascot(state: model.mascot,
-                                                                settings: AppSettings.shared))
+                                                                settings: AppSettings.shared, surface: surface))
         self.dashboardHost = NSHostingView(
-            rootView: AnyView(DashboardView().environmentObject(model).environmentObject(ui)))
+            rootView: AnyView(DashboardView(workTime: workTime).environmentObject(model).environmentObject(ui)))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -377,7 +385,11 @@ final class PopoverContentController: NSViewController {
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override func loadView() {
-        let container = NSView()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: ui.panelHeight))
+        // The container owns the size. An unconstrained hosting-view fitting
+        // size can exceed the screen and make NSPopover pick a side edge.
+        dashboardHost.sizingOptions = []
+        mascotHost.sizingOptions = []
         dashboardHost.translatesAutoresizingMaskIntoConstraints = false
         mascotHost.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(dashboardHost)
@@ -397,13 +409,10 @@ final class PopoverContentController: NSViewController {
         view = container
     }
 
-    /// The size the popover should be, driven by the dashboard alone — 뭉치 sits
-    /// inside the space the dashboard already reserves.
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        let fitting = dashboardHost.fittingSize
-        if fitting.width > 0, preferredContentSize != fitting {
-            preferredContentSize = fitting
-        }
+    /// Resolve the size before showing; detail expansion scrolls inside it.
+    func prepare(for screen: NSScreen?) {
+        ui.panelHeight = DashboardLayout.height(visibleHeight: screen?.visibleFrame.height ?? 820)
+        preferredContentSize = NSSize(width: DashboardLayout.width, height: ui.panelHeight)
+        view.setFrameSize(preferredContentSize)
     }
 }

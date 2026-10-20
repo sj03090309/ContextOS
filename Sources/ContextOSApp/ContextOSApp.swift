@@ -2,31 +2,20 @@ import SwiftUI
 import AppKit
 import Combine
 import ContextOSCore
+import ContextOSUsage
 
 @main
-struct ContextOSApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-    var body: some Scene {
-        // SwiftUI requires one scene even though ContextOS is a menu-bar-only
-        // app. `Settings { EmptyView() }` made macOS open a blank “ContextOS
-        // Settings” window at launch. Keep an inert scene solely for the app
-        // lifecycle, hide it immediately, and remove the Settings menu command.
-        WindowGroup("ContextOS", id: "contextos-lifecycle") {
-            LifecycleSceneView()
+enum ContextOSApp {
+    @MainActor static func main() {
+        // AppKit owns every window. A transparent SwiftUI WindowGroup still
+        // opens a real default window on URL/reopen events; hiding guessed
+        // scene identifiers cannot make that lifecycle reliable.
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        withExtendedLifetime(delegate) {
+            application.run()
         }
-        .commands {
-            CommandGroup(replacing: .appSettings) { }
-        }
-    }
-}
-
-/// An invisible lifecycle host for the SwiftUI `App` protocol. The real UI is
-/// the AppKit status item and its popover, installed by `AppDelegate`.
-private struct LifecycleSceneView: View {
-    var body: some View {
-        Color.clear
-            .frame(width: 1, height: 1)
     }
 }
 
@@ -36,10 +25,45 @@ private struct LifecycleSceneView: View {
 /// menu-bar icon, the way native status-bar apps do.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, ObservableObject {
-    private static let lifecycleWindowPrefix = "contextos-lifecycle-"
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
-    private let model = DashboardModel()
+    private lazy var model = DashboardModel()
+    private let usageWindow = UsageWindowController()
+    private lazy var dashboardWindow = DashboardWindowController(model: model, ui: dashboardUI)
+    private var usageObserver: NSObjectProtocol?
+    private var didLaunch = false
+    private var pendingPage: DashboardUIState.Page?
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        let scheme = Bundle.main.object(forInfoDictionaryKey: "ContextOSURLScheme") as? String ?? "contextos"
+        guard urls.contains(where: { WidgetSnapshotStore.accepts($0, scheme: scheme) }) else { return }
+        if didLaunch { showUsage() } else { pendingPage = .usage }
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if didLaunch { openDashboardWindow() } else { pendingPage = .overview }
+        return false
+    }
+    private var isUsageReview: Bool {
+        Bundle.main.bundleIdentifier == "com.contextos.review" || Bundle.main.bundleIdentifier == "com.contextos.timecandidate"
+            || ProcessInfo.processInfo.arguments.contains("--usage-review")
+    }
+    private var reviewTitle: String {
+        Bundle.main.bundleIdentifier == "com.contextos.timecandidate" ? "ContextOS · 시간 후보" : "ContextOS Review · 합성 데이터"
+    }
+    private func showUsage() {
+        if isUsageReview {
+            usageWindow.show(UsageReviewRoot(), title: reviewTitle)
+        } else {
+            dashboardUI.page = .usage
+            showPopover()
+        }
+    }
+    private func showPage(_ page: DashboardUIState.Page) {
+        if isUsageReview { showUsage(); return }
+        dashboardUI.showSettings = false
+        dashboardUI.page = page
+        showPopover()
+    }
     private lazy var mascot = MascotRenderer(state: model.mascot)
     private var subscriptions: Set<AnyCancellable> = []
     private var glyphLayerHost: NSView?
@@ -50,11 +74,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     private static let panelReleaseDelay: TimeInterval = 120
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        defer {
+            didLaunch = true
+            if let page = pendingPage { pendingPage = nil; showPage(page) }
+        }
+        let menu = NSMenu()
+        let item = NSMenuItem(); menu.addItem(item)
+        let appMenu = NSMenu(title: "ContextOS"); item.submenu = appMenu
+        let openWindow = NSMenuItem(title: "대시보드를 창으로 열기", action: #selector(openDashboardWindow), keyEquivalent: "o")
+        openWindow.keyEquivalentModifierMask = [.command, .shift]
+        openWindow.target = self
+        appMenu.addItem(openWindow)
+        appMenu.addItem(.separator())
+        for (index, page) in DashboardUIState.Page.allCases.enumerated() {
+            let pageItem = NSMenuItem(title: page.label, action: #selector(openPageFromMenu(_:)), keyEquivalent: String(index + 1))
+            pageItem.target = self
+            pageItem.tag = index
+            appMenu.addItem(pageItem)
+        }
+        appMenu.addItem(.separator())
+        let detail = NSMenuItem(title: "AI 사용 현황…", action: #selector(openUsageFromMenu), keyEquivalent: "")
+        detail.target = self; appMenu.addItem(detail)
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "ContextOS 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        NSApp.mainMenu = menu
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "윈도우")
+        windowItem.submenu = windowMenu
+        menu.addItem(windowItem)
+        windowMenu.addItem(withTitle: "닫기", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "최소화", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "모두 앞으로 가져오기", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        NSApp.windowsMenu = windowMenu
+        if isUsageReview {
+            NSApp.setActivationPolicy(.regular)
+            let args = ProcessInfo.processInfo.arguments
+            if let index = args.firstIndex(of: "--usage-render-dir"), args.indices.contains(index + 1) {
+                do { try UsageReviewRenderer.render(to: URL(fileURLWithPath: args[index + 1])) }
+                catch { NSLog("Usage review rendering failed: %@", error.localizedDescription) }
+                NSApp.terminate(nil)
+                return
+            }
+            usageWindow.show(UsageReviewRoot(), title: reviewTitle)
+            return
+        }
+        usageObserver = NotificationCenter.default.addObserver(forName: .openUsageDashboard, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.showUsage() }
+        }
         // No Dock icon, no standalone window.
         NSApp.setActivationPolicy(.accessory)
+        dashboardUI.openWindow = { [weak self] in self?.openDashboardWindow() }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
+            button.setAccessibilityLabel("ContextOS 대시보드")
+            button.toolTip = "ContextOS 대시보드"
             button.imagePosition = .imageLeading
             button.action = #selector(togglePopover)
             button.target = self
@@ -122,7 +197,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             .removeDuplicates()
             .sink { [weak self] title in self?.statusItem.button?.attributedTitle = Self.menuBarTitle(title) }
             .store(in: &subscriptions)
-        hideLifecycleWindow()
     }
 
     /// Today's savings as the menu bar shows it: a notch smaller and a weight
@@ -135,32 +209,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         ])
     }
 
-    /// `WindowGroup` is required by SwiftUI's `App` lifecycle, but ContextOS
-    /// has no document window. Limit this to our scene identifier so project
-    /// windows opened from the dashboard remain visible.
-    func applicationDidBecomeActive(_ notification: Notification) {
-        hideLifecycleWindow()
+    @objc private func openUsageFromMenu() { showUsage() }
+
+    @objc private func openDashboardWindow() {
+        guard !isUsageReview else { showUsage(); return }
+        dashboardWindow.show(preferredScreen: statusItem?.button?.window?.screen)
     }
 
-    private func hideLifecycleWindow() {
-        DispatchQueue.main.async {
-            NSApp.windows
-                .filter { $0.identifier?.rawValue.hasPrefix(Self.lifecycleWindowPrefix) == true }
-                .forEach { $0.orderOut(nil) }
-        }
+    @objc private func openPageFromMenu(_ sender: NSMenuItem) {
+        guard DashboardUIState.Page.allCases.indices.contains(sender.tag) else { return }
+        dashboardUI.showSettings = false
+        dashboardUI.page = DashboardUIState.Page.allCases[sender.tag]
+        showPopover()
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
+        guard statusItem?.button != nil else { return }
         mascot.userInteracted()
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            showPopover()
+        }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem?.button else { return }
+        if !popover.isShown {
+            popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
             panelRelease?.invalidate()
             panelRelease = nil
             if popover.contentViewController == nil {
                 // Two hosting views, not one: see `PopoverContentController`.
                 popover.contentViewController = PopoverContentController(model: model, ui: dashboardUI)
+            }
+            if let controller = popover.contentViewController as? PopoverContentController {
+                controller.prepare(for: button.window?.screen)
+                popover.contentSize = controller.preferredContentSize
             }
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             NSApp.activate(ignoringOtherApps: true)
@@ -168,7 +253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
             model.panelDidOpen()
             // NSPopover reuses its hosted view, so onAppear only fires once. Signal
             // the dashboard to replay the droplet melt-in on every open.
-            NotificationCenter.default.post(name: .contextOSPopoverOpened, object: nil)
+            NotificationCenter.default.post(name: .contextOSPopoverOpened, object: DashboardSurface.popover)
         }
     }
 }
@@ -177,8 +262,7 @@ extension AppDelegate {
     /// NSPopover keeps its hosted view alive after dismissal, so the dashboard
     /// has to be told to stop animating; nothing else will.
     func popoverDidClose(_ notification: Notification) {
-        NotificationCenter.default.post(name: .contextOSPopoverClosed, object: nil)
-        dashboardUI.showSettings = false
+        NotificationCenter.default.post(name: .contextOSPopoverClosed, object: DashboardSurface.popover)
         model.panelDidClose()
         schedulePanelRelease()
     }
@@ -289,6 +373,7 @@ final class MascotRenderer: ObservableObject {
     private var eatingChange: AnyCancellable?
     private var motionChange: AnyCancellable?
     private let settings = AppSettings.shared
+    private var reducedMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
 
     /// The breath's period: `sin(t · 2)` repeats every π seconds.
     private static let idlePeriod = Double.pi
@@ -376,7 +461,7 @@ final class MascotRenderer: ObservableObject {
             return
         }
         let now = Date()
-        let motion = settings.mascotMotion
+        let motion: AppSettings.MascotMotion = reducedMotion ? .off : settings.mascotMotion
         // Set never to chew, 뭉치 ignores the chew state entirely.
         let eating = motion.chews && state.eating
         let k = motion.chews ? state.intensity(at: now) : 0
@@ -474,6 +559,12 @@ final class MascotRenderer: ObservableObject {
         on(distributed, Notification.Name("com.apple.screenIsUnlocked")) { $0.setSuspended(locked: false) }
         on(workspace, NSWorkspace.sessionDidResignActiveNotification) { $0.setSuspended(inactive: true) }
         on(workspace, NSWorkspace.sessionDidBecomeActiveNotification) { $0.setSuspended(inactive: false) }
+        on(workspace, NSWorkspace.accessibilityDisplayOptionsDidChangeNotification) { renderer in
+            renderer.reducedMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            renderer.pace = nil
+            renderer.lastIndex = -1
+            renderer.tick()
+        }
     }
 
     /// 0…1 through one breath.

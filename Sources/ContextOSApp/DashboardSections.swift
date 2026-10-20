@@ -11,29 +11,27 @@ struct LiveHeader: View {
     /// Agents whose own config registers ContextOS.
     var configured: Int
     var todaySaved: Int = 0
+    var hidePrivateDetails = false
+    @Environment(\.accessibilityReduceMotion) private var reduced
 
     var body: some View {
         // A clock only for the "4분째" / "3시간 전" wording. Half a minute is as
         // fine as those words get, and the panel is released soon after it
         // closes, so this never ticks for long unseen.
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
                     Text("ContextOS")
-                        .font(.system(size: 15, weight: .semibold))
-                        .tracking(-0.2)
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
+                        .tracking(-0.35)
                     Spacer(minLength: 8)
                     pill
                 }
-                Text(detail(now: context.date))
-                    .font(.system(size: 11))
+                Text(live.snapshot.optimizing || live.snapshot.planning ? contextOSDetail : detail(now: context.date))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(contextOSDetail)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .help("AI 작업 상태와 ContextOS 사용 기록은 별개입니다. 절감량은 최적화해 전달한 응답의 토큰 추정치입니다.")
             }
         }
     }
@@ -43,17 +41,15 @@ struct LiveHeader: View {
             Circle()
                 .fill(live.working ? Brand.positiveDot : Color.secondary.opacity(0.6))
                 .frame(width: 6, height: 6)
-                .background(Circle().fill((live.working ? Brand.positiveDot : .clear).opacity(0.25))
-                    .frame(width: 12, height: 12))
             Text(phaseTitle)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: 10, weight: .medium))
         }
         .foregroundStyle(live.working ? Brand.positive : .secondary)
         .padding(.horizontal, 10)
         .frame(height: 24)
         .background((live.working ? Brand.positiveDot.opacity(0.13) : Color.primary.opacity(0.07)),
                     in: Capsule())
-        .animation(.snappy(duration: 0.25), value: live.working)
+        .animation(PanelMotion.feedback(reduced: reduced), value: live.phase)
     }
 
     private var phaseTitle: String {
@@ -61,9 +57,9 @@ struct LiveHeader: View {
         switch live.phase {
         case .working: return agent + " 작업 중"
         case .waiting: return agent + (live.pendingTools > 0 ? " 도구 대기" : " 응답 대기")
-        case .completed: return "응답 종료 확인"
-        case .interrupted: return "중단 확인"
-        case .unknown: return "작업 상태 확인 필요"
+        case .completed: return "응답 종료"
+        case .interrupted: return "작업 중단"
+        case .unknown: return "상태 미확인"
         }
     }
 
@@ -79,14 +75,14 @@ struct LiveHeader: View {
         var parts: [String] = []
         if live.working {
             let elapsed = live.since.map { Self.elapsed(since: $0, now: now) } ?? "작업 신호 확인"
-            parts.append(live.project.map { "\($0)에서 \(elapsed)" } ?? elapsed)
+            parts.append(!hidePrivateDetails ? (live.project.map { "\($0)에서 \(elapsed)" } ?? elapsed) : elapsed)
             if live.snapshot.activeSessions > 1 { parts.append("진행 세션 \(live.snapshot.activeSessions)개") }
         } else if (live.phase == .completed || live.phase == .interrupted), let ended = live.endedAt {
             parts.append((live.phase == .completed ? "확인된 응답 종료 " : "확인된 중단 ") + Self.ago(ended, now: now))
-            if let project = live.project { parts.append(project) }
+            if let project = live.project, !hidePrivateDetails { parts.append(project) }
         } else if let last = live.lastEventAt {
             parts.append("최근 로그 변경 " + Self.ago(last, now: now))
-            if let project = live.project { parts.append(project) }
+            if let project = live.project, !hidePrivateDetails { parts.append(project) }
         } else {
             parts.append("작업 로그가 없거나 상태를 확인할 수 없어요")
         }
@@ -113,9 +109,27 @@ struct LiveHeader: View {
 
 // MARK: - Hero
 
+struct CompactSavingsSummary: View {
+    @EnvironmentObject var model: DashboardModel
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("ContextOS 추정 절감").font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(TokenEstimator.korean(model.totalSaved)).font(.system(size: 22, weight: .semibold, design: .rounded))
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("오늘 +\(TokenEstimator.korean(model.todaySaved))").font(.system(size: 11)).monospacedDigit()
+                Text("누적 기록 \(model.queryCount)회").font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+        }.dashboardCard(radius: 13, padding: 12)
+    }
+}
+
 /// The one number that matters at a glance, with its trend and today's share.
 struct HeroSection: View {
     @EnvironmentObject var model: DashboardModel
+    @Environment(\.accessibilityReduceMotion) private var reduced
 
     var body: some View {
         let trend = Self.lastDays(14, from: model.savingsByDay)
@@ -123,20 +137,20 @@ struct HeroSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .bottom, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("누적 추정 절감 토큰")
+                    Text("ContextOS 추정 절감")
                         .font(.system(size: 11.5))
                         .foregroundStyle(.secondary)
                     // Proportional figures: tabular digits space a lone big
                     // number out as if it were a column.
                     Text(TokenEstimator.korean(model.totalSaved))
-                        .font(.system(size: 40, weight: .semibold, design: .rounded))
-                        .tracking(-1.1)
+                        .font(.system(size: 28, weight: .semibold, design: .rounded))
+                        .tracking(-0.5)
                         .contentTransition(.numericText())
-                        .animation(.snappy, value: model.totalSaved)
+                        .animation(PanelMotion.feedback(reduced: reduced), value: model.totalSaved)
                 }
                 Spacer(minLength: 8)
                 TrendBars(values: trend)
-                    .frame(width: 104)
+                    .frame(width: 90)
                     .padding(.bottom, 4)
             }
             HStack(spacing: 8) {
@@ -236,6 +250,7 @@ struct TrendBars: View {
 struct CalendarCard: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject var ui: DashboardUIState
+    @Environment(\.accessibilityReduceMotion) private var reduced
 
     private static let weekdays = ["일", "월", "화", "수", "목", "금", "토"]
 
@@ -296,7 +311,7 @@ struct CalendarCard: View {
 
     private func monthButton(_ symbol: String, label: String, _ action: @escaping () -> Void) -> some View {
         Button {
-            withAnimation(.snappy(duration: 0.2)) {
+            withAnimation(PanelMotion.response(reduced: reduced)) {
                 action()
                 ui.selectedDay = nil
             }
@@ -307,7 +322,7 @@ struct CalendarCard: View {
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PanelPressStyle())
         .foregroundStyle(.secondary)
         .accessibilityLabel(label)
     }
@@ -462,6 +477,7 @@ struct CalendarCard: View {
 
 /// One day of the month: its token level as a filled squircle.
 struct DayCell: View {
+    @Environment(\.accessibilityReduceMotion) private var reduced
     let day: CalendarGrid.Day
     let tokens: Int
     let level: Int
@@ -490,13 +506,13 @@ struct DayCell: View {
                             .padding(-2.5)
                     }
                 }
-                .scaleEffect(hovering && !isFuture ? 1.07 : 1)
+                .scaleEffect(hovering && !isFuture && !reduced ? 1.035 : 1)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PanelPressStyle())
         .disabled(isFuture)
         .onHover { hovering = $0 }
-        .animation(.snappy(duration: 0.15), value: hovering)
+        .animation(PanelMotion.feedback(reduced: reduced), value: hovering)
         .help(isFuture ? "" : "\(CalendarCard.dayTitle(day.key)) · "
               + (tokens > 0 ? TokenEstimator.korean(tokens) + " 토큰" : "기록 없음"))
         .accessibilityLabel(CalendarCard.dayTitle(day.key))
@@ -524,18 +540,20 @@ struct DayCell: View {
 struct ProjectsList: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject var ui: DashboardUIState
+    @Environment(\.accessibilityReduceMotion) private var reduced
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.projectUsage.isEmpty {
-                emptyState("Claude Code 또는 Codex의 로컬 사용 기록이 없어요.")
+                PanelEmptyState(symbol: "folder", title: "아직 프로젝트 기록이 없어요", detail: "Claude Code·Codex의 관측 가능한 로컬 기록이 여기에 모여요.")
             } else {
                 let everything = max(1, model.projectUsage.reduce(0) { $0 + $1.total })
-                ForEach(model.projectUsage) { project in
+                ForEach(Array(model.projectUsage.enumerated()), id: \.element.id) { index, project in
                     ProjectCard(project: project,
                                 share: Int((Double(project.total) / Double(everything) * 100).rounded()),
-                                isOpen: ui.expanded.contains(project.id)) {
-                        withAnimation(.snappy(duration: 0.22)) {
+                                isOpen: ui.expanded.contains(project.id),
+                                privateLabel: ui.hidePrivateDetails ? "프로젝트 \(index + 1)" : nil) {
+                        withAnimation(PanelMotion.response(reduced: reduced)) {
                             if ui.expanded.contains(project.id) {
                                 ui.expanded.remove(project.id)
                             } else {
@@ -553,20 +571,25 @@ struct ProjectCard: View {
     let project: ProjectAIUsage
     let share: Int
     let isOpen: Bool
+    var privateLabel: String? = nil
     let toggle: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             Button(action: toggle) {
                 HStack(spacing: 10) {
-                    LogoBadge(subject: .project(path: project.path,
-                                                mainAgent: project.byAgent.first?.agent))
+                    if privateLabel == nil {
+                        LogoBadge(subject: .project(path: project.path, mainAgent: project.byAgent.first?.agent))
+                    } else {
+                        Image(systemName: "folder").font(.system(size: 15)).foregroundStyle(.secondary)
+                            .frame(width: 28, height: 28).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+                    }
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(project.name)
+                        Text(privateLabel ?? project.name)
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
-                        Text((project.path as NSString).abbreviatingWithTildeInPath)
-                            .font(.system(size: 10.5, design: .monospaced))
+                        Text(privateLabel != nil ? "이름·경로 숨김" : (project.path as NSString).abbreviatingWithTildeInPath)
+                            .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -586,7 +609,8 @@ struct ProjectCard: View {
                 }
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PanelPressStyle())
+            .accessibilityValue(isOpen ? "펼쳐짐" : "접힘")
             .accessibilityHint(isOpen ? "접기" : "AI별 사용량 펼치기")
 
             SplitBar(parts: project.byAgent.map { ($0.tokens, Brand.color(forAgent: $0.agent)) })
@@ -623,7 +647,7 @@ struct ProjectCard: View {
                 }
             }
             // Quick actions — only for projects that still exist on disk.
-            if FileManager.default.fileExists(atPath: project.path) {
+            if privateLabel == nil, FileManager.default.fileExists(atPath: project.path) {
                 HStack(spacing: 6) {
                     chip("Finder", "folder") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: project.path)])
@@ -648,7 +672,7 @@ struct ProjectCard: View {
                 .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PanelPressStyle())
     }
 
     /// Open Terminal.app at the given directory.
@@ -682,11 +706,12 @@ struct SplitBar: View {
 
 struct ActivityList: View {
     @EnvironmentObject var model: DashboardModel
+    @EnvironmentObject var ui: DashboardUIState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if model.recent.isEmpty {
-                emptyState("아직 최적화 기록이 없어요. AI에게 질문하면 여기에 쌓여요.")
+                PanelEmptyState(symbol: "sparkle", title: "아직 최적화 기록이 없어요", detail: "ContextOS의 최적화 호출이 기록되면 여기에 표시돼요.")
             } else {
                 ForEach(Self.groups(model.recent), id: \.day) { group in
                     Text(CalendarGrid.heading(group.day))
@@ -710,11 +735,11 @@ struct ActivityList: View {
                 .frame(width: 26, height: 26)
                 .background(Brand.accent.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
-                Text(e.query.isEmpty ? "컨텍스트 최적화" : e.query)
+                Text(ui.hidePrivateDetails || e.query.isEmpty ? "컨텍스트 최적화" : e.query)
                     .font(.system(size: 12.5))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text("\((e.project as NSString).lastPathComponent) · 파일 \(e.fileCount)개 · "
+                Text((ui.hidePrivateDetails ? "프로젝트 숨김" : (e.project as NSString).lastPathComponent) + " · 파일 \(e.fileCount)개 · "
                      + (today ? LiveHeader.ago(Date(timeIntervalSince1970: e.timestamp))
                               : Self.clock.string(from: Date(timeIntervalSince1970: e.timestamp))))
                     .font(.system(size: 10.5))
@@ -761,13 +786,14 @@ struct ActivityList: View {
 /// an absent transcript is not zero usage.
 struct AgentsList: View {
     @EnvironmentObject var model: DashboardModel
+    @EnvironmentObject var ui: DashboardUIState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let notice = model.notice {
                 HStack(spacing: 8) {
                     Image(systemName: "info.circle")
-                    Text(notice).lineLimit(2)
+                    Text(ui.hidePrivateDetails ? "연결 안내가 있어요. 개인 정보 표시 후 내용을 확인할 수 있어요." : notice).lineLimit(2)
                 }
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
@@ -804,7 +830,7 @@ struct AgentsList: View {
                     Text(agent.name)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    Text([agent.usage.summary, agent.detail].compactMap { $0 }.joined(separator: " · "))
+                    Text([agent.usage.summary, ui.hidePrivateDetails ? nil : agent.detail].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -814,14 +840,14 @@ struct AgentsList: View {
                 status(agent)
                     .fixedSize()
             }
-            if let path = agent.connection.configPath {
+            if let path = agent.connection.configPath, !ui.hidePrivateDetails {
                 Text((path as NSString).abbreviatingWithTildeInPath)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if ManagedAgent(rawValue: agent.name) != nil {
+            if ManagedAgent(rawValue: agent.name) != nil, !ui.hidePrivateDetails {
                 HStack(spacing: 12) {
                     Button("연결 설정") { model.connect(agent: agent.name) }
                     if agent.connection.isConfigured {

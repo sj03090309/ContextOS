@@ -65,6 +65,6 @@ final class AppSettings: ObservableObject {
         self.defaults = defaults
         showMenuBarSavings = defaults.object(forKey: Keys.menuBarSavings) as? Bool ?? true
         mascotMotion = defaults.string(forKey: Keys.mascotMotion)
-            .flatMap(MascotMotion.init(rawValue:)) ?? .always
+            .flatMap(MascotMotion.init(rawValue:)) ?? .whileWorking
     }
 }

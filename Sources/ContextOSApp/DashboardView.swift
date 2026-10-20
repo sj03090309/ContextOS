@@ -7,6 +7,13 @@ import ContextOSCore
 enum Brand {
     static let cream = Color(red: 0.937, green: 0.906, blue: 0.839)      // #EFE7D6
     static let ink = Color(red: 0.090, green: 0.090, blue: 0.106)        // #17171B
+    static let canvas = adaptive(
+        dark: NSColor(calibratedRed: 0.114, green: 0.118, blue: 0.137, alpha: 1),
+        light: NSColor(calibratedRed: 0.973, green: 0.965, blue: 0.945, alpha: 1))
+    static let surface = adaptive(
+        dark: NSColor(calibratedRed: 0.153, green: 0.157, blue: 0.180, alpha: 1),
+        light: NSColor(calibratedWhite: 1, alpha: 0.85))
+    static let caution = adaptive(dark: .systemOrange, light: .systemBrown)
 
     /// An appearance-adaptive color: `dark` in dark mode, `light` in light mode.
     static func adaptive(dark: NSColor, light: NSColor) -> Color {
@@ -90,12 +97,25 @@ enum DashboardTab: Hashable, CaseIterable {
 /// on the next open, which should come back exactly as it was left.
 @MainActor
 final class DashboardUIState: ObservableObject {
+    enum Page: String, CaseIterable {
+        case overview = "대시보드", usage = "AI 사용량", time = "개발 시간"
+        var label: String { rawValue }
+    }
+    @Published var page: Page = .overview
+    @Published var usageExpanded = false
+    @Published var panelHeight: CGFloat = 520
+    @Published var historyExpanded = false
     @Published var tab: DashboardTab = .files
     @Published var expanded: Set<String> = []   // expanded project cards
     /// Months back from the current one.
     @Published var monthOffset = 0
     @Published var selectedDay: String?
     @Published var showSettings = false
+    // Display only: never mutates the project store, history or usage snapshot.
+    // Safe by default when this release preview is shared or screen recorded.
+    @Published var hidePrivateDetails = true
+    /// Wired by the app's public window command; no independent data source.
+    var openWindow: (() -> Void)?
 }
 
 /// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a
@@ -104,6 +124,13 @@ final class DashboardUIState: ObservableObject {
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject private var ui: DashboardUIState
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    // The time cards observe their own controller so a ticking duration does
+    // not invalidate the calendar and every other dashboard section.
+    let workTime: WorkTimeController
+    @Namespace private var navigation
+
+    init(workTime: WorkTimeController = .shared) { self.workTime = workTime }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -113,55 +140,76 @@ struct DashboardView: View {
             // panel's view graph (calendar cells, project cards and all), which
             // cost 16% of a core; split apart, each redraws on its own.
             Color.clear.frame(height: PopoverContentController.mascotHeight)
+                .fixedSize(horizontal: false, vertical: true)
 
             LiveHeader(live: model.live,
                        configured: model.agents.filter { $0.connection.isConfigured }.count,
-                       todaySaved: model.todaySaved)
+                       todaySaved: model.todaySaved, hidePrivateDetails: ui.hidePrivateDetails)
                 .padding(.horizontal, 18)
+                .fixedSize(horizontal: false, vertical: true)
 
-            HeroSection()
-                .padding(.horizontal, 18)
-                .padding(.top, 12)
+            SlidingSegments(options: DashboardUIState.Page.allCases, selection: $ui.page,
+                            label: \.label, namespace: navigation, height: 33)
+                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 10)
 
-            CalendarCard()
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
-
-            PanelTabBar(selection: $ui.tab)
-                .padding(.horizontal, 14)
-                .padding(.top, 10)
-
-            // Fixed height: a card expanding or a tab switching must not change
-            // the content height, or NSPopover resizes the whole window in an
-            // unanimated jump. Long lists scroll inside instead.
-            ScrollView(.vertical, showsIndicators: false) {
-                Group {
-                    switch ui.tab {
-                    case .files: ProjectsList()
-                    case .activity: ActivityList()
-                    case .ai: AgentsList()
+            Group {
+                switch ui.page {
+                case .overview:
+                    ScrollView(.vertical) {
+                        VStack(spacing: 10) {
+                            ConcurrentUsageSummary()
+                            DevelopmentTimeSummary(model: workTime) { ui.page = .time }
+                            CompactSavingsSummary()
+                            Button {
+                                withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
+                            } label: {
+                                HStack {
+                                    Text("달력·프로젝트")
+                                    Spacer()
+                                    Image(systemName: "chevron.down").rotationEffect(.degrees(ui.historyExpanded ? 180 : 0))
+                                }.font(.system(size: 11, weight: .medium)).padding(.vertical, 9).contentShape(Rectangle())
+                            }.buttonStyle(PanelPressStyle()).accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
+                            if ui.historyExpanded {
+                                CalendarCard()
+                                PanelTabBar(selection: $ui.tab)
+                                switch ui.tab {
+                                case .files: ProjectsList()
+                                case .activity: ActivityList()
+                                case .ai: AgentsList()
+                                }
+                            }
+                        }.padding(.horizontal, 16).padding(.bottom, 16)
                     }
+                case .usage:
+                    PopoverUsageDetail()
+                case .time:
+                    WorkTimePanel(model: workTime, compact: true)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 2)
             }
-            .frame(height: 188)
-            .padding(.top, 8)
+            .id(ui.page)
+            .transition(.opacity)
+            .frame(maxHeight: .infinity)
+            .animation(PanelMotion.feedback(reduced: reduced), value: ui.page)
 
             FooterBar()
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(width: 340)
+        .frame(width: DashboardLayout.width, height: ui.panelHeight)
         .tint(Brand.accent)
         // Pin the background to a single, constant vibrancy so its color doesn't
         // deepen when the popover becomes key (e.g. after a click).
-        .background(VisualEffectBackground())
+        .background(Brand.canvas)
         .overlay {
             if ui.showSettings {
                 SettingsOverlay()
                     .transition(.opacity)
             }
         }
-        .animation(.snappy(duration: 0.22), value: ui.showSettings)
+        .animation(PanelMotion.response(reduced: reduced), value: ui.showSettings)
+        .transaction { if reduced { $0.animation = nil; $0.disablesAnimations = true } }
+        .onAppear { model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
+        .onChange(of: ui.historyExpanded) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
+        .onChange(of: ui.page) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
         .sheet(item: $model.connectionPreview) { preview in
             ConnectionPreviewSheet(preview: preview)
                 .environmentObject(model)
@@ -177,11 +225,11 @@ extension View {
     func dashboardCard(radius: CGFloat = 16, padding: CGFloat = 12) -> some View {
         self
             .padding(padding)
-            .background(Color.primary.opacity(0.045),
+            .background(Brand.surface,
                         in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1))
+                    .strokeBorder(Color.primary.opacity(0.055), lineWidth: 1))
     }
 }
 
