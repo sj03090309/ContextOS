@@ -1,5 +1,7 @@
 # Swift / SwiftPM
 .build/
+.build-*/
+.swift-cache/
 .swiftpm/
 .audit/
 Package.resolved
@@ -26,3 +28,7 @@ graphify-out/
 !NativeWidgets/ContextOSWidgets.xcodeproj/
 !NativeWidgets/ContextOSWidgets.xcodeproj/project.pbxproj
 artifacts/
+
+# Generated Windows desktop output and shared-version inputs
+Windows/**/bin/
+Windows/**/obj/

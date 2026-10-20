@@ -37,14 +37,14 @@ public struct ContextOptimizer: Sendable {
 
     public func selectContext(
         query: String,
-        from store: IndexStore,
+        from snapshot: IndexSnapshot,
         tokenBudget: Int,
         signals: GitSignals = .empty,
         overrideTerms: [String]? = nil
-    ) throws -> ContextSelection {
+    ) -> ContextSelection {
         // Use actively-refined terms when provided, else derive from the query.
         let terms = overrideTerms ?? TextTokens.queryTerms(TextTokens.withoutFileReferences(query))
-        let files = try store.allFiles()
+        let files = snapshot.files
         let references = TextTokens.fileReferences(in: query).map {
             $0.hasPrefix("./") ? String($0.dropFirst(2)).lowercased() : $0.lowercased()
         }
@@ -56,8 +56,8 @@ public struct ContextOptimizer: Sendable {
                     : path.split(separator: "/").last.map(String.init) == reference)
             }
         }.map(\.relativePath))
-        let symbolsByFile = try store.symbolsByFile()
-        let importsByFile = try store.importsByFile()
+        let symbolsByFile = snapshot.symbolsByFile
+        let importsByFile = snapshot.importsByFile
 
         // Proceed if there's *any* signal: query terms or Git recency.
         guard !files.isEmpty, !terms.isEmpty || !signals.isEmpty || !explicitPaths.isEmpty else {
