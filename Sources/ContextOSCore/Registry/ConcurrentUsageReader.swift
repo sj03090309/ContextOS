@@ -242,9 +242,14 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             return UsageDay(date: date, tokens: dayTotals[date])
         }
         func ranks(_ values: [String: Int64]) -> [UsageRank] {
-            values.map { UsageRank($0.key, $0.value) }.sorted {
-                $0.tokens == $1.tokens ? $0.name < $1.name : $0.tokens > $1.tokens
-            }.prefix(3).map { $0 }
+            let entries: [UsageRank] = values.map { item in
+                UsageRank(item.key, item.value)
+            }
+            let ordered = entries.sorted { left, right in
+                if left.tokens != right.tokens { return left.tokens > right.tokens }
+                return left.name < right.name
+            }
+            return Array(ordered.prefix(3))
         }
         let todayModels = TodayModelUsage.ordered(modelTotals.map { TodayModelUsage(provider: $0.key.provider, model: $0.key.model, tokens: $0.value) })
         let value = ConcurrentUsageSnapshot(widget: .init(generatedAt: now, timeZoneID: timeZone.identifier,
