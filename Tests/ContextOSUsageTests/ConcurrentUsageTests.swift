@@ -73,6 +73,26 @@ import ContextOSUsage
         #expect(s.widget.agents.first { $0.name == "Codex" }?.tokens == 400)
         #expect(s.widget.models.reduce(0) { $0 + $1.tokens } == 600)
     }
+    @Test func collectionLimitsAndUnsupportedRecordsAreDistinctFromReadErrors() throws {
+        let h=try home();defer { try? FileManager.default.removeItem(at:h) }
+        _=try write(meta("one")+[counter(100)],".codex/sessions/rollout-one.jsonl",home:h)
+        _=try write(meta("two")+[counter(200)],".codex/sessions/rollout-two.jsonl",home:h)
+        let limited=ConcurrentUsageReader(maximumFilesPerProvider:1).snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(limited.widget.providers.first?.issues?.contains(.fileLimit)==true)
+        #expect(limited.widget.health == "집계 범위 제한")
+        _=try write(meta("format")+[["type":"token_usage_record","timestamp":stamp(),"payload":["usage":["total_tokens":999]]]],".codex/sessions/rollout-format.jsonl",home:h)
+        let unsupported=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(unsupported.widget.today==300) // Unknown accounting never becomes fabricated usage.
+        #expect(unsupported.widget.providers.first?.issues?.contains(.unsupportedAccounting)==true)
+        #expect(unsupported.widget.health == "집계 범위 제한")
+        let bad=h.appendingPathComponent(".codex/sessions/rollout-malformed.jsonl")
+        try Data("{broken json}\n".utf8).write(to:bad)
+        let invalid=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
+        #expect(invalid.widget.providers.first?.issues?.contains(.malformedRecord)==true)
+        #expect(invalid.widget.health == "일부 수집 불가")
+        let old=try JSONDecoder().decode(UsageProvider.self,from:Data(#"{"name":"Codex","state":"partial"}"#.utf8))
+        #expect(old.hasCollectionFailure) // Old snapshots must not silently lose their warning.
+    }
     @Test func codexCacheSubsetDuplicateResetAndReplay() throws {
         let h = try home(); defer { try? FileManager.default.removeItem(at:h) }
         let c = counter(5, -3)
@@ -107,7 +127,9 @@ import ContextOSUsage
         _=try write([synthetic],".claude/projects/p/a.jsonl",home:h)
         let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(value.widget.today == nil && value.widget.models.isEmpty)
-        #expect(value.widget.providers.first { $0.name == "Claude Code" }?.state == .partial)
+        #expect(value.widget.providers.first { $0.name == "Claude Code" }?.state == .noRecords)
+        #expect(value.widget.providers.first { $0.name == "Claude Code" }?.issues == [.unreportedUsage])
+        #expect(value.widget.health == "집계 범위 제한")
         // A real model's explicit zero is still an observed zero.
         message["model"]="claude-real-zero"; synthetic["message"]=message
         _=try write([synthetic],".claude/projects/p/b.jsonl",home:h)
@@ -193,6 +215,8 @@ import ContextOSUsage
         let denied = reader.snapshot(home:h,now:now,timeZone:.gmt)
         #expect(denied.widget.today == nil)
         #expect(denied.widget.providers.first?.state == .partial)
+        #expect(denied.widget.providers.first?.issues?.contains(.unreadable)==true)
+        #expect(denied.widget.health == "일부 수집 불가")
     }
     @Test func quietTurnDoesNotBecomeIdleAndMtimeDoesNotInventWork() throws {
         let h = try home(); defer { try? FileManager.default.removeItem(at:h) }
