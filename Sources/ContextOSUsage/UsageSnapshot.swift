@@ -41,13 +41,38 @@ public struct UsageDay: Codable, Sendable, Equatable, Identifiable {
     public init(date: Date, tokens: Int64?) { self.date = date; self.tokens = tokens }
 }
 
+public enum CollectionIssue: String, Codable, Sendable {
+    case fileLimit, entryLimit, eventLimit, readBudget, oversizedRecord, malformedRecord, unreadable
+    case excludedSubagent, unreportedUsage, unsupportedAccounting
+    public var label: String {
+        switch self {
+        case .fileLimit: "최근 파일 수 상한 · 이전 기록 제외"
+        case .entryLimit: "탐색 항목 상한 · 일부 경로 제외"
+        case .eventLimit: "집계 이벤트 상한 · 일부 기록 제외"
+        case .readBudget: "로컬 기록 읽는 중 · 다음 갱신에서 계속"
+        case .oversizedRecord: "크기 제한을 넘는 기록 제외"
+        case .malformedRecord: "해석할 수 없는 기록 있음"
+        case .unreadable: "읽을 수 없는 파일 또는 안전하지 않은 경로 있음"
+        case .excludedSubagent: "중복 방지를 위해 분기·하위 작업 제외"
+        case .unreportedUsage: "실제 토큰 미제공 기록 제외"
+        case .unsupportedAccounting: "미지원 사용량 형식 제외"
+        }
+    }
+    public var isFailure: Bool { self == .malformedRecord || self == .unreadable }
+}
+
 public struct UsageProvider: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     public var state: CollectionState
     public var latestEvent: Date?
+    /// Optional so older shared snapshots still decode. Contains no file paths.
+    public var issues: [CollectionIssue]?
+    public var hasCollectionFailure: Bool {
+        state == .unavailable || (state == .partial && (issues?.isEmpty != false || issues?.contains(where: \.isFailure) == true))
+    }
     public var id: String { name }
-    public init(name: String, state: CollectionState, latestEvent: Date? = nil) {
-        self.name = name; self.state = state; self.latestEvent = latestEvent
+    public init(name: String, state: CollectionState, latestEvent: Date? = nil, issues: [CollectionIssue] = []) {
+        self.name = name; self.state = state; self.latestEvent = latestEvent; self.issues = issues.isEmpty ? nil : issues
     }
 }
 
@@ -100,7 +125,8 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
         if isSample { return "미리보기 · 예시 데이터" }
         let supported = providers.filter { $0.state != .unsupported }
         if supported.isEmpty { return "앱 연결 필요" }
-        if supported.contains(where: { $0.state == .unavailable || $0.state == .partial }) { return "일부 수집 불가" }
+        if supported.contains(where: \.hasCollectionFailure) { return "일부 수집 불가" }
+        if supported.contains(where: { $0.state == .partial || $0.issues?.isEmpty == false }) { return "집계 범위 제한" }
         return supported.contains(where: { $0.state == .ready }) ? "로컬 기록 집계" : "기록 없음"
     }
 }

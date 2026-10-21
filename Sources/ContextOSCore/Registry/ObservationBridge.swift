@@ -79,7 +79,8 @@ public struct ObservationBridgeLedger: Sendable {
 }
 
 /// Disabled until the UI explicitly opts in. Same-user private Unix socket,
-/// no TCP/network endpoint, no raw packet log, and no existing-path replacement.
+/// no TCP/network endpoint or raw packet log. Only a proven stale, private,
+/// same-user socket may be recovered while holding the receiver lease.
 public final class ObservationBridgeServer: @unchecked Sendable {
     private final class Client {
         var fd: Int32
@@ -95,6 +96,7 @@ public final class ObservationBridgeServer: @unchecked Sendable {
     private let callback: @Sendable (ObservationBridgeEvent) -> Void
     private var listener: DispatchSourceRead?
     private var socketFD: Int32 = -1
+    private var leaseFD: Int32 = -1
     private var clients: [Int32: Client] = [:]
     private var ownedPath: String?
     private var ownedInode: ino_t?
@@ -126,8 +128,18 @@ public final class ObservationBridgeServer: @unchecked Sendable {
             }
             guard status.st_uid == getuid(), (status.st_mode & S_IFMT) == S_IFDIR,
                   status.st_mode & 0o077 == 0 else { throw BridgeError.unsafeLocation }
+            // Keep this lock inode permanently: unlinking a lock file can let
+            // two processes acquire locks on different inodes at the same path.
+            let lockPath = directory.appendingPathComponent("receiver.lock").path
+            let lockFD = Darwin.open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard lockFD >= 0 else { throw BridgeError.unsafeLocation }
+            leaseFD = lockFD
+            guard fstat(lockFD, &status) == 0, status.st_uid == getuid(),
+                  status.st_mode & S_IFMT == S_IFREG, status.st_mode & 0o077 == 0,
+                  status.st_nlink == 1, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw BridgeError.unsafeLocation }
             let path = directory.appendingPathComponent("observations.sock").path
-            guard path.utf8.count < 104, lstat(path, &status) != 0, errno == ENOENT else { throw BridgeError.unsafeLocation }
+            guard path.utf8.count < 104 else { throw BridgeError.unsafeLocation }
+            try recoverStaleSocket(path)
             let fd = socket(AF_UNIX, SOCK_STREAM, 0)
             guard fd >= 0 else { throw BridgeError.socketFailure }
             socketFD = fd
@@ -144,6 +156,32 @@ public final class ObservationBridgeServer: @unchecked Sendable {
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
             listener = source; source.setEventHandler { [weak self] in self?.acceptClients() }; callback(.ready); source.resume()
         } catch { shutdown(); callback(.failed) }
+    }
+    private func recoverStaleSocket(_ path: String) throws {
+        var before = stat()
+        guard lstat(path, &before) == 0 else {
+            guard errno == ENOENT else { throw BridgeError.unsafeLocation }; return
+        }
+        guard before.st_uid == getuid(), before.st_mode & S_IFMT == S_IFSOCK,
+              before.st_mode & 0o077 == 0 else { throw BridgeError.unsafeLocation }
+        let probe = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard probe >= 0 else { throw BridgeError.socketFailure }
+        defer { close(probe) }
+        var address = sockaddr_un(); address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        withUnsafeMutableBytes(of: &address.sun_path) { bytes in
+            path.utf8CString.withUnsafeBytes { bytes.copyBytes(from: $0) }
+        }
+        let result = withUnsafePointer(to: &address) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(probe, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        // A live listener, access failure, or any ambiguous result is preserved.
+        guard result == -1, errno == ECONNREFUSED else { throw BridgeError.unsafeLocation }
+        var after = stat()
+        guard lstat(path, &after) == 0, before.st_dev == after.st_dev,
+              before.st_ino == after.st_ino, after.st_uid == getuid(),
+              after.st_mode & S_IFMT == S_IFSOCK, after.st_mode & 0o077 == 0,
+              unlink(path) == 0 else { throw BridgeError.unsafeLocation }
     }
     private func acceptClients() {
         while true {
@@ -208,5 +246,6 @@ public final class ObservationBridgeServer: @unchecked Sendable {
             if lstat(path, &status) == 0, status.st_ino == ownedInode, (status.st_mode & S_IFMT) == S_IFSOCK { unlink(path) }
             ownedPath = nil; ownedInode = nil
         }
+        if leaseFD >= 0 { close(leaseFD); leaseFD = -1 }
     }
 }

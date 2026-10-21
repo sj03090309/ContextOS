@@ -143,7 +143,7 @@ final class WorkTimeController: ObservableObject {
             activityPoint { ledger, tick, wall in ledger.disconnect(id: nil, tick: tick, wall: wall, timeZone: .current) }
             if ownedPersistence { try? EstimatedActivityStore.write(estimatedActivity, to: activityFile) }
             activityTimer?.invalidate(); activityTimer = nil
-            bridgeServer?.stop(); bridgeServer = nil; closedEditCount = bridgeEditCount; bridgeLedgers.removeAll()
+            bridgeServer?.stopSynchronously(); bridgeServer = nil; closedEditCount = bridgeEditCount; bridgeLedgers.removeAll()
             bridgeFocused = nil; bridgeStatus = "수신 꺼짐 · 관측 중지"; releaseUnusedBoundaries()
         }
     }

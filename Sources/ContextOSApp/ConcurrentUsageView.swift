@@ -127,6 +127,9 @@ struct ProviderSessionsCard: View {
             }.buttonStyle(PanelPressStyle()).accessibilityValue(expanded ? "펼쳐짐" : "접힘")
             if expanded {
                 Text(provider.state.label).font(.system(size: 9)).foregroundStyle(.secondary)
+                ForEach(provider.issues ?? [], id: \.rawValue) { issue in
+                    Text(issue.label).font(.system(size: 9)).foregroundStyle(issue.isFailure ? Brand.caution : Color.secondary)
+                }
                 if groups.isEmpty { Text("관측된 세션이 없어요").font(.system(size: 10)).foregroundStyle(.secondary) }
                 ForEach(showAll ? groups : Array(groups.prefix(3))) { ModelSessionsDisclosure(group: $0) }
                 if groups.count > 3 {
@@ -183,6 +186,11 @@ struct PopoverUsageDetail: View {
                         Text("로컬 기록만 포함하며 dot·클라우드 전체 사용량은 아닙니다.")
                         Text("모델별 토큰은 오늘의 실제 토큰 이벤트 기준입니다. 세션 상태의 모델명은 마지막 관측 모델이며, 모델 전환분은 세션 상세 합계에 포함돼요.")
                         Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0.")
+                        ForEach(data.providers) { provider in
+                            ForEach(provider.issues ?? [], id: \.rawValue) { issue in
+                                Text(provider.name + " · " + issue.label)
+                            }
+                        }
                         Text("마지막 집계 \(data.generatedAt.formatted(date: .omitted, time: .shortened)) · \(data.timeZoneID)")
                     }.font(.system(size: 9.5)).foregroundStyle(.secondary).padding(.top, 5)
                 }.font(.system(size: 10)).foregroundStyle(.secondary)
