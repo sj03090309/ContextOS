@@ -49,5 +49,7 @@ jobs:
           bash scripts/package_app.sh --binary-dir "$(swift build -c release --show-bin-path)"
           python3 scripts/verify_bundle.py dist/ContextOS.app
           python3 scripts/smoke_install.py --app dist/ContextOS.app
+      - name: Native widget source and package regression (no capabilities or installation)
+        run: bash scripts/package_widgets.sh --binary-dir "$(swift build -c release --show-bin-path)" --output "$RUNNER_TEMP/contextos-native-widgets"
       - name: Synthetic performance correctness smoke
         run: '"$(swift build -c release --show-bin-path)/contextos-bench" "$RUNNER_TEMP/contextos-bench-$GITHUB_RUN_ID" 50'

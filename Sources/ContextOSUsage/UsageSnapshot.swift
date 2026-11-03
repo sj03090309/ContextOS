@@ -48,6 +48,11 @@ public struct UsageProvider: Codable, Sendable, Equatable, Identifiable {
     /// Optional additions keep older shared snapshots readable.
     public var isCollecting: Bool?
     public var issues: [CollectionIssue]?
+    public var hasCollectionFailure: Bool {
+        state == .unavailable || (state == .partial && (
+            issues?.contains(where: \.isFailure) == true
+                || (isCollecting != true && issues?.isEmpty != false)))
+    }
     public var id: String { name }
     public init(name: String, state: CollectionState, latestEvent: Date? = nil,
                 isCollecting: Bool? = nil, issues: [CollectionIssue]? = nil) {
@@ -63,6 +68,9 @@ public struct UsageProvider: Codable, Sendable, Equatable, Identifiable {
 
 public enum CollectionIssue: String, Codable, Sendable, CaseIterable {
     case fileLimit, scanLimit, unreadable, invalidRecord, oversizedRecord, recordLimit, inheritedHistory, ambiguousCounters
+    // Both released version-1 vocabularies remain decodable. Do not rename
+    // raw values: existing app-group snapshots may contain either set.
+    case entryLimit, eventLimit, readBudget, malformedRecord, excludedSubagent, unreportedUsage, unsupportedAccounting
     public var label: String {
         switch self {
         case .fileLimit: "최근 기록 파일 한도 초과"
@@ -73,6 +81,19 @@ public enum CollectionIssue: String, Codable, Sendable, CaseIterable {
         case .recordLimit: "사용량 이벤트 한도 초과"
         case .inheritedHistory: "구형 상속 기록 제외"
         case .ambiguousCounters: "누적 사용량 순서 확인 필요"
+        case .entryLimit: "탐색 항목 상한 · 일부 경로 제외"
+        case .eventLimit: "집계 이벤트 상한 · 일부 기록 제외"
+        case .readBudget: "로컬 기록 읽는 중 · 다음 갱신에서 계속"
+        case .malformedRecord: "해석할 수 없는 기록 있음"
+        case .excludedSubagent: "중복 방지를 위해 분기·하위 작업 제외"
+        case .unreportedUsage: "실제 토큰 미제공 기록 제외"
+        case .unsupportedAccounting: "미지원 사용량 형식 제외"
+        }
+    }
+    public var isFailure: Bool {
+        switch self {
+        case .unreadable, .invalidRecord, .malformedRecord, .ambiguousCounters: true
+        default: false
         }
     }
 }
@@ -126,11 +147,18 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
         if isSample { return "미리보기 · 예시 데이터" }
         let supported = providers.filter { $0.state != .unsupported }
         if supported.isEmpty { return "앱 연결 필요" }
-        if supported.contains(where: { $0.state == .unavailable }) { return "일부 수집 불가" }
-        let partial = supported.filter { $0.state == .partial }
-        if !partial.isEmpty {
-            return partial.allSatisfy { $0.isCollecting == true && ($0.issues ?? []).isEmpty }
-                ? "기록 집계 중" : "일부 기록만 수집"
+        if supported.contains(where: { $0.hasCollectionFailure && ($0.state != .partial || $0.issues?.isEmpty == false) }) {
+            return "일부 수집 불가"
+        }
+        // Older snapshots without reason metadata still carry their original
+        // warning. They must not be presented as a healthy bounded exclusion.
+        if supported.contains(where: \.hasCollectionFailure) { return "일부 기록만 수집" }
+        let limited = supported.filter { $0.state == .partial || $0.issues?.isEmpty == false }
+        if !limited.isEmpty {
+            return limited.allSatisfy {
+                ($0.isCollecting == true || $0.issues?.contains(.readBudget) == true)
+                    && ($0.issues ?? []).allSatisfy { $0 == .readBudget }
+            } ? "기록 집계 중" : "집계 범위 제한"
         }
         return supported.contains(where: { $0.state == .ready }) ? "로컬 기록 집계" : "기록 없음"
     }

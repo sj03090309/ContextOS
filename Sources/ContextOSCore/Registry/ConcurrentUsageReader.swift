@@ -143,8 +143,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 if row.partial || (row.inherited && !row.hasResponseRecords) || row.needsMoreRead { state = .partial }
                 if let date = row.lastEvent { latest = max(latest ?? date, date) }
                 guard !row.session.isEmpty else {
-                    state = .partial
-                    if !row.needsMoreRead { issues.insert(.invalidRecord) }
+                    if row.partial { state = .partial }
                     continue
                 }
                 let identity = agent + ":" + row.session
@@ -356,7 +355,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             }
         }
         return (files.sorted { $0.1 == $1.1 ? $0.0.path < $1.0.path : $0.1 > $1.1 }.map(\.0),
-                issues.isEmpty ? .ready : (files.isEmpty ? .unavailable : .partial), issues)
+                issues.isEmpty ? .ready : (files.isEmpty && issues.contains(.unreadable) ? .unavailable : .partial), issues)
     }
     private func read(file: URL, claude: Bool, now: Date) -> Row? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: file.path),
@@ -383,7 +382,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                     : ["response_item", "world_state", "compacted", "inter_agent_communication_metadata"]
                 if type.map({ !nonAccounting.contains($0) }) ?? true { row.mark(.oversizedRecord) }
             }) { bytes in
-            guard let e = try? JSONDecoder().decode(Envelope.self, from: Data(bytes)) else { row.mark(.invalidRecord); return }
+            guard let e = try? JSONDecoder().decode(Envelope.self, from: Data(bytes)) else { row.mark(.malformedRecord); return }
             self.consume(e, claude: claude, now: now, row: &row, capacity: capacity)
         }
         guard let result else { return nil }
@@ -426,7 +425,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         }
         // Reserved placeholder records are not model accounting or work signals.
         // Their zero usage must not become a fabricated observed zero/rank.
-        if claude, e.message?.model == "<synthetic>" { return }
+        if claude, e.message?.model == "<synthetic>" { row.issues.insert(.unreportedUsage); return }
         if let model = e.message?.model ?? (e.type == "turn_context" ? p?.model : nil) {
             row.model = Self.safeLabel(model, fallback: "모델 미상")
         }
@@ -480,9 +479,14 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
             }
         }
         if !claude, e.type == "token_usage_record" {
-            guard let usage = p?.usage, let tokens = usage.total(claude: false),
-                  let response = p?.response_id, !response.isEmpty, response.utf8.count <= 128,
+            // Request-level records need stable ownership and response IDs.
+            // Unknown shapes are an explicit scope exclusion, not a read error;
+            // malformed counters in the supported shape remain a failure.
+            guard let response = p?.response_id, !response.isEmpty, response.utf8.count <= 128,
                   let thread = p?.thread_id, !thread.isEmpty, thread.utf8.count <= 128 else {
+                row.issues.insert(.unsupportedAccounting); return
+            }
+            guard let usage = p?.usage, let tokens = usage.total(claude: false) else {
                 row.mark(.invalidRecord); return
             }
             if row.session.isEmpty { row.session = thread }

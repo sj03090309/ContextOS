@@ -164,4 +164,50 @@ struct ObservationTests {
         try await Task.sleep(for:.milliseconds(50));server.stop()
         #expect(try Data(contentsOf:URL(fileURLWithPath:path)) == sentinel)
     }
+
+    @Test func receiverRecoversOnlyPrivateOrphanSocketsAndRestarts() async throws {
+        actor State {
+            var ready = false, failed = false
+            func add(_ e: ObservationBridgeEvent) { if case .ready = e { ready = true }; if case .failed = e { failed = true } }
+            func value() -> (Bool, Bool) { (ready, failed) }
+        }
+        let directory=URL(fileURLWithPath:"/tmp").appendingPathComponent("cx-recovery-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let path=directory.appendingPathComponent("observations.sock").path
+        func bindSocket() throws -> Int32 {
+            let fd=socket(AF_UNIX,SOCK_STREAM,0)
+            var address=sockaddr_un();address.sun_family=sa_family_t(AF_UNIX);address.sun_len=UInt8(MemoryLayout<sockaddr_un>.size)
+            withUnsafeMutableBytes(of:&address.sun_path) { dest in path.utf8CString.withUnsafeBytes { dest.copyBytes(from:$0) } }
+            let result=withUnsafePointer(to:&address) { p in p.withMemoryRebound(to:sockaddr.self,capacity:1) { Darwin.bind(fd,$0,socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+            guard result == 0 else { close(fd); throw BridgeError.socketFailure }
+            chmod(path,0o600);return fd
+        }
+        // Even an older receiver without our lock must remain untouched.
+        let live=try bindSocket();try #require(listen(live,4)==0)
+        let rejected=State(), contender=ObservationBridgeServer { e in Task { await rejected.add(e) } }
+        contender.start(directory:directory)
+        for _ in 0..<100 { if await rejected.value().1 { break };try await Task.sleep(for:.milliseconds(10)) }
+        #expect(await rejected.value().1);contender.stopSynchronously()
+        var old=stat();try #require(lstat(path,&old)==0)
+        close(live) // Models an unclean exit: the pathname remains, no listener.
+        for _ in 0..<3 {
+            let state=State(),server=ObservationBridgeServer { e in Task { await state.add(e) } }
+            server.start(directory:directory)
+            for _ in 0..<100 { if await state.value().0 { break };try await Task.sleep(for:.milliseconds(10)) }
+            #expect(await state.value().0);#expect(await !state.value().1)
+            server.stopSynchronously()
+            var st=stat();#expect(lstat(path,&st) != 0)
+        }
+        // A lock symlink is never followed, replaced, or chmod'ed.
+        let lock=directory.appendingPathComponent("receiver.lock")
+        try FileManager.default.removeItem(at:lock)
+        let sentinel=directory.appendingPathComponent("sentinel");try Data("preserve".utf8).write(to:sentinel)
+        try FileManager.default.createSymbolicLink(at:lock,withDestinationURL:sentinel)
+        let denied=State(),server=ObservationBridgeServer { e in Task { await denied.add(e) } }
+        server.start(directory:directory)
+        for _ in 0..<100 { if await denied.value().1 { break };try await Task.sleep(for:.milliseconds(10)) }
+        server.stopSynchronously();#expect(await denied.value().1)
+        #expect(try Data(contentsOf:sentinel)==Data("preserve".utf8))
+    }
 }
