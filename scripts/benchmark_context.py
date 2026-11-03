@@ -18,7 +18,7 @@ import time
 
 
 class MCP:
-    def __init__(self, binary):
+    def __init__(self, binary, cwd=None):
         sandbox = shutil.which("sandbox-exec")
         if sandbox is None:
             raise RuntimeError("sandbox-exec is required to isolate usage analytics")
@@ -31,7 +31,7 @@ class MCP:
         self.process = subprocess.Popen(
             [sandbox, "-p", profile, str(pathlib.Path(binary).resolve())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, env=dict(os.environ, CFFIXED_USER_HOME=self.home.name))
+            text=True, bufsize=1, cwd=cwd, env=dict(os.environ, CFFIXED_USER_HOME=self.home.name))
         self.counter = 0
 
     def request(self, method, params):
@@ -149,9 +149,14 @@ def main():
                          "nested/.gitignore": "private.py\n", "nested/private.py": "def login():\n    return 'DUMMY_PRIVATE_VALUE'\n"})
             text, _ = server.call("read_optimized", root, query="login .env credentials.json", token_budget=8000, fresh=True)
             assert all(value not in text for value in ["DUMMY_PRIVATE_VALUE", "credentials.json", ".env", "nested/private.py"]), text
-            # A malformed JSON request is dropped; its bytes must not reach stderr.
+            # A malformed JSON request returns a bounded protocol error; its
+            # bytes must not reach stderr or poison the next valid response.
             server.process.stdin.write('{"DUMMY_PRIVATE_VALUE":\n')
             server.process.stdin.flush()
+            import select
+            assert select.select([server.process.stdout], [], [], 5)[0], "Missing parse error"
+            malformed = json.loads(server.process.stdout.readline())
+            assert malformed.get("id") is None and malformed.get("error", {}).get("code") == -32700
             server.request("ping", {})
             report["privacy"] = {"sensitive_fixtures_excluded": True, "malformed_request_recovery": True}
 

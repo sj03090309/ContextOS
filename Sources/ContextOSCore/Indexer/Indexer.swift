@@ -62,6 +62,9 @@ public struct Indexer: Sendable {
         try store.beginImmediateTransaction()
         var committed = false
         defer { if !committed { try? store.rollback() } }
+        let revision = parser is HeuristicParser ? HeuristicParser.cacheRevision : String(reflecting: type(of: parser))
+        let previousRevision = try store.parserRevision()
+        let refreshParser = force || previousRevision != revision
 
         // Snapshot of what's already indexed, keyed by path.
         var existing: [String: IndexedFile] = [:]
@@ -78,7 +81,7 @@ public struct Indexer: Sendable {
             stats.filesIndexed += 1
 
             // Fast path: unchanged size + mtime → skip entirely (no read/parse).
-            if !force, let prior = existing[scanned.relativePath],
+            if !refreshParser, let prior = existing[scanned.relativePath],
                prior.byteSize == scanned.byteSize,
                prior.modifiedAt == scanned.modifiedAt {
                 continue
@@ -98,7 +101,7 @@ public struct Indexer: Sendable {
             let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
 
             // Content identical (mtime-only touch): just refresh metadata.
-            if !force, let prior = existing[scanned.relativePath], prior.contentHash == hash, let id = prior.id {
+            if !refreshParser, let prior = existing[scanned.relativePath], prior.contentHash == hash, let id = prior.id {
                 try store.updateFileMeta(id: id, byteSize: scanned.byteSize, modifiedAt: scanned.modifiedAt)
                 continue
             }
@@ -131,6 +134,7 @@ public struct Indexer: Sendable {
             if let id = prior.id { try store.deleteFile(id: id) }
         }
 
+        if refreshParser { try store.setParserRevision(revision) }
         try store.commit()
         committed = true
         stats.duration = Date().timeIntervalSince(start)

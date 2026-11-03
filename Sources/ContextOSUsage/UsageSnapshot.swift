@@ -45,9 +45,35 @@ public struct UsageProvider: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     public var state: CollectionState
     public var latestEvent: Date?
+    /// Optional additions keep older shared snapshots readable.
+    public var isCollecting: Bool?
+    public var issues: [CollectionIssue]?
     public var id: String { name }
-    public init(name: String, state: CollectionState, latestEvent: Date? = nil) {
+    public init(name: String, state: CollectionState, latestEvent: Date? = nil,
+                isCollecting: Bool? = nil, issues: [CollectionIssue]? = nil) {
         self.name = name; self.state = state; self.latestEvent = latestEvent
+        self.isCollecting = isCollecting; self.issues = issues
+    }
+    public var statusLabel: String {
+        let details = (issues ?? []).map(\.label)
+        let status = isCollecting == true ? "기록 집계 중" : state.label
+        return details.isEmpty ? status : status + " · " + details.joined(separator: " · ")
+    }
+}
+
+public enum CollectionIssue: String, Codable, Sendable, CaseIterable {
+    case fileLimit, scanLimit, unreadable, invalidRecord, oversizedRecord, recordLimit, inheritedHistory, ambiguousCounters
+    public var label: String {
+        switch self {
+        case .fileLimit: "최근 기록 파일 한도 초과"
+        case .scanLimit: "기록 탐색 한도 초과"
+        case .unreadable: "기록 접근 불가"
+        case .invalidRecord: "사용량 기록 형식 확인 필요"
+        case .oversizedRecord: "큰 사용량 기록 누락"
+        case .recordLimit: "사용량 이벤트 한도 초과"
+        case .inheritedHistory: "구형 상속 기록 제외"
+        case .ambiguousCounters: "누적 사용량 순서 확인 필요"
+        }
     }
 }
 
@@ -100,7 +126,12 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
         if isSample { return "미리보기 · 예시 데이터" }
         let supported = providers.filter { $0.state != .unsupported }
         if supported.isEmpty { return "앱 연결 필요" }
-        if supported.contains(where: { $0.state == .unavailable || $0.state == .partial }) { return "일부 수집 불가" }
+        if supported.contains(where: { $0.state == .unavailable }) { return "일부 수집 불가" }
+        let partial = supported.filter { $0.state == .partial }
+        if !partial.isEmpty {
+            return partial.allSatisfy { $0.isCollecting == true && ($0.issues ?? []).isEmpty }
+                ? "기록 집계 중" : "일부 기록만 수집"
+        }
         return supported.contains(where: { $0.state == .ready }) ? "로컬 기록 집계" : "기록 없음"
     }
 }
@@ -114,7 +145,7 @@ public struct ObservedSession: Sendable, Equatable, Identifiable {
             case .desktop: "Codex 앱"
             case .editor: "에디터 연결"
             case .sdk: "SDK / exec"
-            case .subagent: "하위 작업 · 집계 제외"
+            case .subagent: "하위 작업"
             case .unknown: "실행 원천 미상"
             }
         }

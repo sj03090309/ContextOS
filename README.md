@@ -89,6 +89,8 @@ CLI="$HOME/Applications/ContextOS.app/Contents/Resources/contextos"
 
 ## 검증·성능
 
+최신 변경은 [작은 예산·다른 파일의 보조 구현 개선](docs/CONTEXT_DEPENDENCIES_2026-10-23.md)에 있습니다. 이전 [상시 실행 최적화·최초 진단](docs/CONTEXT_AUDIT_2026-10-22.md), [검색·같은 파일의 보조 함수·화살표 함수 개선](docs/CONTEXT_QUALITY_2026-10-22.md)도 전후 실행 증거와 함께 보존했습니다.
+
 ```sh
 python3 scripts/smoke_connections.py --binary .build/release/contextos
 python3 scripts/benchmark_context.py --binary .build/release/contextos-mcp --verify

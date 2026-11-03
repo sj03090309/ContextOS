@@ -100,6 +100,45 @@ final class SafeConnectionTests: XCTestCase {
         XCTAssertTrue(content.contains("\\\"quote\\\""))
     }
 
+    func testLegacyMarkedCodexToolApprovalsSurviveConnectAndDisconnect() throws {
+        let original = "# ContextOS:begin\n[mcp_servers.contextos]\ncommand = \"/user/contextos-mcp\"\nargs = [\"--user\"]\n\n[mcp_servers.contextos.tools.read_optimized]\napproval_mode = \"prompt\"\ncommand = \"USER_TOOL\"\nargs = [\"keep\"]\n# ContextOS:end\n"
+        try write(".codex/config.toml", original)
+        let preview = try manager.previewConnect(.codex)
+        XCTAssertEqual(try read(".codex/config.toml"), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".contextos-backups").path))
+        try manager.apply(preview)
+        let connected = try read(".codex/config.toml")
+        XCTAssertTrue(connected.contains("command = \"/audit/contextos-mcp\"\nargs = []"))
+        XCTAssertTrue(connected.contains("approval_mode = \"prompt\"\ncommand = \"USER_TOOL\"\nargs = [\"keep\"]"))
+        XCTAssertFalse(try manager.previewConnect(.codex).hasChanges)
+        try manager.apply(manager.previewDisconnect(.codex))
+        XCTAssertEqual(try read(".codex/config.toml"), original)
+    }
+
+    func testNewChildTablesPreventRemovalOfAnOwnedCodexRegistration() throws {
+        for inside in [true, false] {
+            let temporary = home.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+            let custom = ConnectionManager(home: temporary, mcpBinaryPath: "/audit/contextos-mcp", cliBinaryPath: "/audit/contextos")
+            try custom.apply(custom.previewConnect(.codex))
+            let file = temporary.appendingPathComponent(".codex/config.toml")
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let child = "[mcp_servers.contextos.tools.read_optimized]\napproval_mode = \"prompt\"\n"
+            let extended = inside ? source.replacingOccurrences(of: "# ContextOS:end", with: child + "# ContextOS:end") : source + child
+            try extended.write(to: file, atomically: true, encoding: .utf8)
+            XCTAssertThrowsError(try custom.previewDisconnect(.codex))
+            XCTAssertThrowsError(try custom.previewConnect(.codex))
+            XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), extended)
+        }
+    }
+
+    func testForeignTablesInsideContextOSMarkersRemainRejected() throws {
+        let source = "# ContextOS:begin\n[mcp_servers.contextos]\ncommand = \"old\"\nargs = []\n[mcp_servers.other]\ncommand = \"USER_TOOL\"\n# ContextOS:end\n"
+        try write(".codex/config.toml", source)
+        XCTAssertThrowsError(try manager.previewConnect(.codex))
+        XCTAssertEqual(try read(".codex/config.toml"), source)
+    }
+
     func testDuplicateAndMalformedCodexTablesAreNotRewritten() throws {
         for content in ["[mcp_servers.contextos]\ncommand=\"a\"\n[mcp_servers.contextos]\ncommand=\"b\"\n", "# ContextOS:begin\n[mcp_servers.contextos]\ncommand=\"a\"\n", "[mcp_servers.contextos]\ncommand = \"unterminated\nargs=[]\n"] {
             try write(".codex/config.toml", content)

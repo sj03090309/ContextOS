@@ -32,9 +32,10 @@ public enum GitRunner {
         process.currentDirectoryURL = root
 
         let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = stderr
+        // Discard diagnostics directly: an undrained second pipe can fill
+        // before stdout reaches EOF and deadlock this reader.
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
@@ -44,8 +45,6 @@ public enum GitRunner {
         // Read before waiting: a commit-heavy `git log` can fill the pipe buffer,
         // and git would block on write while we block on exit.
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        // Drain stderr too, for the same reason.
-        _ = try? stderr.fileHandleForReading.readToEnd()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)
@@ -85,17 +84,15 @@ public struct GitAnalyzer: Sendable {
 
     /// Files with uncommitted changes (staged or unstaged), project-relative.
     public func changedFiles(_ root: URL) -> Set<String> {
-        guard let out = run(["status", "--porcelain"], in: root) else { return [] }
+        guard let out = run(["status", "--porcelain=v1", "-z"], in: root) else { return [] }
         var paths: Set<String> = []
-        for line in out.split(separator: "\n") {
-            // Porcelain: "XY <path>" or "XY <old> -> <new>" for renames.
-            let entry = String(line.dropFirst(3))
-            let path: String
-            if let arrow = entry.range(of: " -> ") {
-                path = String(entry[arrow.upperBound...])
-            } else {
-                path = entry
-            }
+        var entries = out.split(separator: "\0").makeIterator()
+        while let entry = entries.next() {
+            guard entry.count >= 3 else { continue }
+            let status = entry.prefix(2)
+            let path = String(entry.dropFirst(3))
+            // NUL porcelain reports destination first, then source separately.
+            if status.contains("R") || status.contains("C") { _ = entries.next() }
             if !Self.isInternal(path) { paths.insert(path) }
         }
         return paths
@@ -108,11 +105,11 @@ public struct GitAnalyzer: Sendable {
 
     /// Files touched by the most recent commits, project-relative.
     public func recentlyModifiedFiles(_ root: URL, commitLimit: Int = 10) -> Set<String> {
-        guard let out = run(["log", "-n", "\(commitLimit)", "--name-only", "--pretty=format:"], in: root) else { return [] }
+        guard let out = run(["log", "-n", "\(commitLimit)", "--name-only", "--format=", "-z"], in: root) else { return [] }
         var paths: Set<String> = []
-        for line in out.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty, !Self.isInternal(trimmed) { paths.insert(trimmed) }
+        for entry in out.split(separator: "\0") {
+            let path = String(entry)
+            if !Self.isInternal(path) { paths.insert(path) }
         }
         return paths
     }

@@ -54,6 +54,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var role: String?; var phase: String?; var call_id: String?
         var forked_from_id: String?; var info: Info?
         var source: Source?; var originator: String?
+        var thread_id: String?; var response_id: String?; var usage: Counter?
     }
     private struct Envelope: Decodable {
         var type: String?; var timestamp: String?; var sessionId: String?; var uuid: String?
@@ -62,6 +63,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
     }
     private struct Metric {
         var date: Date; var tokens: Int64; var model: String; var project: String; var cumulative: Int64? = nil; var sequence = 0
+        var response = false
     }
     private struct Row {
         var inode: UInt64 = 0; var offset = 0; var size = 0; var mtime = Date.distantPast
@@ -74,6 +76,9 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var needsMoreRead = false
         var runEvents = Set<ExplicitAIRunEvent>()
         var runIncomplete = false
+        var hasResponseRecords = false
+        var issues = Set<CollectionIssue>()
+        mutating func mark(_ issue: CollectionIssue) { partial = true; issues.insert(issue) }
     }
     private var rows: [String: Row] = [:]
     private struct MemoKey: Equatable {
@@ -83,6 +88,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
     private var memo: (key: MemoKey, value: ConcurrentUsageSnapshot, phases: [String: WorkState])?
     private var revision: UInt64 = 0
     private var readBudget = 0
+    private var deferredRead = false
     private let maximumFilesPerProvider: Int
     private let maximumMetrics: Int
     private let maximumLineBytes: Int
@@ -106,26 +112,41 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var modelTotals: [UsageModelKey: Int64] = [:], projectTotals: [String: Int64] = [:]
         var providers: [UsageProvider] = [], sessions: [ObservedSession] = []
         let sources = [("Codex", ".codex/sessions", false), ("Claude Code", ".claude/projects", true)]
-        let discoveries = sources.map { discover(root: home.appendingPathComponent($0.1), claude: $0.2) }
+        let discoveries = sources.map { discover(root: home.appendingPathComponent($0.1), claude: $0.2, since: start) }
         var live = Set(discoveries.flatMap { $0.files.map(\.path) })
         rows = rows.filter { live.contains($0.key) }
         readBudget = maximumReadBytes
         var discoveryStates: [CollectionState] = []
-        var decodedRows: [(String, [String: Row], CollectionState, Date?)] = []
+        var decodedRows: [(String, [String: Row], CollectionState, Date?, Set<CollectionIssue>, Bool)] = []
         var readFailure = false
         for (index, source) in sources.enumerated() {
             let (agent, _, claude) = source
             let discovery = discoveries[index]
             var state = discovery.state
+            var issues = discovery.issues
+            var collecting = false
             discoveryStates.append(state)
             var latest: Date?
             var merged: [String: Row] = [:]
             for file in discovery.files {
                 live.insert(file.path)
-                guard let row = read(file: file, claude: claude, now: now) else { state = .partial; readFailure = true; continue }
-                if row.partial || row.inherited || row.needsMoreRead { state = .partial }
+                deferredRead = false
+                guard let row = read(file: file, claude: claude, now: now) else {
+                    state = .partial
+                    if deferredRead { collecting = true }
+                    else { readFailure = true; issues.insert(.unreadable) }
+                    continue
+                }
+                issues.formUnion(row.issues)
+                if row.inherited && !row.hasResponseRecords { issues.insert(.inheritedHistory) }
+                collecting = collecting || row.needsMoreRead
+                if row.partial || (row.inherited && !row.hasResponseRecords) || row.needsMoreRead { state = .partial }
                 if let date = row.lastEvent { latest = max(latest ?? date, date) }
-                guard !row.session.isEmpty else { state = .partial; continue }
+                guard !row.session.isEmpty else {
+                    state = .partial
+                    if !row.needsMoreRead { issues.insert(.invalidRecord) }
+                    continue
+                }
                 let identity = agent + ":" + row.session
                 if var old = merged[identity] {
                     var combined = old.metrics
@@ -139,16 +160,22 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                     }
                     let combinedRuns = old.runEvents.union(row.runEvents)
                     let incompleteRuns = old.runIncomplete || row.runIncomplete
+                    let combinedIssues = old.issues.union(row.issues)
+                    let combinedPartial = old.partial || row.partial
+                    let combinedNeedsMoreRead = old.needsMoreRead || row.needsMoreRead
+                    let hasResponses = old.hasResponseRecords || row.hasResponseRecords
                     if (row.lastEvent ?? .distantPast) > (old.lastEvent ?? .distantPast) { old = row }
                     old.metrics = combined
                     old.runEvents = combinedRuns
                     old.runIncomplete = incompleteRuns
-                    old.partial = old.partial || row.partial
-                    old.needsMoreRead = old.needsMoreRead || row.needsMoreRead
+                    old.partial = combinedPartial
+                    old.issues = combinedIssues
+                    old.hasResponseRecords = hasResponses
+                    old.needsMoreRead = combinedNeedsMoreRead
                     merged[identity] = old
                 } else { merged[identity] = row }
             }
-            decodedRows.append((agent, merged, state, latest))
+            decodedRows.append((agent, merged, state, latest, issues, collecting))
         }
         let key = MemoKey(revision: revision, day: today, zone: timeZone.identifier,
                           live: live, discovery: discoveryStates)
@@ -169,19 +196,26 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         var phases: [String: WorkState] = [:]
         var runEvents: [ExplicitAIRunEvent] = []
         var runIncomplete = decodedRows.first?.2 == .partial
-        for (agent, merged, initialState, latest) in decodedRows {
+        for (agent, merged, initialState, latest, initialIssues, collecting) in decodedRows {
             var state = initialState
+            var issues = initialIssues
+            var seenResponses = Set<String>()
             var hasAccounting = false
             var modelKeys: [String: UsageModelKey] = [:]
-            for (identity, row) in merged {
+            for (identity, row) in merged.sorted(by: { $0.key < $1.key }) {
                 if agent == "Codex" {
                     runEvents += row.runEvents.map { .init(id: identity + ":" + $0.id, kind: $0.kind, date: $0.date) }
-                    runIncomplete = runIncomplete || row.runIncomplete || row.partial || row.inherited || row.needsMoreRead
+                    runIncomplete = runIncomplete || row.runIncomplete || row.partial || (row.inherited && !row.hasResponseRecords) || row.needsMoreRead
                 }
                 var total: Int64?, todayTotal: Int64?, previous: Int64 = 0
                 // Reconstruct one canonical counter stream across copied/resumed files.
                 // Claude messages choose the largest observed streamed total per message ID.
-                let ordered = row.metrics.sorted(by: {
+                // Modern request records are authoritative for local observed
+                // usage. Their legacy cumulative echoes must not be added a
+                // second time, nor may a paginated lifetime baseline be dated
+                // as today's usage. Legacy-only transcripts keep their path.
+                let accounting = row.hasResponseRecords ? row.metrics.filter { $0.value.response } : row.metrics
+                let ordered = accounting.sorted(by: {
                     if $0.value.date != $1.value.date { return $0.value.date < $1.value.date }
                     if $0.value.sequence != $1.value.sequence { return $0.value.sequence < $1.value.sequence }
                     return $0.key < $1.key
@@ -189,7 +223,9 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 var metricIndex = 0
                 while metricIndex < ordered.count {
                     var metric = ordered[metricIndex].value
+                    let metricKey = ordered[metricIndex].key
                     metricIndex += 1
+                    if metric.response && !seenResponses.insert(metricKey).inserted { continue }
                     while metricIndex < ordered.count {
                         let next = ordered[metricIndex].value
                         guard next.date == metric.date, next.sequence == metric.sequence,
@@ -197,6 +233,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                         // Independent fragments do not establish order. Retain
                         // their observed high-water counter, not a guessed reset.
                         state = .partial
+                        issues.insert(.ambiguousCounters)
                         if nextCounter > counter { metric = next }
                         metricIndex += 1
                     }
@@ -225,7 +262,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                     }
                 }
                 var phase = row.phase
-                if row.partial || row.inherited || row.needsMoreRead || row.lastEvent == nil { phase = .unknown }
+                if row.partial || (row.inherited && !row.hasResponseRecords) || row.needsMoreRead || row.lastEvent == nil { phase = .unknown }
                 let id = Self.digest(identity)
                 phases[id] = phase
                 sessions.append(ObservedSession(id: id, agent: agent,
@@ -233,7 +270,9 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                     todayTokens: todayTotal, totalTokens: total, origin: row.origin))
             }
             if state == .ready && !hasAccounting { state = .noRecords }
-            providers.append(.init(name: agent, state: state, latestEvent: latest))
+            providers.append(.init(name: agent, state: state, latestEvent: latest,
+                isCollecting: collecting ? true : nil,
+                issues: issues.isEmpty ? nil : CollectionIssue.allCases.filter { issues.contains($0) }))
         }
         rows = rows.filter { live.contains($0.key) }
         providers += ["Gemini CLI", "Cursor", "GitHub Copilot"].map { .init(name: $0, state: .unsupported) }
@@ -275,43 +314,49 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         guard let value, !value.isEmpty else { return fallback }
         return String(value.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.prefix(100))
     }
-    private func discover(root: URL, claude: Bool) -> (files: [URL], state: CollectionState) {
+    private func discover(root: URL, claude: Bool, since: Date) -> (files: [URL], state: CollectionState, issues: Set<CollectionIssue>) {
         let fm = FileManager.default
         guard let rootAttrs = try? fm.attributesOfItem(atPath: root.path) else {
             // ENOENT and inaccessible must be distinguished without bypassing permissions.
             do { _ = try fm.contentsOfDirectory(atPath: root.path) }
             catch let e as NSError {
-                return ([], e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoSuchFileError ? .noRecords : .unavailable)
+                let missing = e.domain == NSCocoaErrorDomain && e.code == NSFileReadNoSuchFileError
+                return ([], missing ? .noRecords : .unavailable, missing ? [] : [.unreadable])
             }
-            return ([], .unavailable)
+            return ([], .unavailable, [.unreadable])
         }
-        guard rootAttrs[.type] as? FileAttributeType == .typeDirectory else { return ([], .unavailable) }
+        guard rootAttrs[.type] as? FileAttributeType == .typeDirectory else { return ([], .unavailable, [.unreadable]) }
         var ancestor = root.deletingLastPathComponent()
         while ancestor.path != "/" {
             if let attrs = try? fm.attributesOfItem(atPath: ancestor.path), attrs[.type] as? FileAttributeType == .typeSymbolicLink {
-                return ([], .unavailable)
+                return ([], .unavailable, [.unreadable])
             }
             // Stop before the caller's explicit home (including /tmp's system alias).
             if ancestor.lastPathComponent == ".codex" || ancestor.lastPathComponent == ".claude" { break }
             ancestor.deleteLastPathComponent()
         }
-        var failed = false; var files: [(URL, Date)] = []; var entries = 0
+        var issues = Set<CollectionIssue>(); var files: [(URL, Date)] = []; var entries = 0
         guard let walker = fm.enumerator(at: root, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles], errorHandler: { _, _ in failed = true; return true }) else { return ([], .unavailable) }
+            options: [.skipsHiddenFiles], errorHandler: { _, _ in issues.insert(.unreadable); return true }) else { return ([], .unavailable, [.unreadable]) }
         for case let file as URL in walker {
             entries += 1
-            if entries > 4096 { failed = true; break }
-            guard let values = try? file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .contentModificationDateKey]) else { failed = true; continue }
-            if values.isSymbolicLink == true { walker.skipDescendants(); failed = true; continue }
+            if entries > 4096 { issues.insert(.scanLimit); break }
+            guard let values = try? file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .contentModificationDateKey]) else { issues.insert(.unreadable); continue }
+            if values.isSymbolicLink == true { walker.skipDescendants(); issues.insert(.unreadable); continue }
             if claude && walker.level > 2 { walker.skipDescendants(); continue }
             guard values.isRegularFile == true, file.pathExtension == "jsonl",
                   claude ? walker.level == 2 : file.lastPathComponent.hasPrefix("rollout-") else { continue }
+            // A normally appended transcript cannot contain this week's events
+            // when it has not changed since before the displayed week. Apply
+            // the bound after the scope check, before consuming the file cap.
+            if let modified = values.contentModificationDate, modified < since { continue }
             files.append((file, values.contentModificationDate ?? .distantPast))
             if files.count > maximumFilesPerProvider {
-                files.sort { $0.1 > $1.1 }; files.removeLast(); failed = true
+                files.sort { $0.1 > $1.1 }; files.removeLast(); issues.insert(.fileLimit)
             }
         }
-        return (files.sorted { $0.1 > $1.1 }.map(\.0), failed ? (files.isEmpty ? .unavailable : .partial) : .ready)
+        return (files.sorted { $0.1 == $1.1 ? $0.0.path < $1.0.path : $0.1 > $1.1 }.map(\.0),
+                issues.isEmpty ? .ready : (files.isEmpty ? .unavailable : .partial), issues)
     }
     private func read(file: URL, claude: Bool, now: Date) -> Row? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: file.path),
@@ -326,12 +371,19 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         let oldCount = row.metrics.count + row.runEvents.count
         if row.inode != inode.uint64Value || size.intValue < row.size || (size.intValue == row.size && row.mtime != mtime) { row = Row() }
         if row.inode == inode.uint64Value && row.size == size.intValue && row.mtime == mtime && !row.needsMoreRead { return row }
-        guard readBudget > 0 else { return nil }
+        guard readBudget > 0 else { deferredRead = true; return nil }
         let capacity = max(0, min(4096, maximumMetrics - rows.values.reduce(0) { $0 + $1.metrics.count + $1.runEvents.count } + oldCount))
         var skipping = row.skippingLongLine
         let result = LineReader.boundedLines(of: file, from: row.offset, maximumLineBytes: maximumLineBytes,
-            maximumReadBytes: readBudget, skippingOversizedLine: &skipping, onSkipped: { row.partial = true }) { bytes in
-            guard let e = try? JSONDecoder().decode(Envelope.self, from: Data(bytes)) else { row.partial = true; return }
+            maximumReadBytes: readBudget, skippingOversizedLine: &skipping, onSkipped: {},
+            onSkippedPrefix: { bytes in
+                let type = LineReader.envelopeType(in: bytes)
+                let nonAccounting = claude
+                    ? ["user", "attachment", "system", "queue-operation", "file-history-snapshot", "file-history-delta"]
+                    : ["response_item", "world_state", "compacted", "inter_agent_communication_metadata"]
+                if type.map({ !nonAccounting.contains($0) }) ?? true { row.mark(.oversizedRecord) }
+            }) { bytes in
+            guard let e = try? JSONDecoder().decode(Envelope.self, from: Data(bytes)) else { row.mark(.invalidRecord); return }
             self.consume(e, claude: claude, now: now, row: &row, capacity: capacity)
         }
         guard let result else { return nil }
@@ -348,11 +400,15 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         let p = e.payload
         if claude, e.isSidechain == true { return } // Parent-only scope; avoid subagent double counting.
         if claude, let id = e.sessionId {
-            guard id.utf8.count <= 128 else { row.partial = true; return }; row.session = id
+            guard id.utf8.count <= 128 else { row.mark(.invalidRecord); return }; row.session = id
         }
         if !claude, e.type == "session_meta" {
             if let id = p?.id {
-                guard id.utf8.count <= 128 else { row.partial = true; return }; row.session = id
+                guard id.utf8.count <= 128 else { row.mark(.invalidRecord); return }
+                // Paginated fork histories may embed a parent's session_meta.
+                // The first header owns this file; replay must not rename it.
+                guard row.session.isEmpty || row.session == id else { return }
+                row.session = id
             }
             if p?.forked_from_id != nil { row.inherited = true }
             switch p?.source {
@@ -370,17 +426,17 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         }
         // Reserved placeholder records are not model accounting or work signals.
         // Their zero usage must not become a fabricated observed zero/rank.
-        if claude, e.message?.model == "<synthetic>" { row.partial = true; return }
+        if claude, e.message?.model == "<synthetic>" { return }
         if let model = e.message?.model ?? (e.type == "turn_context" ? p?.model : nil) {
             row.model = Self.safeLabel(model, fallback: "모델 미상")
         }
         guard let stamp = e.timestamp, stamp.utf8.count <= 64, let epoch = TimeKeys.epoch(fromISO8601: stamp) else {
-            if e.message?.usage != nil || p?.type == "token_count" { row.partial = true }
+            if e.message?.usage != nil || p?.type == "token_count" || e.type == "token_usage_record" { row.mark(.invalidRecord) }
             if !claude && ["task_started", "turn_started", "task_complete", "turn_complete", "turn_aborted"].contains(p?.type ?? "") { row.runIncomplete = true }
             return
         }
         let date = Date(timeIntervalSince1970: epoch)
-        guard date <= now.addingTimeInterval(300) else { row.partial = true; return }
+        guard date <= now.addingTimeInterval(300) else { row.mark(.invalidRecord); return }
         let isNewest = date >= (row.lastEvent ?? .distantPast)
         if isNewest {
             let kind = p?.type ?? ""
@@ -423,19 +479,39 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
                 } else { row.runIncomplete = true }
             }
         }
-        guard !row.inherited else { return } // A fork may inherit cumulative history: exclude with an explicit partial status.
+        if !claude, e.type == "token_usage_record" {
+            guard let usage = p?.usage, let tokens = usage.total(claude: false),
+                  let response = p?.response_id, !response.isEmpty, response.utf8.count <= 128,
+                  let thread = p?.thread_id, !thread.isEmpty, thread.utf8.count <= 128 else {
+                row.mark(.invalidRecord); return
+            }
+            if row.session.isEmpty { row.session = thread }
+            // Inherited parent requests retain their original thread identity.
+            guard thread == row.session else { return }
+            row.hasResponseRecords = true
+            let key = "response:" + response
+            if let old = row.metrics[key] {
+                if old.tokens != tokens { row.mark(.invalidRecord) }
+                return
+            }
+            guard row.metrics.count + row.runEvents.count < capacity else { row.mark(.recordLimit); return }
+            row.metrics[key] = Metric(date: date, tokens: tokens, model: row.model, project: row.project, response: true)
+            return
+        }
+        guard !row.inherited else { return } // Legacy cumulative fork history has no safe ownership boundary.
         if claude, let usage = e.message?.usage {
-            guard let tokens = usage.total(claude: true), let id = e.message?.id, id.utf8.count <= 128 else { row.partial = true; return }
+            guard let tokens = usage.total(claude: true), let id = e.message?.id, id.utf8.count <= 128 else { row.mark(.invalidRecord); return }
             let key = "message:" + id
             if let old = row.metrics[key], old.tokens >= tokens { return }
-            guard row.metrics[key] != nil || row.metrics.count + row.runEvents.count < capacity else { row.partial = true; return }
+            guard row.metrics[key] != nil || row.metrics.count + row.runEvents.count < capacity else { row.mark(.recordLimit); return }
             row.metrics[key] = Metric(date: row.metrics[key]?.date ?? date, tokens: tokens,
                                       model: row.model, project: row.project)
         } else if !claude, e.type == "event_msg", p?.type == "token_count", let usage = p?.info?.total_token_usage {
-            guard let total = usage.total(claude: false) else { row.partial = true; return }
+            guard !row.hasResponseRecords else { return }
+            guard let total = usage.total(claude: false) else { row.mark(.invalidRecord); return }
             let key = "counter:" + stamp + ":" + String(total)
             guard !row.seen.contains(key) else { return }
-            guard row.metrics.count + row.runEvents.count < capacity else { row.partial = true; return }
+            guard row.metrics.count + row.runEvents.count < capacity else { row.mark(.recordLimit); return }
             row.seen.insert(key)
             let delta = total < row.previous ? total : total - row.previous
             row.previous = total

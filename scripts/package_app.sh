@@ -39,6 +39,11 @@ APP="$STAGE_DIR/ContextOS.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ContextOSApp" "$APP/Contents/MacOS/ContextOSApp"
 cp "$BIN_DIR/contextos" "$BIN_DIR/contextos-mcp" "$APP/Contents/Resources/"
+# Keep development/debug metadata out of the shipped executables. Strip before
+# signing; executable code and the build-directory originals are unchanged.
+for binary in "$APP/Contents/MacOS/ContextOSApp" "$APP/Contents/Resources/contextos" "$APP/Contents/Resources/contextos-mcp"; do
+    /usr/bin/strip -S "$binary"
+done
 [ ! -f AppIcon.icns ] || cp AppIcon.icns "$APP/Contents/Resources/"
 cp THIRD_PARTY_NOTICES.md docs/PRIVACY.md docs/INSTALL.md "$APP/Contents/Resources/"
 cp -R ThirdPartyLicenses "$APP/Contents/Resources/"

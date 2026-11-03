@@ -100,6 +100,8 @@ struct SessionTurnState: Sendable {
 
 /// Reads only lifecycle/tool metadata. No prompt, code or tool output is retained.
 /// Cached per file and incrementally resumed; bootstraps from at most 2 MiB per log.
+/// A pass reads at most 4 MiB across all logs and retains at most 256 KiB per
+/// JSON record. Missing/oversized evidence is unknown, never a made-up finish.
 public final class SessionActivityTracker: @unchecked Sendable {
     private struct Entry {
         var state = SessionTurnState()
@@ -108,13 +110,21 @@ public final class SessionActivityTracker: @unchecked Sendable {
         var inode: UInt64 = 0
         var mtime = Date.distantPast
         var readable = true
+        var skippingLongLine = false
+        var needsMoreRead = false
+        var evidenceLost = false
     }
     private var entries: [String: Entry] = [:]
     private let lock = NSLock()
     private let bootstrapBytes: Int
+    private let maximumLineBytes: Int
+    private let maximumReadBytes: Int
 
-    public init(bootstrapBytes: Int = 2 * 1024 * 1024) {
+    public init(bootstrapBytes: Int = 2 * 1024 * 1024,
+                maximumLineBytes: Int = 256 * 1024, maximumReadBytes: Int = 4 * 1024 * 1024) {
         self.bootstrapBytes = max(256, bootstrapBytes)
+        self.maximumLineBytes = max(128, min(256 * 1024, maximumLineBytes))
+        self.maximumReadBytes = max(self.maximumLineBytes + 16, min(4 * 1024 * 1024, maximumReadBytes))
     }
 
     public func snapshot(logs: [(url: URL, mtime: Date)], now: Date = Date()) -> SessionActivitySnapshot {
@@ -131,6 +141,8 @@ public final class SessionActivityTracker: @unchecked Sendable {
         let paths = Set(selected.map { $0.url.path })
         entries = entries.filter { paths.contains($0.key) }
         var statuses: [SessionActivityStatus] = []
+        var readBudget = maximumReadBytes
+        var needsContinuation = false
         for log in selected {
             let path = log.url.path
             var entry = entries[path] ?? Entry()
@@ -142,29 +154,47 @@ public final class SessionActivityTracker: @unchecked Sendable {
             }
             let bytes = size.intValue
             let mtime = attrs[.modificationDate] as? Date ?? log.mtime
-            let changed = entry.inode != inode.uint64Value || entry.size != bytes || entry.mtime != mtime
+            let changed = entry.inode != inode.uint64Value || entry.size != bytes || entry.mtime != mtime || entry.needsMoreRead
             if changed {
                 let reset = entry.inode != inode.uint64Value || bytes < entry.size
                     || (bytes == entry.size && entry.mtime != mtime)
                 if reset {
                     entry = Entry()
                     entry.offset = max(0, bytes - bootstrapBytes)
+                    entry.skippingLongLine = entry.offset > 0
                 }
-                var skipFragment = reset && entry.offset > 0
-                var incompleteEvidence = false
-                let consumed = LineReader.forEachLine(of: log.url, from: entry.offset) { line in
-                    if skipFragment { skipFragment = false; return }
+                var skipping = entry.skippingLongLine
+                var evidenceLost = entry.evidenceLost
+                let result = LineReader.boundedLines(of: log.url, from: entry.offset,
+                    maximumLineBytes: maximumLineBytes, maximumReadBytes: readBudget,
+                    skippingOversizedLine: &skipping,
+                    onSkipped: { evidenceLost = true }) { line in
                     guard let obj = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else {
-                        incompleteEvidence = true; return
+                        evidenceLost = true; return
                     }
+                    let previousStart = entry.state.startedAt
+                    let previousEnd = entry.state.endedAt
                     if !Self.consume(obj, state: &entry.state, now: now) {
                         if ["user", "assistant", "event_msg", "response_item"].contains(obj["type"] as? String ?? "") {
-                            incompleteEvidence = true
+                            evidenceLost = true
                         }
+                    } else if entry.state.startedAt != previousStart || entry.state.endedAt != previousEnd {
+                        // Only a real lifecycle boundary can recover certainty
+                        // after a skipped record, not another metadata envelope.
+                        evidenceLost = false
                     }
                 }
-                entry.readable = consumed != nil && !incompleteEvidence
-                if let consumed { entry.offset += consumed }
+                entry.skippingLongLine = skipping
+                entry.evidenceLost = evidenceLost
+                if let result {
+                    entry.offset += result.consumed
+                    readBudget = max(0, readBudget - result.bytesRead)
+                    entry.needsMoreRead = !result.reachedEOF && entry.offset < bytes
+                } else {
+                    entry.needsMoreRead = false
+                }
+                entry.readable = result != nil && !evidenceLost && !entry.needsMoreRead
+                needsContinuation = needsContinuation || entry.needsMoreRead
                 entry.size = bytes; entry.inode = inode.uint64Value; entry.mtime = mtime
                 entries[path] = entry
             }
@@ -179,7 +209,7 @@ public final class SessionActivityTracker: @unchecked Sendable {
         }
         return SessionActivitySnapshot(selected: chosen, activeSessions: active.count,
             optimizing: active.contains { $0.optimizing }, planning: active.contains { $0.planning },
-            recheckAt: active.compactMap(\.recheckAt).min())
+            recheckAt: (active.compactMap(\.recheckAt) + (needsContinuation ? [now.addingTimeInterval(1)] : [])).min())
     }
 
     private static func agent(_ path: String) -> String {

@@ -27,6 +27,15 @@ public struct UsageWidgetView: View {
     }
     private var presentationRanks: [UsageRank] { snapshot.models.isEmpty ? snapshot.agents : snapshot.models }
     private var rankName: String { snapshot.models.isEmpty ? "AI" : "모델" }
+    // Keep the stored key for compatibility; the display choice applies to
+    // every widget family, including widgets that were already on the desktop.
+    private var selectedMetric: SmallWidgetMetric { snapshot.smallMetric ?? .tokens }
+    private var showsTime: Bool { selectedMetric != .tokens }
+    private var contentSpacing: CGFloat {
+        if showsTime && size == .medium { return 6 }
+        if showsTime && size == .large { return 8 }
+        return size == .medium && presentationRanks.count >= 3 ? 4 : 12
+    }
     private var old: Bool { snapshot.stale(at: now) }
     private var status: String {
         let value: String
@@ -35,7 +44,9 @@ public struct UsageWidgetView: View {
         else if snapshot.providers.allSatisfy({ $0.state == .unsupported }) { value = "지원 안 됨" }
         else if snapshot.providers.contains(where: { $0.state == .unavailable }) {
             value = snapshot.today == nil ? "연결 끊김" : "일부 수집 불가"
-        } else if snapshot.providers.contains(where: { $0.state == .partial }) { value = "일부 기록" }
+        } else if snapshot.providers.contains(where: { $0.state == .partial }) {
+            value = snapshot.health == "기록 집계 중" ? "집계 중" : "일부 기록"
+        }
         else { value = snapshot.today == nil ? "기록 없음" : "정상" }
         return snapshot.isSample ? (value == "정상" ? "샘플 · 실제값 아님" : "샘플 · " + value) : value
     }
@@ -47,43 +58,71 @@ public struct UsageWidgetView: View {
         return String(format: "%.2fM", scaled)
     }
     public var body: some View {
-        VStack(alignment: .leading, spacing: size == .medium && presentationRanks.count >= 3 ? 4 : 12) {
+        VStack(alignment: .leading, spacing: contentSpacing) {
             switch size {
             case .small:
-                if let metric = snapshot.smallMetric, metric != .tokens {
-                    title(metric.label, branded: true)
-                    Text(WidgetTimeSnapshot.duration(metric == .activity ? snapshot.timing?.activity?.estimatedNanoseconds : metric == .workTimer ? snapshot.timing?.manualNanoseconds : snapshot.timing?.foregroundNanoseconds))
-                        .font(.system(size: 30, weight: .semibold)).monospacedDigit()
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                } else {
-                    title(old ? "마지막 집계 토큰" : "오늘 토큰", branded: true)
-                    number(snapshot.today, points: 36)
-                }
+                title(showsTime ? selectedMetric.label : old ? "마지막 집계 토큰" : "오늘 토큰", branded: true)
+                headline(snapshot.today, tokenPoints: 36, timePoints: 30)
             case .medium:
-                title(old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName) 토큰", branded: true)
-                if presentationRanks.isEmpty { empty }
-                ForEach(Array(presentationRanks.prefix(3).enumerated()), id: \.element.id) { index, rank in
-                    comparison(rank, index: index)
+                title(showsTime ? selectedMetric.label : old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName) 토큰", branded: true)
+                if showsTime {
+                    headline(snapshot.today, tokenPoints: 38, timePoints: 38)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(old ? "마지막 집계 토큰" : "오늘 관측 토큰")
+                            .font(.system(size: 11)).foregroundStyle(muted)
+                            .contentTransition(.identity)
+                        Spacer(minLength: 8)
+                        number(snapshot.today, points: 16)
+                    }
+                    .transition(.identity)
+                } else {
+                    if presentationRanks.isEmpty { empty.transition(.identity) }
+                    ForEach(Array(presentationRanks.prefix(3).enumerated()), id: \.element.id) { index, rank in
+                        comparison(rank, index: index).transition(.identity)
+                    }
+                    .transition(.identity)
                 }
             case .large:
                 VStack(alignment: .leading, spacing: 4) {
-                    title("7일 토큰", branded: true)
-                    number(snapshot.weekTotal, points: 38)
+                    title(showsTime ? selectedMetric.label : "7일 토큰", branded: true)
+                    headline(snapshot.weekTotal, tokenPoints: 38, timePoints: 38)
                 }
-                if snapshot.days.contains(where: { $0.tokens != nil }) { chart.padding(.top, 3) }
-                title(old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName)").padding(.top, 9)
-                if presentationRanks.isEmpty { empty }
-                ForEach(presentationRanks.prefix(3)) { rank in rankRow(rank, points: 15) }
+                if showsTime {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            title(old ? "7일 토큰 · 이전 집계" : "7일 관측 토큰")
+                            number(snapshot.weekTotal, points: 16).fixedSize()
+                        }
+                        if snapshot.days.contains(where: { $0.tokens != nil }) { chart.transition(.identity) }
+                    }
+                    .transition(.identity)
+                    title(old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName) 토큰").padding(.top, 3).transition(.identity)
+                    if presentationRanks.isEmpty { empty.transition(.identity) }
+                    ForEach(presentationRanks.prefix(3)) { rank in rankRow(rank, points: 14).transition(.identity) }
+                        .transition(.identity)
+                } else {
+                    if snapshot.days.contains(where: { $0.tokens != nil }) { chart.padding(.top, 3).transition(.identity) }
+                    title(old ? "\(rankName) 토큰 · 이전 집계" : "오늘 \(rankName)").padding(.top, 9).transition(.identity)
+                    if presentationRanks.isEmpty { empty.transition(.identity) }
+                    ForEach(presentationRanks.prefix(3)) { rank in rankRow(rank, points: 15).transition(.identity) }
+                        .transition(.identity)
+                }
             }
             Spacer(minLength: 0)
             footer
         }
         .foregroundStyle(ink)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Keep headline slots stable and opt their Text out of WidgetKit's
+        // default content transition when the display preference changes.
+        .transition(.identity)
+        .animation(nil, value: selectedMetric)
+        .animation(nil, value: snapshot.showMascot != false)
         .privacySensitive().accessibilityElement(children: .contain)
     }
     private func title(_ text: String, branded: Bool = false) -> some View {
         Text((branded && snapshot.isSample ? "테스트 · " : "") + text).font(.system(size: 12, weight: .medium)).foregroundStyle(muted)
+            .contentTransition(.identity)
             .lineLimit(1).minimumScaleFactor(0.9)
             .padding(.trailing, branded && snapshot.showMascot != false ? 24 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -91,20 +130,43 @@ public struct UsageWidgetView: View {
                 if branded && snapshot.showMascot != false {
                     MungchiWidgetMark().fill(ink.opacity(0.8), style: FillStyle(eoFill: true))
                         .frame(width: 20, height: 20).accessibilityHidden(true)
+                        .transition(.identity)
                 }
             }
     }
     private func number(_ value: Int64?, points: CGFloat) -> some View {
         Text(millions(value)).font(.system(size: points, weight: .semibold))
+            .contentTransition(.identity)
             .tracking(-0.8).monospacedDigit().lineLimit(1).minimumScaleFactor(0.65)
             .accessibilityLabel(value.map { "\($0) 토큰" } ?? "확인 가능한 집계 없음")
     }
+    private var selectedNanoseconds: UInt64? {
+        switch selectedMetric {
+        case .activity: snapshot.timing?.activity?.estimatedNanoseconds
+        case .workTimer: snapshot.timing?.manualNanoseconds
+        case .editorForeground: snapshot.timing?.foregroundNanoseconds
+        case .tokens: nil
+        }
+    }
+    private func headline(_ tokens: Int64?, tokenPoints: CGFloat, timePoints: CGFloat) -> some View {
+        let duration = WidgetTimeSnapshot.duration(selectedNanoseconds)
+        return Text(showsTime ? duration : millions(tokens))
+            .font(.system(size: showsTime ? timePoints : tokenPoints, weight: .semibold))
+            .tracking(showsTime ? 0 : -0.8).monospacedDigit()
+            .lineLimit(1).minimumScaleFactor(showsTime ? 0.7 : 0.65)
+            .contentTransition(.identity)
+            .transition(.identity)
+            .accessibilityLabel(showsTime ? selectedMetric.label : tokens.map { "\($0) 토큰" } ?? "확인 가능한 집계 없음")
+            .accessibilityValue(showsTime ? selectedNanoseconds == nil ? "확인 가능한 관측 없음" : duration : "")
+    }
     private var empty: some View {
         Text("확인 가능한 집계 없음").font(.system(size: 14)).foregroundStyle(muted)
+            .contentTransition(.identity)
     }
     private func rankRow(_ rank: UsageRank, points: CGFloat) -> some View {
         HStack(spacing: 8) {
             Text(rank.name).font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                .contentTransition(.identity)
             Spacer(minLength: 4)
             number(rank.tokens, points: points).fixedSize()
         }
@@ -135,52 +197,67 @@ public struct UsageWidgetView: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(day.id == snapshot.days.last?.id ? accent : muted.opacity(0.25))
                                 .frame(height: max(tokens > 0 ? 2 : 1, 62 * Double(tokens) / Double(maximum)))
-                        } else { Text("·").font(.system(size: 12)).foregroundStyle(muted) }
+                        } else { Text("·").font(.system(size: 12)).foregroundStyle(muted).contentTransition(.identity).transition(.identity) }
                     }.frame(height: 62)
                     Text(day.date, format: Date.FormatStyle(date: .omitted, time: .omitted,
                         timeZone: TimeZone(identifier: snapshot.timeZoneID) ?? .gmt).day())
                         .font(.system(size: 10)).foregroundStyle(muted)
+                        .contentTransition(.identity)
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("\(day.date.formatted(date: .abbreviated, time: .omitted)): \(day.tokens.map { "\($0) 토큰" } ?? "기록 없음")")
             }
         }
     }
-    private var footer: some View {
-        if size == .small, let metric = snapshot.smallMetric, metric != .tokens {
-            return AnyView(timeFooter(metric))
-        }
-        return AnyView(tokenFooter)
-    }
-    private func timeFooter(_ metric: SmallWidgetMetric) -> AnyView {
+    private var footerLabel: String {
+        guard showsTime else { return status }
         let timing = snapshot.timing
-        if metric == .activity {
+        if selectedMetric == .activity {
             let activity = timing?.activity
             let label = activity.map { $0.stale(at: now) ? "이전 집계 · 추정" : $0.label } ?? "확장 연결 필요"
-            return AnyView(VStack(alignment: .leading, spacing: 3) {
-                Text((timing?.isSample == true ? "합성 · " : "") + label).lineLimit(1).minimumScaleFactor(0.8)
-                Text(activity?.generatedAt ?? snapshot.generatedAt, style: .time)
-            }.font(.system(size: 10)).foregroundStyle(muted))
+            return (timing?.isSample == true ? "합성 · " : "") + label
         }
-        let state = metric == .workTimer ? timing?.manualState : timing?.foregroundState
-        let stamp = timing?.generatedAt ?? snapshot.generatedAt
+        let state = selectedMetric == .workTimer ? timing?.manualState : timing?.foregroundState
         let label = timing?.stale(at: now) == true ? "오래됨" : state == .running ? "최근 관측" : state?.label ?? "관측 안 됨"
-        return AnyView(HStack(spacing: 4) {
-            Text((timing?.isSample == true ? "합성 · " : "") + label).lineLimit(1).minimumScaleFactor(0.8)
-            Spacer(minLength: 2)
-            Text(stamp, format: .dateTime.hour().minute()).lineLimit(1).minimumScaleFactor(0.8)
-        }.font(.system(size: 9)).foregroundStyle(muted))
+        return (timing?.isSample == true ? "합성 · " : "") + label
     }
-    private var tokenFooter: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(status).lineLimit(1).minimumScaleFactor(0.8)
-            Spacer(minLength: 2)
-            Text(snapshot.generatedAt, format: old ? .dateTime.month().day().hour().minute() : .dateTime.hour().minute())
-                .lineLimit(1).minimumScaleFactor(0.8)
+    private var footerStamp: Date {
+        if selectedMetric == .activity { return snapshot.timing?.activity?.generatedAt ?? snapshot.generatedAt }
+        return showsTime ? snapshot.timing?.generatedAt ?? snapshot.generatedAt : snapshot.generatedAt
+    }
+    private var footerStampFormat: Date.FormatStyle {
+        !showsTime && old ? .dateTime.month().day().hour().minute() : .dateTime.hour().minute()
+    }
+    private var footerAccessibilityLabel: String {
+        if showsTime {
+            return "\(selectedMetric.label). \(footerLabel). 표시 기준 \(footerStamp.formatted(date: .abbreviated, time: .shortened))."
         }
-        .font(.system(size: 9)).foregroundStyle(muted)
+        return "\(status). 마지막 집계 \(snapshot.generatedAt.formatted(date: .abbreviated, time: .shortened)). M은 백만 토큰입니다."
+    }
+    private var footer: some View {
+        // Widget size is fixed by its family. Metric changes update these same
+        // two Text slots instead of replacing an AnyView with a different stack.
+        Group {
+            if size == .small {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(footerLabel).lineLimit(1).minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                    Text(footerStamp, format: footerStampFormat).lineLimit(1).minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(footerLabel).lineLimit(1).minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                    Spacer(minLength: 2)
+                    Text(footerStamp, format: footerStampFormat).lineLimit(1).minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                }
+            }
+        }
+        .font(.system(size: size == .small ? 10 : 9)).foregroundStyle(muted)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(status). 마지막 집계 \(snapshot.generatedAt.formatted(date: .abbreviated, time: .shortened)). M은 백만 토큰입니다.")
+        .accessibilityLabel(footerAccessibilityLabel)
     }
 }
 

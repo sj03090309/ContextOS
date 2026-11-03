@@ -16,6 +16,7 @@ struct ConcurrentUsageSummary: View {
 }
 
 struct UsageOverviewCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduced
     let snapshot: ConcurrentUsageSnapshot
     @Binding var expanded: Bool
     var compact = false
@@ -25,37 +26,62 @@ struct UsageOverviewCard: View {
     private var waiting: Int { snapshot.sessions.filter { $0.state == .waiting }.count }
     private var hasSource: Bool { data.providers.contains { $0.state == .ready || $0.state == .partial || $0.state == .noRecords } }
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: compact ? 6 : 9) {
             HStack {
                 Text("오늘 관측 토큰").font(.system(size: 11, weight: .medium))
                 Spacer()
                 Text(data.providers.isEmpty ? "집계 준비 중" : data.health)
-                    .font(.system(size: 9)).foregroundStyle(data.health == "일부 수집 불가" ? Brand.caution : Color.secondary)
+                    .font(.system(size: 9)).foregroundStyle(data.providers.contains { $0.state == .unavailable || !($0.issues ?? []).isEmpty } ? Brand.caution : Color.secondary)
+                    .help(data.providers.filter { $0.state == .partial || $0.state == .unavailable }
+                        .map { $0.name + ": " + $0.statusLabel }.joined(separator: "\n"))
             }
             HStack(alignment: .firstTextBaseline) {
                 Text(UsageNumbers.compact(data.today))
-                    .font(.system(size: 31, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .font(.system(size: compact ? 25 : 31, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .contentTransition(.numericText(value: Double(data.today ?? 0)))
+                    .animation(PanelMotion.feedback(reduced: reduced), value: data.today)
                     .accessibilityLabel("오늘 관측 토큰")
                     .accessibilityValue(data.today.map(String.init) ?? "확인 가능한 집계 없음")
-                Spacer()
-                Text(hasSource ? "작업 \(working) · 대기 \(waiting)" : "작업 — · 대기 —")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-                    .help("관측된 로컬 세션의 상태입니다. 전체 클라우드 작업 수가 아닙니다.")
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text(hasSource ? "작업 \(working) · 대기 \(waiting)" : "작업 — · 대기 —")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .help("관측된 로컬 세션의 상태입니다. 전체 클라우드 작업 수가 아닙니다.")
+                    if compact, let showDetails {
+                        detailsButton(showDetails)
+                    }
+                }
             }
             if !compact {
                 Divider().opacity(0.5)
                 TodayModelsList(models: snapshot.todayModels, expanded: $expanded)
             }
-            if let showDetails {
-                Button(action: showDetails) {
-                    HStack { Text("모델·세션 보기"); Spacer(); Image(systemName: "chevron.right").font(.system(size: 9)) }
-                        .font(.system(size: 10)).foregroundStyle(.secondary).contentShape(Rectangle())
-                }.buttonStyle(PanelPressStyle())
+            if !compact, let showDetails {
+                detailsButton(showDetails)
             }
             if data.isSample { Text("검증용 예시 · 실제 사용량이 아닙니다").font(.system(size: 9)).foregroundStyle(Brand.caution) }
-        }.padding(13)
-            .background(Brand.accent.opacity(0.055), in: RoundedRectangle(cornerRadius: 17))
-            .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(Brand.accent.opacity(0.09), lineWidth: 1))
+        }
+        .padding(.horizontal, compact ? 3 : 13)
+        .padding(.vertical, compact ? 7 : 13)
+        .background(Brand.accent.opacity(compact ? 0 : 0.055), in: RoundedRectangle(cornerRadius: 17))
+        .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(Brand.accent.opacity(compact ? 0 : 0.09), lineWidth: 1))
+    }
+
+    private func detailsButton(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text("모델·세션 보기")
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(Brand.accent)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PanelPressStyle())
     }
 }
 
@@ -126,7 +152,7 @@ struct ProviderSessionsCard: View {
                 }.contentShape(Rectangle())
             }.buttonStyle(PanelPressStyle()).accessibilityValue(expanded ? "펼쳐짐" : "접힘")
             if expanded {
-                Text(provider.state.label).font(.system(size: 9)).foregroundStyle(.secondary)
+                Text(provider.statusLabel).font(.system(size: 9)).foregroundStyle(.secondary)
                 if groups.isEmpty { Text("관측된 세션이 없어요").font(.system(size: 10)).foregroundStyle(.secondary) }
                 ForEach(showAll ? groups : Array(groups.prefix(3))) { ModelSessionsDisclosure(group: $0) }
                 if groups.count > 3 {
@@ -260,7 +286,7 @@ struct ConcurrentUsageView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text("마지막 집계 \(data.generatedAt.formatted(date: .abbreviated, time: .standard)) · \(data.health)")
                 Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0 · 앱 실행 여부는 작업·사용량의 증거가 아닙니다.")
-                Text("도구별 토큰 정의가 달라 합계는 관측 토큰 수입니다. 하위 에이전트·fork 기록은 제외될 수 있습니다.")
+                Text("요청별 기록이 있는 하위 작업은 중복 없이 포함합니다. 구형 상속 기록은 사용량을 분리할 수 없어 제외될 수 있습니다.")
                 Text("위젯: \(bridgeStatus) · macOS가 갱신 시점을 결정합니다.")
             }.font(.system(size: 10)).foregroundStyle(.secondary)
         }.padding(24).frame(minWidth: 720, idealWidth: 780, minHeight: 640, idealHeight: 760)
@@ -271,7 +297,7 @@ struct ConcurrentUsageView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(provider.name == "Codex" ? "Codex · 로컬 기록" : provider.name).font(.system(size: 15, weight: .semibold))
-                Text(provider.state.label).font(.caption).foregroundStyle(provider.state == .ready ? .green : .secondary)
+                Text(provider.statusLabel).font(.caption).foregroundStyle(provider.state == .ready ? .green : .secondary)
                 Spacer()
                 Text(appPresence[provider.name].map { $0 ? "데스크톱 앱 실행 중" : "데스크톱 앱 미실행" } ?? "앱/CLI 실행 여부 미확인")
                     .font(.system(size: 10)).foregroundStyle(.secondary)

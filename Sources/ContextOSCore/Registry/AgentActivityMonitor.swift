@@ -25,10 +25,6 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     private let claudePrefixes: [String]
     private let codexPrefixes: [String]
 
-    /// How long a directory can be untouched before we stop descending into it.
-    /// A live session's file was created recently, so its parent dir is fresh.
-    private let staleDirWindow: TimeInterval = 7 * 86_400
-
     /// A log whose last event is an *unanswered* tool call keeps the session
     /// "active" for up to this long even with no writes — one long-running tool
     /// (a build, a test suite, a big install) produces no log lines until it
@@ -242,7 +238,9 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         hottest = newest
     }
 
-    /// Session log files from every supported agent, pruned to fresh directories.
+    /// Session logs from supported layouts. A directory's mtime only changes
+    /// when its immediate entries change; it says nothing about appended logs
+    /// below an old year/month or a resumed Claude project directory.
     private func candidateLogs(now: Date) -> [URL] {
         var files: [URL] = []
         // Claude Code: projects/<encoded-project>/<session>.jsonl
@@ -254,39 +252,42 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         return files
     }
 
-    /// Files one level below `root` (Claude Code layout), skipping stale dirs.
+    /// Files one level below `root` (Claude Code layout).
     private func logs(underDirsOf root: URL, suffix: String, now: Date) -> [URL] {
         let fm = FileManager.default
         guard let dirs = try? fm.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+            at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return [] }
         var out: [URL] = []
         for dir in dirs {
-            guard let dirDate = mtime(dir), now.timeIntervalSince(dirDate) <= staleDirWindow,
+            guard let values = try? dir.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory == true, values.isSymbolicLink != true,
                   let entries = try? fm.contentsOfDirectory(
-                    at: dir, includingPropertiesForKeys: [.contentModificationDateKey])
+                    at: dir, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey])
             else { continue }
-            out += entries.filter { $0.lastPathComponent.hasSuffix(suffix) }
+            out += entries.filter {
+                let values = try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                return $0.lastPathComponent.hasSuffix(suffix) && values?.isRegularFile == true && values?.isSymbolicLink != true
+            }
         }
         return out
     }
 
-    /// Recursive variant (Codex's dated tree), pruning stale directories so old
-    /// months are never descended into.
+    /// Recursive variant (Codex's dated tree). Only metadata is listed; the
+    /// tracker limits actual reads to the newest 64 logs and a shared byte budget.
     private func logs(recursivelyUnder root: URL, suffix: String, now: Date) -> [URL] {
         let fm = FileManager.default
         var out: [URL] = []
         var stack = [root]
         while let dir = stack.popLast() {
             guard let entries = try? fm.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey])
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey])
             else { continue }
             for entry in entries {
-                let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDir {
-                    if let d = mtime(entry), now.timeIntervalSince(d) <= staleDirWindow {
-                        stack.append(entry)
-                    }
-                } else if entry.lastPathComponent.hasSuffix(suffix) {
+                guard let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]),
+                      values.isSymbolicLink != true else { continue }
+                if values.isDirectory == true {
+                    stack.append(entry)
+                } else if values.isRegularFile == true, entry.lastPathComponent.hasPrefix("rollout-"), entry.lastPathComponent.hasSuffix(suffix) {
                     out.append(entry)
                 }
             }

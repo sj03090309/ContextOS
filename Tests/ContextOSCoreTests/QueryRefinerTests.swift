@@ -15,6 +15,14 @@ struct QueryRefinerTests {
         #expect(r.expansions.contains { $0.from == "로그인" })
     }
 
+    @Test("Korean usage and context tasks retain their distinct intents")
+    func usageAndContextIntent() {
+        let usage = refiner.refine("오늘 관측 토큰 사용량 수집", vocabulary: ["ObservedSession", "ConcurrentUsageReader"])
+        #expect(Set(["observed", "usage", "collection", "reader"]).isSubset(of: Set(usage.terms)))
+        let context = refiner.refine("컨텍스트 최적화 의존성 누락 중복 절감", vocabulary: [])
+        #expect(Set(["context", "optimizer", "dependency", "missing", "dedup", "savings"]).isSubset(of: Set(context.terms)))
+    }
+
     @Test("corrects a typo to a real project symbol")
     func typoCorrection() {
         let r = refiner.refine("fix logn", vocabulary: ["login", "logout", "authenticate"])

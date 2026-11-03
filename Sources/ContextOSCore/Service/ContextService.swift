@@ -90,7 +90,7 @@ public struct ContextService: Sendable {
     }
 
     /// Rank the most relevant files for a query (auto-indexes if needed).
-    public func relevantContext(
+    private func rankedContext(
         query: String,
         projectRoot: URL,
         tokenBudget: Int
@@ -112,6 +112,12 @@ public struct ContextService: Sendable {
         return selection
     }
 
+    public func relevantContext(query: String, projectRoot: URL, tokenBudget: Int) throws -> ContextSelection {
+        var ranked = try rankedContext(query: query, projectRoot: projectRoot, tokenBudget: Int.max)
+        ranked.tokenBudget = max(0, tokenBudget)
+        return assembleBundle(ranked, projectRoot: projectRoot, memory: nil).selection
+    }
+
     /// A compact, injectable context for an editor prompt hook: the relevant
     /// files with their key symbols, small enough to prepend to every prompt so
     /// the agent reads precisely instead of grepping the repo. Returns nil when
@@ -123,16 +129,18 @@ public struct ContextService: Sendable {
         maxFiles: Int = 6,
         excluding: Set<String> = []
     ) throws -> (allPaths: [String], text: String)? {
-        let selection = try relevantContext(query: query, projectRoot: projectRoot, tokenBudget: tokenBudget)
-        guard !selection.included.isEmpty else { return nil }
+        var ranked = try rankedContext(query: query, projectRoot: projectRoot, tokenBudget: Int.max)
+        guard !ranked.included.isEmpty else { return nil }
         // Quality gate for a hook that fires on *every* prompt: only inject when
         // there's a real lexical/graph match. A selection driven purely by Git
         // recency (no term matched) means the prompt wasn't a code task — e.g. a
         // confirmation like "그렇게 해줘" — so injecting files would be noise.
-        let hasLexicalMatch = selection.included.contains { file in
-            file.reasons.contains { !$0.hasPrefix("git:") }
+        let hasLexicalMatch = ranked.included.contains { file in
+            file.reasons.contains { $0.hasPrefix("requested file ") || $0.hasPrefix("named implementation ") || $0.contains(" → ") }
         }
         guard hasLexicalMatch else { return nil }
+        ranked.tokenBudget = max(0, tokenBudget)
+        let selection = assembleBundle(ranked, projectRoot: projectRoot, memory: nil).selection
 
         let allPaths = selection.included.map(\.path)
         // Drop files already injected on the previous prompt, then cap — so a
@@ -143,8 +151,9 @@ public struct ContextService: Sendable {
         let symbolsByPath = (try? Indexer.openStore(forProjectRoot: projectRoot)
             .symbols(forPaths: shown.map(\.path))) ?? [:]
 
-        var out = "[ContextOS] 이 요청에 관련된 파일 (정확도 \(selection.contextScore)/100). "
+        var out = "[ContextOS] 이 요청에 관련된 파일 (선택 점수 \(selection.contextScore)/100). "
         out += "본문이 필요하면 read_optimized를 호출하세요.\n"
+        if !selection.omissions.isEmpty { out += "필수 본문 일부 미포함: 예산 또는 의존 구현 확인이 필요합니다.\n" }
         for file in shown {
             let reason = file.reasons.first.map { " — \($0)" } ?? ""
             out += "- \(file.path)  (~\(TokenEstimator.abbrev(file.estimatedTokens)))\(reason)\n"
@@ -175,7 +184,7 @@ public struct ContextService: Sendable {
                  deliveredFullTokens: Int, deliveredTokens: Int) {
         // Rank first, then charge for what we actually send. Charging for whole
         // files here excluded large files before their small slices could fit.
-        var selection = try relevantContext(
+        var selection = try rankedContext(
             query: query, projectRoot: projectRoot, tokenBudget: Int.max
         )
         selection.tokenBudget = max(0, tokenBudget)
@@ -214,86 +223,21 @@ public struct ContextService: Sendable {
         projectRoot: URL,
         memory: SessionMemory?
     ) -> (selection: ContextSelection, bundle: String, skipped: Int, deliveredFull: Int) {
-        var result = selection
-        result.included = []
-        result.excluded = []
-        var bundle = ""
-        var fullCharacterCount = 0
-        var skipped = 0
-        guard let access = try? ProjectFileAccess(root: projectRoot) else { return (result, bundle, 0, 0) }
-        let rootPath = access.root.path
-        for file in selection.included + selection.excluded {
-            guard !SensitiveFilePolicy.isSensitivePath(file.path) else { continue }
-            let marker = "// FILE: \(file.path) (이미 전달됨; fresh=true로 재요청)\n\n"
-            let emptySection = "// ===== FILE: \(file.path) =====\n\n"
-            let minimumFraming = marker.count < emptySection.count ? marker : emptySection
-            // Once even an empty section cannot fit, don't read and parse a
-            // potentially huge file just to reject it a second time.
-            guard optimizer.estimator.estimate(text: bundle + minimumFraming) <= selection.tokenBudget else {
-                result.excluded.append(file)
-                continue
-            }
-            guard let data = try? access.read(file.path, maximumBytes: indexer.scanner.filter.maxFileSize),
-                  let content = String(data: data, encoding: .utf8)
-            else { result.excluded.append(file); continue }
-
-            var body = content
-            var note = ""
-            if useSlicing, !selection.terms.isEmpty {
-                let result = slicer.slice(source: content, language: file.language, terms: selection.terms)
-                if result.sliced {
-                    note = "  (\(result.totalLines)줄 중 \(result.keptLines)줄, 관련 심볼만)"
-                    if result.content.count + note.count < content.count {
-                        body = result.content
-                    } else {
-                        note = ""
-                    }
-                }
-            }
-
-            func section(_ content: String, note: String = "") -> String {
-                "// ===== FILE: \(file.path)\(note) =====\n" + content
-                    + (content.hasSuffix("\n") ? "\n" : "\n\n")
-            }
-            let hash = memory == nil ? nil : Self.bodyHash(body)
-            let bodySection = section(body, note: note)
-            let unchanged = hash.map { memory?.isUnchanged(project: rootPath, path: file.path, bodyHash: $0) == true } ?? false
-            // Very small bodies can cost less than the dedup marker itself.
-            let dedup = unchanged && marker.count < bodySection.count
-            let addition = dedup ? marker : bodySection
-            guard optimizer.estimator.estimate(text: bundle + addition) <= selection.tokenBudget else {
-                result.excluded.append(file)
-                continue
-            }
-            bundle += addition
-            var delivered = file
-            delivered.estimatedTokens = optimizer.estimator.estimate(text: addition)
-            result.included.append(delivered)
-            if dedup {
-                skipped += 1
-            } else {
-                // Compare identical units and framing on both sides. Byte-size
-                // estimates inflated savings on Unicode and unsliced code.
-                fullCharacterCount += section(content).count
-                if let hash { memory?.markServed(project: rootPath, path: file.path, bodyHash: hash) }
-            }
+        guard let builder = try? ContextBundleBuilder(service: self, selection: selection, projectRoot: projectRoot, memory: memory) else {
+            var failed = selection
+            failed.excluded = selection.included + selection.excluded
+            failed.included = []
+            failed.estimatedTokens = 0
+            failed.omissions = ["프로젝트 코드 접근 실패"]
+            return (failed, "", 0, 0)
         }
-        let remaining = max(0, selection.tokenBudget - optimizer.estimator.estimate(text: bundle))
-        bundle += signatureOutline(for: result.excluded, projectRoot: projectRoot, tokenBudget: remaining)
-        result.estimatedTokens = optimizer.estimator.estimate(text: bundle)
-        result.contextScore = ContextOptimizer.contextScore(included: result.included, excluded: result.excluded)
-        return (result, bundle, skipped,
-                optimizer.estimator.estimate(characterCount: fullCharacterCount, language: .unknown))
-    }
-
-    private static func bodyHash(_ body: String) -> String {
-        SHA256.hash(data: Data(body.utf8)).map { String(format: "%02x", $0) }.joined()
+        return builder.build()
     }
 
     /// A signatures-only outline of relevant files that didn't fit the budget,
     /// built from the index (no file reads). A few tokens buy the agent the
     /// structure of what else exists, and the line numbers to ask for it.
-    private func signatureOutline(for excluded: [ScoredFile], projectRoot: URL, tokenBudget: Int) -> String {
+    func signatureOutline(for excluded: [ScoredFile], projectRoot: URL, tokenBudget: Int) -> String {
         guard !excluded.isEmpty, tokenBudget > 0 else { return "" }
         let shown = Array(excluded.prefix(5))
         guard let store = try? Indexer.openStore(forProjectRoot: projectRoot),

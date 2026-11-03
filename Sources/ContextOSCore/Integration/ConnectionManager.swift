@@ -65,7 +65,8 @@ public struct ConnectionManager: Sendable {
                 try editor.addSection(command: mcpBinaryPath)
                 mutations.append(OwnedMutation(kind: .tomlSection, file: file,
                                                after: Data(try editor.ownedSection()!.utf8)))
-            } else if let marked = try editor.ownedSection(), Self.onlyManagedTOMLKeys(marked) {
+            } else if let marked = try editor.ownedSection(), try !editor.hasChildSections,
+                      Self.onlyManagedTOMLKeys(marked) {
                 try editor.set("command", to: String(data: JSONSettingsEditor.encode(mcpBinaryPath), encoding: .utf8)!)
                 try editor.set("args", to: "[]")
                 mutations.append(OwnedMutation(kind: .tomlSection, file: file,
@@ -237,7 +238,9 @@ public struct ConnectionManager: Sendable {
                           && [["command"], ["args"]].contains(mutation.path) && String(data: after, encoding: .utf8) != nil
                   case .tomlSection:
                       guard agent == .codex && mutation.file == ".codex/config.toml", mutation.path.isEmpty,
-                            let editor = try? CodexSettingsEditor(after), let section = try? editor.ownedSection() else { return false }
+                            let editor = try? CodexSettingsEditor(after),
+                            (try? editor.hasChildSections) == false,
+                            let section = try? editor.ownedSection() else { return false }
                       return Data(section.utf8) == after
                   }
               }) else { throw SettingsSafetyError.invalid("관리 기록") }
@@ -252,7 +255,9 @@ public struct ConnectionManager: Sendable {
         case .tomlValue:
             guard try CodexSettingsEditor(data).value(mutation.path[0]).map({ Data($0.utf8) }) == mutation.after else { throw SettingsSafetyError.conflict("config.toml") }
         case .tomlSection:
-            guard try CodexSettingsEditor(data).ownedSection().map({ Data($0.utf8) }) == mutation.after else { throw SettingsSafetyError.conflict("config.toml") }
+            let editor = try CodexSettingsEditor(data)
+            guard try !editor.hasChildSections,
+                  try editor.ownedSection().map({ Data($0.utf8) }) == mutation.after else { throw SettingsSafetyError.conflict("config.toml") }
         case .instruction:
             let text = try SettingsTransaction.text(data, file: mutation.file)
             guard try Self.instructionRange(text).map({ Data(text[$0].utf8) }) == mutation.after else { throw SettingsSafetyError.conflict((mutation.file as NSString).lastPathComponent) }

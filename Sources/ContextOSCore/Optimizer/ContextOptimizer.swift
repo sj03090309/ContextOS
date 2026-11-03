@@ -44,16 +44,22 @@ public struct ContextOptimizer: Sendable {
     ) -> ContextSelection {
         // Use actively-refined terms when provided, else derive from the query.
         let terms = overrideTerms ?? TextTokens.queryTerms(TextTokens.withoutFileReferences(query))
+        let identifiers = Set(query.split { !$0.isLetter && !$0.isNumber && $0 != "_" && $0 != "$" }.map { $0.lowercased() })
+        let identifierLengths = Set(identifiers.map { $0.utf8.count })
+        let wantsTests = !Set(terms).isDisjoint(with: ["test", "tests", "testing", "spec", "specs", "테스트"])
         let files = snapshot.files
         let references = TextTokens.fileReferences(in: query).map {
             $0.hasPrefix("./") ? String($0.dropFirst(2)).lowercased() : $0.lowercased()
         }
+        let indexedPaths = Set(files.map { $0.relativePath.lowercased() })
+        let exactReferences = Set(references).intersection(indexedPaths)
         let explicitPaths = Set(files.filter { file in
             let path = file.relativePath.lowercased()
             return references.contains { reference in
-                path == reference || (reference.contains("/")
+                if exactReferences.contains(reference) { return path == reference }
+                return reference.contains("/")
                     ? path.hasSuffix("/" + reference)
-                    : path.split(separator: "/").last.map(String.init) == reference)
+                    : path.split(separator: "/").last.map(String.init) == reference
             }
         }.map(\.relativePath))
         let symbolsByFile = snapshot.symbolsByFile
@@ -116,6 +122,7 @@ public struct ContextOptimizer: Sendable {
         // 1. Base lexical scoring.
         var scores: [Int64: Double] = [:]
         var reasons: [Int64: [String]] = [:]
+        var namedFilePaths = Set<String>()
 
         for file in files {
             guard let id = file.id, let lexical = lexicalByID[id] else { continue }
@@ -136,6 +143,7 @@ public struct ContextOptimizer: Sendable {
                             best = Self.symbolExactScore
                             reason = "symbol \(symbol.name)"
                         }
+                        break // No later symbol can beat an exact match.
                     } else if term.count >= 3, words.contains(where: { $0.contains(term) }) {
                         if Self.symbolPartialScore > best {
                             best = Self.symbolPartialScore
@@ -171,7 +179,24 @@ public struct ContextOptimizer: Sendable {
                 // Reward files central to the query (matched several distinct
                 // terms) over ones caught by a single broad term.
                 let coverageBoost = 1.0 + 0.2 * Double(max(0, matchedTerms - 1))
-                scores[id] = fileScore * coverageBoost
+                var score = fileScore * coverageBoost
+                // A named implementation is stronger evidence than several
+                // incidental words in a long test name. Restrict this bonus to
+                // composite identifiers so ordinary "login" queries retain
+                // their lexical/graph behavior.
+                let namedSymbols = lexical.symbols.filter {
+                    $0.words.count > 1 && identifierLengths.contains($0.name.utf8.count) && identifiers.contains($0.name.lowercased())
+                }
+                let namedFile = lexical.stemWords.count > 1 && identifiers.contains(lexical.stem.lowercased())
+                if namedFile { namedFilePaths.insert(file.relativePath) }
+                if !namedSymbols.isEmpty || namedFile {
+                    score += 24 * Double(namedSymbols.count + (namedFile ? 1 : 0))
+                    fileReasons.insert("named implementation \(namedSymbols.first?.name ?? lexical.stem)", at: 0)
+                }
+                let testPath = lexical.pathWords.contains("tests") || lexical.pathWords.contains("test")
+                    || lexical.stemWords.contains("spec") || lexical.stemWords.contains("specs")
+                if testPath && !wantsTests && references.isEmpty { score *= 0.55 }
+                scores[id] = score
                 reasons[id] = fileReasons
             }
             if explicitPaths.contains(file.relativePath) {
@@ -241,6 +266,10 @@ public struct ContextOptimizer: Sendable {
             let leftExplicit = explicitPaths.contains(lhs.path)
             let rightExplicit = explicitPaths.contains(rhs.path)
             if leftExplicit != rightExplicit { return leftExplicit }
+            if !namedFilePaths.isEmpty {
+                let leftNamedFile = namedFilePaths.contains(lhs.path), rightNamedFile = namedFilePaths.contains(rhs.path)
+                if leftNamedFile != rightNamedFile { return leftNamedFile }
+            }
             if lhs.score != rhs.score { return lhs.score > rhs.score }
             if lhs.estimatedTokens != rhs.estimatedTokens { return lhs.estimatedTokens < rhs.estimatedTokens }
             return lhs.path < rhs.path
@@ -277,21 +306,16 @@ public struct ContextOptimizer: Sendable {
         files: [IndexedFile],
         importsByFile: [Int64: [ImportEdge]]
     ) -> [Int64: Set<Int64>] {
-        var stemToIDs: [String: [Int64]] = [:]
-        for file in files {
-            guard let id = file.id else { continue }
-            stemToIDs[PathResolution.stem(of: file.relativePath).lowercased(), default: []].append(id)
-        }
-
+        let modules = ProjectModuleResolver(paths: files.map(\.relativePath))
+        let ids = Dictionary(uniqueKeysWithValues: files.compactMap { file in file.id.map { (file.relativePath, $0) } })
         var adjacency: [Int64: Set<Int64>] = [:]
         for file in files {
             guard let id = file.id else { continue }
             for edge in importsByFile[id] ?? [] {
-                let stem = PathResolution.moduleStem(edge.module)
-                for target in stemToIDs[stem] ?? [] where target != id {
-                    adjacency[id, default: []].insert(target)
-                    adjacency[target, default: []].insert(id)
-                }
+                guard let path = modules.resolve(edge.module, from: file.relativePath, language: file.language),
+                      let target = ids[path], target != id else { continue }
+                adjacency[id, default: []].insert(target)
+                adjacency[target, default: []].insert(id)
             }
         }
         return adjacency

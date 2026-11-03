@@ -1,4 +1,6 @@
 import Foundation
+import CoreFoundation
+import ContextOSUsage
 
 /// One AI coding session that ran against a project.
 public struct AgentSession: Sendable {
@@ -49,9 +51,8 @@ public struct AgentUsageSnapshot: Sendable {
 ///   message carries an exact `usage` block and an ISO8601 `timestamp`, plus the
 ///   `cwd` it ran in. Complete: totals, per-project, per-day, session spans.
 /// - **Codex** — `~/.codex/sessions/**/rollout-*.jsonl`. `session_meta` gives the
-///   `cwd`; `token_count` events give a **cumulative** `total_token_usage`.
-///   Per-day totals come from differencing consecutive cumulative values (summing
-///   the reported per-turn `last_token_usage` instead drifts ~1% high).
+///   `cwd`; modern `token_usage_record` events identify each request's usage.
+///   Older transcripts fall back to cumulative `token_count` differences.
 /// - **Gemini CLI** — writes chat logs under `~/.gemini`, but no token accounting;
 ///   its usage telemetry is opt-in OTLP that goes to a collector, not to disk.
 /// - **Cursor** — chat lives in a private, version-unstable `state.vscdb`, and
@@ -142,6 +143,17 @@ public enum AgentSessionReader {
     /// Return an up-to-date parse of one transcript, doing as little work as the
     /// file's state allows: nothing if it is unchanged, tail-only if it grew.
     static func row(for file: URL, agent: String, cached: SessionCacheRow?) -> SessionCacheRow? {
+        // Rebuild only obsolete derived transcript parses, leaving usage events
+        // and the original logs intact. Older Claude caches summed stream copies.
+        let cached = cached.flatMap { (row: SessionCacheRow) -> SessionCacheRow? in
+            if agent == "Codex" {
+                guard let accounting = row.codexAccounting, accounting.version == 1 else { return nil }
+                // Reparse an old Double cursor if its integer value was lost.
+                guard accounting.legacyCounter != nil || Int(exactly: row.cursor) != nil else { return nil }
+                return row
+            }
+            return row.claudeAccounting?.version == 1 ? row : nil
+        }
         // Deliberately not `URL.resourceValues`: NSURL memoizes those on the URL
         // instance, so asking the same URL twice returns the size and mtime from
         // the first ask and an append would never be noticed. FileManager stats
@@ -193,6 +205,8 @@ public enum AgentSessionReader {
     private static func accumulateClaude(_ file: URL, from offset: Int,
                                          into row: inout SessionCacheRow) -> Int? {
         var acc = row
+        var accounting = row.claudeAccounting ?? ClaudeSessionAccounting()
+        var ordinal = 0
         // A transcript is not pinned to one directory: the user can `cd`, or
         // resume the session elsewhere, and later lines carry a different cwd.
         // Attribute each message to the directory it was actually sent from.
@@ -200,28 +214,43 @@ public enum AgentSessionReader {
             ? decodeClaudeDir(URL(fileURLWithPath: row.path).deletingLastPathComponent().lastPathComponent)
             : row.lastProject
 
-        // Only lines with a usage block are worth parsing — most are user turns,
-        // tool results, and metadata — and the reader rejects the rest on the raw
-        // bytes, before they are ever decoded.
+        // Keep usage and cwd metadata; reject unrelated turns on the raw bytes.
         let consumed = LineReader.forEachLine(of: file, from: offset,
-                                              containingAny: ["\"usage\""]) { line in
+                                              containingAny: ["\"usage\"", "\"cwd\""]) { line in
             guard let obj = jsonObject(line) else { return }
+            guard obj["isSidechain"] as? Bool != true else { return }
+            let message = obj["message"] as? [String: Any]
+            guard message?["model"] as? String != "<synthetic>" else { return }
 
             // The transcript records the cwd it ran in — more reliable than
             // decoding the directory name, which is lossy for any project whose
             // own name contains a "-".
             if let recorded = obj["cwd"] as? String, !recorded.isEmpty { cwd = recorded }
 
-            guard let usage = (obj["message"] as? [String: Any])?["usage"] as? [String: Any]
+            guard let usage = message?["usage"] as? [String: Any]
                     ?? obj["usage"] as? [String: Any] else { return }
-            let tokens = int(usage, "input_tokens") + int(usage, "cache_read_input_tokens")
-                + int(usage, "cache_creation_input_tokens") + int(usage, "output_tokens")
+            let fields = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens"]
+                .map { nonnegativeCounter(usage[$0]) }
+            guard fields.allSatisfy({ $0 != nil }) else { return }
+            let tokens = fields.compactMap { $0 }.reduce(0) { Int(UsageNumbers.add(Int64($0), Int64($1))) }
             guard tokens > 0 else { return }
 
             let stamp = obj["timestamp"] as? String
-            acc.add(tokens: tokens, at: stamp.flatMap { TimeKeys.epoch(fromISO8601: $0) }, project: cwd)
+            let id = message?["id"] as? String ?? obj["uuid"] as? String
+            // Legacy records with no stable ID remain distinct observations;
+            // they must not collapse merely because their counters are equal.
+            let key = id.map { "message:" + $0 } ?? "legacy:\(file.path):\(offset):\(ordinal)"
+            ordinal += 1
+            let previous = accounting.messages[key]
+            guard previous == nil || tokens > previous!.tokens else { return }
+            let event = ClaudeSessionAccounting.Message(tokens: tokens,
+                timestamp: previous?.timestamp ?? stamp.flatMap { TimeKeys.epoch(fromISO8601: $0) },
+                project: previous?.project ?? cwd)
+            accounting.messages[key] = event
+            acc.add(tokens: tokens - (previous?.tokens ?? 0), at: event.timestamp, project: event.project)
         }
         acc.lastProject = cwd
+        acc.claudeAccounting = accounting
         row = acc
         return consumed
     }
@@ -242,44 +271,70 @@ public enum AgentSessionReader {
     private static func accumulateCodex(_ file: URL, from offset: Int,
                                         into row: inout SessionCacheRow) -> Int? {
         var acc = row
-        var previous = row.cursor          // last cumulative total we saw
         var cwd = row.lastProject          // set once, by session_meta
+        var accounting = row.codexAccounting ?? CodexSessionAccounting()
+        var previous = max(0, accounting.legacyCounter ?? Int(exactly: row.cursor) ?? 0)
 
         let consumed = LineReader.forEachLine(of: file, from: offset,
-                                              containingAny: ["\"cwd\"", "token_count"]) { line in
+                                              containingAny: ["\"cwd\"", "token_count", "token_usage_record"]) { line in
             guard let obj = jsonObject(line),
                   let payload = obj["payload"] as? [String: Any]
             else { return }
 
             switch obj["type"] as? String {
             case "session_meta":
+                if let id = payload["id"] as? String {
+                    guard accounting.session.isEmpty || accounting.session == id else { return }
+                    accounting.session = id
+                }
+                let source = payload["source"]
+                if payload["forked_from_id"] != nil || (source as? [String: Any])?["subagent"] != nil || source as? String == "subagent" {
+                    accounting.inherited = true
+                }
                 if let recorded = payload["cwd"] as? String, !recorded.isEmpty { cwd = recorded }
+            case "token_usage_record":
+                guard let thread = payload["thread_id"] as? String, !thread.isEmpty, thread.utf8.count <= 128,
+                      let id = payload["response_id"] as? String, !id.isEmpty, id.utf8.count <= 128,
+                      let usage = payload["usage"] as? [String: Any],
+                      usage["total_tokens"] != nil, let total = nonnegativeCounter(usage["total_tokens"]),
+                      let stamp = obj["timestamp"] as? String, let epoch = TimeKeys.epoch(fromISO8601: stamp) else { return }
+                if accounting.session.isEmpty { accounting.session = thread }
+                guard thread == accounting.session else { return }
+                if !accounting.usesRequests {
+                    accounting.usesRequests = true
+                    acc.projects = [:] // discard cumulative echoes/baselines
+                }
+                guard accounting.requests[id] == nil else { return }
+                accounting.requests[id] = .init(tokens: total, timestamp: epoch, project: cwd)
+                acc.add(tokens: total, at: epoch, project: cwd)
             case "event_msg":
+                guard !accounting.usesRequests, !accounting.inherited else { return }
                 guard payload["type"] as? String == "token_count",
                       let info = payload["info"] as? [String: Any],
                       let usage = info["total_token_usage"] as? [String: Any],
-                      let total = usage["total_tokens"] as? Int
+                      usage["total_tokens"] != nil, let total = nonnegativeCounter(usage["total_tokens"])
                 else { return }
 
                 // `total_token_usage` is cumulative for the session, so the work
                 // done since the last event is the difference. A decrease means
                 // the counter restarted, in which case the new value is itself
                 // the delta.
-                let cumulative = Double(total)
-                let delta = cumulative < previous ? cumulative : cumulative - previous
-                previous = cumulative
+                let delta = total < previous ? total : total - previous
+                previous = total
                 guard delta > 0 else { return }
 
                 let stamp = obj["timestamp"] as? String
-                acc.add(tokens: Int(delta),
+                acc.add(tokens: delta,
                         at: stamp.flatMap { TimeKeys.epoch(fromISO8601: $0) },
                         project: cwd)
             default:
                 return
             }
         }
-        acc.cursor = previous
+        acc.cursor = Double(previous)
+        accounting.legacyCounter = previous
         acc.lastProject = cwd
+        acc.codexAccounting = accounting
         row = acc
         return consumed
     }
@@ -291,7 +346,10 @@ public enum AgentSessionReader {
             as? [String: Any]
     }
 
-    private static func int(_ dict: [String: Any], _ key: String) -> Int {
-        (dict[key] as? NSNumber)?.intValue ?? 0
+    private static func nonnegativeCounter(_ raw: Any?) -> Int? {
+        guard let raw else { return 0 }
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              let value = Int(number.stringValue), value >= 0 else { return nil }
+        return value
     }
 }

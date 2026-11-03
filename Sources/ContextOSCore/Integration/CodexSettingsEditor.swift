@@ -15,6 +15,7 @@ struct CodexSettingsEditor {
 
     var data: Data { Data(text.utf8) }
     var hasSection: Bool { get throws { try section() != nil } }
+    var hasChildSections: Bool { get throws { try section()?.hasChildren == true } }
 
     func ownedSection() throws -> String? {
         guard let section = try section(), section.marked else { return nil }
@@ -71,14 +72,20 @@ struct CodexSettingsEditor {
     }
 
     mutating func removeOwnedSection(expected: String) throws {
-        guard let section = try section(), section.marked,
+        guard let section = try section(), section.marked, !section.hasChildren,
               text.substring(lines: section.range) == expected else { throw SettingsSafetyError.conflict(file) }
         var lines = text.components(separatedBy: "\n")
         lines.removeSubrange(section.range)
         text = lines.joined(separator: "\n")
     }
 
-    private struct Section { var header: Int; var range: Range<Int>; var marked: Bool }
+    private struct Section {
+        var header: Int
+        var range: Range<Int>
+        var parentEnd: Int
+        var hasChildren: Bool
+        var marked: Bool
+    }
     private func section() throws -> Section? {
         let lines = text.components(separatedBy: "\n")
         var headers: [(Int, [String])] = []
@@ -90,10 +97,23 @@ struct CodexSettingsEditor {
                 if trimmed == begin { beginLines.append(index) }
                 if trimmed == end { endLines.append(index) }
                 let code = Self.withoutComment(line).trimmingCharacters(in: .whitespaces)
-                if code.hasPrefix("["), !code.hasPrefix("[[") {
-                    guard code.hasSuffix("]") else { throw SettingsSafetyError.invalid(file) }
-                    let inner = String(code.dropFirst().dropLast())
-                    headers.append((index, try Self.headerPath(inner)))
+                if code.hasPrefix("[") {
+                    let array = code.hasPrefix("[[")
+                    guard code.hasSuffix(array ? "]]" : "]") else { throw SettingsSafetyError.invalid(file) }
+                    let inner = String(code.dropFirst(array ? 2 : 1).dropLast(array ? 2 : 1))
+                    let path = try Self.headerPath(inner)
+                    guard !array || !path.starts(with: ["mcp_servers", "contextos"]) else {
+                        throw SettingsSafetyError.invalid(file)
+                    }
+                    headers.append((index, path))
+                } else if let keys = try Self.assignmentPath(code) {
+                    let path = (headers.last?.1 ?? []) + keys
+                    // Inline tables and dotted registrations cannot be extended
+                    // by appending a new explicit table. Preserve them unchanged.
+                    guard path != ["mcp_servers"], path != ["mcp_servers", "contextos"],
+                          !(keys.count > 1 && path.starts(with: ["mcp_servers", "contextos"])) else {
+                        throw SettingsSafetyError.invalid(file)
+                    }
                 }
             }
             // Triple quoted values can contain fake table headers or markers.
@@ -137,20 +157,26 @@ struct CodexSettingsEditor {
             return nil
         }
         let next = headers.first(where: { $0.0 > target.0 })?.0 ?? lines.count - (text.hasSuffix("\n") ? 1 : 0)
+        let hasChildren = headers.contains { $0.1.count > 2 && $0.1.starts(with: ["mcp_servers", "contextos"]) }
         if let first = beginLines.first, let last = endLines.first {
-            guard first < target.0, last >= target.0, last < next,
-                  headers.filter({ first < $0.0 && $0.0 <= last }).count == 1 else {
+            let enclosed = headers.filter { first < $0.0 && $0.0 <= last }
+            guard first < target.0, last >= target.0, enclosed.first?.0 == target.0,
+                  enclosed.allSatisfy({ $0.1.starts(with: ["mcp_servers", "contextos"]) }) else {
                 throw SettingsSafetyError.invalid(file)
             }
-            return Section(header: target.0, range: first..<last + 1, marked: true)
+            return Section(header: target.0, range: first..<last + 1,
+                           parentEnd: next, hasChildren: hasChildren, marked: true)
         }
-        return Section(header: target.0, range: target.0..<next, marked: false)
+        return Section(header: target.0, range: target.0..<next,
+                       parentEnd: next, hasChildren: hasChildren, marked: false)
     }
 
     private func keyLines(_ key: String, in section: Section) throws -> [Int] {
         let lines = text.components(separatedBy: "\n")
         let pattern = "^\\s*(?:\(key)|\"\(key)\"|'\(key)')\\s*="
-        let found = (section.header + 1..<section.range.upperBound).filter {
+        // The marker block can include Codex's tool approval subtables. Only
+        // command/args in the parent table belong to this narrow value edit.
+        let found = (section.header + 1..<min(section.parentEnd, section.range.upperBound)).filter {
             Self.withoutComment(lines[$0]).range(of: pattern, options: .regularExpression) != nil
         }
         guard found.count <= 1 else { throw SettingsSafetyError.invalid(file) }
@@ -170,6 +196,21 @@ struct CodexSettingsEditor {
         parts.append(current.trimmingCharacters(in: .whitespaces))
         guard parts.allSatisfy({ !$0.isEmpty && !$0.contains("\\") }) else { throw SettingsSafetyError.invalid("config.toml") }
         return parts
+    }
+
+    private static func assignmentPath(_ text: String) throws -> [String]? {
+        var quote: Character?, escaped = false
+        for index in text.indices {
+            let c = text[index]
+            if escaped { escaped = false; continue }
+            if let q = quote {
+                if q == "\"", c == "\\" { escaped = true }
+                else if c == q { quote = nil }
+            } else if c == "=" {
+                return try headerPath(String(text[..<index]))
+            } else if c == "\"" || c == "'" { quote = c }
+        }
+        return nil
     }
 
     private static func withoutComment(_ text: String) -> String {

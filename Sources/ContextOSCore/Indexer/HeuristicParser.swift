@@ -1,11 +1,10 @@
 import Foundation
 
-/// A pragmatic, regex/line-based symbol extractor.
-///
-/// It is deliberately *not* a real parser: no scopes, no accuracy guarantees.
-/// The goal for M1 is a useful index that demonstrates the pipeline end-to-end.
-/// A Tree-sitter backed `LanguageParser` will replace it for precise ASTs.
+/// A local symbol extractor using cached declaration patterns and a shared
+/// lexical view for comments, literals and source ranges. It does not perform
+/// type checking or provide the guarantees of a full language parser.
 public struct HeuristicParser: LanguageParser {
+    static let cacheRevision = "lexical-declarations-4"
 
     public init() {}
 
@@ -20,11 +19,16 @@ public struct HeuristicParser: LanguageParser {
     }
 
     public func parse(source: String, language: Language) -> ParsedFile {
+        guard supports(language) else { return .empty }
+        return parse(lexicon: SourceLexicon(source: source, language: language), language: language)
+    }
+
+    func parse(lexicon: SourceLexicon, language: Language) -> ParsedFile {
         let rules = Self.rules(for: language)
         guard !rules.isEmpty else { return .empty }
 
         // Work on a line array so we can look ahead to compute block ends.
-        let lines = source.components(separatedBy: "\n")
+        let lines = lexicon.codeLines
         var symbols: [Symbol] = []
         var imports: [ImportEdge] = []
 
@@ -33,11 +37,36 @@ public struct HeuristicParser: LanguageParser {
             if trimmed.isEmpty { continue }
             let lineNumber = index + 1
 
+            if language == .javascript || language == .typescript,
+               let name = Self.boundValuePattern.firstCaptured(in: line) {
+                let end = lexicon.declarationEnd(start: index)
+                let declaration = lines[index..<end].joined(separator: "\n")
+                if declaration.contains("=>") || declaration.contains("function") {
+                    symbols.append(Symbol(name: name, kind: .function, line: lineNumber, endLine: end))
+                    continue
+                }
+            }
+            if language == .swift, Self.mayContainInitializer(line),
+               let name = Self.swiftInitializerPattern.firstCaptured(in: line) {
+                symbols.append(Symbol(name: name, kind: .method, line: lineNumber, endLine: lexicon.blockEnd(start: index)))
+                continue
+            }
+
             for rule in rules {
-                guard let name = rule.pattern.firstCaptured(in: line) else { continue }
+                let matchLine: String
+                if case .importEdge = rule.result { matchLine = lexicon.lines[index] }
+                else { matchLine = line }
+                guard let name = rule.pattern.firstCaptured(in: matchLine) else { continue }
                 switch rule.result {
                 case .symbol(let kind):
-                    let end = Self.blockEnd(lines: lines, startIndex: index, language: language)
+                    let end: Int
+                    if language == .python {
+                        end = lexicon.indentationBlockEnd(start: index)
+                    } else if language == .ruby {
+                        end = Self.blockEnd(lines: lines, startIndex: index, language: language)
+                    } else if (language == .typescript || language == .javascript) && trimmed.hasPrefix("type ") {
+                        end = lexicon.declarationEnd(start: index)
+                    } else { end = lexicon.blockEnd(start: index) }
                     symbols.append(Symbol(name: name, kind: kind, line: lineNumber, endLine: end))
                 case .importEdge:
                     imports.append(ImportEdge(module: name, line: lineNumber))
@@ -148,17 +177,38 @@ public struct HeuristicParser: LanguageParser {
 
     // MARK: - Rule definitions
 
-    private enum RuleResult {
+    private enum RuleResult: Sendable {
         case symbol(SymbolKind)
         case importEdge
     }
 
-    private struct Rule {
+    private struct Rule: Sendable {
         let pattern: CompiledRegex
         let result: RuleResult
     }
 
-    private static func rules(for language: Language) -> [Rule] {
+    // Regexes are immutable and safe to share. Recompiling them for every file
+    // made both indexing and query-time slicing pay the same setup cost again.
+    private static let cachedRules: [Language: [Rule]] = Dictionary(uniqueKeysWithValues:
+        [Language.swift, .python, .javascript, .typescript, .go, .rust, .java,
+         .kotlin, .c, .cpp, .ruby, .objectiveC, .unknown].map { ($0, makeRules(for: $0)) })
+
+    private static func rules(for language: Language) -> [Rule] { cachedRules[language] ?? [] }
+
+    static let boundValuePattern = rx(#"^\s*(?:(?:export|default|declare|public|private|protected|static|readonly|override|abstract)\s+)*(?:(?:const|let|var)\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:\??\s*:\s*[^=]+)?\s*="#)
+    private static let swiftInitializerPattern = rx(#"^\s*(?:(?:public|private|fileprivate|internal|package|required|convenience|override|nonisolated)\s+)*(init)[?!]?\s*\("#)
+
+    private static func mayContainInitializer(_ line: String) -> Bool {
+        func contains(_ bytes: UnsafeBufferPointer<UInt8>) -> Bool {
+            guard bytes.count >= 4 else { return false }
+            for i in 0...(bytes.count - 4) where bytes[i] == 105 && bytes[i + 1] == 110 && bytes[i + 2] == 105 && bytes[i + 3] == 116 { return true }
+            return false
+        }
+        if let found = line.utf8.withContiguousStorageIfAvailable(contains) { return found }
+        return Array(line.utf8).withUnsafeBufferPointer(contains)
+    }
+
+    private static func makeRules(for language: Language) -> [Rule] {
         switch language {
         case .swift:
             return [
@@ -177,7 +227,8 @@ public struct HeuristicParser: LanguageParser {
                 Rule(pattern: rx(#"^\s*import\b.*?from\s+['""]([^'""]+)['""]"#), result: .importEdge),
                 Rule(pattern: rx(#"\brequire\(\s*['""]([^'""]+)['""]\s*\)"#), result: .importEdge),
                 Rule(pattern: rx(#"\b(?:class|interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)"#), result: .symbol(.type)),
-                Rule(pattern: rx(#"\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)"#), result: .symbol(.function))
+                Rule(pattern: rx(#"\bfunction\s*\*?\s+([A-Za-z_$][A-Za-z0-9_$]*)"#), result: .symbol(.function)),
+                Rule(pattern: rx(#"^\s*(?:(?:public|private|protected|static|override|abstract|async|get|set)\s+)*(?!(?:if|for|while|switch|catch|with)\b)([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^;]*\)\s*(?::[^=]+)?\s*\{"#), result: .symbol(.method))
             ]
         case .go:
             return [

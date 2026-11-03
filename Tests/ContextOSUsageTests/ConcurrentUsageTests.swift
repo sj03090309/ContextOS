@@ -107,7 +107,7 @@ import ContextOSUsage
         _=try write([synthetic],".claude/projects/p/a.jsonl",home:h)
         let value=ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(value.widget.today == nil && value.widget.models.isEmpty)
-        #expect(value.widget.providers.first { $0.name == "Claude Code" }?.state == .partial)
+        #expect(value.widget.providers.first { $0.name == "Claude Code" }?.state == .noRecords)
         // A real model's explicit zero is still an observed zero.
         message["model"]="claude-real-zero"; synthetic["message"]=message
         _=try write([synthetic],".claude/projects/p/b.jsonl",home:h)

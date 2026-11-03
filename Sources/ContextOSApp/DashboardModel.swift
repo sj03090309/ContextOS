@@ -35,29 +35,51 @@ final class DashboardModel: ObservableObject {
     @Published var usageAppPresence: [String: Bool] = [:]
     @Published var widgetBridgeStatus = "공유 권한 설정 필요"
     private let concurrentReader = ConcurrentUsageReader()
-    private var lastWidgetReload = Date.distantPast
-    private var lastMeasuredShare = Date.distantPast
+    private let widgetPublisher = WidgetSnapshotPublisher()
+    private var pendingWidgetPreferenceChange = false
     private var timeSubscriptions = Set<AnyCancellable>()
     private var lastTimeStates: [TimeObservationState] = []
     private var lastActivityPhase: EstimatedActivitySnapshot.Phase?
-    private var queuedTokenRefresh: Timer?
+    private let tokenRefresh = UsageRefreshCoalescer()
+    private var evaluatingWorking = false
+    private var pendingWorkingEvaluation = false
+    private var rescanningWorking = false
+    private var pendingWorkingRescan = false
+    private var screensAsleep = false
+    private var screenLocked = false
+    private var sessionInactive = false
+    private var backgroundSuspended: Bool { screensAsleep || screenLocked || sessionInactive }
+    private var conservingEnergy: Bool {
+        ProcessInfo.processInfo.isLowPowerModeEnabled || ProcessInfo.processInfo.thermalState == .serious
+            || ProcessInfo.processInfo.thermalState == .critical
+    }
+    nonisolated(unsafe) private var runtimeObservers: [(NotificationCenter, NSObjectProtocol)] = []
 
-    func shareMeasuredTime(force: Bool = false, timing: WidgetTimeSnapshot? = nil, metric: SmallWidgetMetric? = nil) {
+    func shareMeasuredTime(force: Bool = false, timing: WidgetTimeSnapshot? = nil,
+                           metric: SmallWidgetMetric? = nil, mascot: Bool? = nil,
+                           preferenceChange: Bool = false) {
+        // Keep a setting interaction through cold collection or a failed save.
+        // The first successful aggregate must carry the final display choice.
+        if preferenceChange { pendingWidgetPreferenceChange = true }
         // Do not publish the empty startup placeholder before the first token
         // collection; it could otherwise throttle the first real snapshot.
         guard !concurrentUsage.widget.providers.isEmpty else { return }
-        guard force || Date().timeIntervalSince(lastMeasuredShare) >= 60 else { return }
-        guard let container = WidgetSnapshotStore.container() else { return }
+        guard let container = WidgetSnapshotStore.container() else {
+            widgetBridgeStatus = "공유 권한 설정 필요"
+            return
+        }
         var payload = concurrentUsage.widget
         payload.timing = timing ?? WorkTimeController.shared.snapshot
         payload.smallMetric = metric ?? WorkTimeController.shared.smallMetric
-        payload.showMascot = WorkTimeController.shared.showWidgetMascot
+        payload.showMascot = mascot ?? WorkTimeController.shared.showWidgetMascot
         do {
-            try WidgetSnapshotStore.write(payload, to: container)
-            lastMeasuredShare = Date(); widgetBridgeStatus = "집계 공유됨"
-            if Date().timeIntervalSince(lastWidgetReload) >= 15 * 60 {
+            let published = try widgetPublisher.publish(payload, to: container, force: force,
+                                                        preferenceChange: pendingWidgetPreferenceChange) {
                 WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
-                lastWidgetReload = Date()
+            }
+            if published {
+                pendingWidgetPreferenceChange = false
+                widgetBridgeStatus = "집계 공유됨"
             }
         } catch { widgetBridgeStatus = "공유 저장 실패 · 이전 집계 유지" }
     }
@@ -155,8 +177,12 @@ final class DashboardModel: ObservableObject {
 
     init(startServices: Bool = true) {
         guard startServices else { return }
+        screensAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
+        let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+        screenLocked = (session?["CGSSessionScreenIsLocked"] as? Bool) ?? false
+        observeRuntimeState()
         refreshFast()
-        refreshSlow(includeWeek: false, priority: .utility)
+        if !backgroundSuspended { refreshSlow(includeWeek: false, priority: .utility) }
         let center = DistributedNotificationCenter.default()
         // Real-time: the MCP server posts this the instant it records an
         // optimization, so the mascot reacts with no polling lag.
@@ -186,14 +212,8 @@ final class DashboardModel: ObservableObject {
         }
 
         watchSessionLogs()
-        let monitor = activityMonitor
-        Task.detached(priority: .utility) { [weak self] in
-            monitor.rescan()
-            await self?.evaluateWorking()
-        }
-        savingsTimer = Self.repeating(every: Self.savingsInterval) { [weak self] in
-            self?.refreshFast()
-        }
+        rescanWorking()
+        scheduleSavingsRefresh()
         scheduleUsageRefresh()
         WorkTimeController.shared.$snapshot.sink { [weak self] value in
             guard let self else { return }
@@ -202,39 +222,100 @@ final class DashboardModel: ObservableObject {
             self.lastTimeStates = states; self.lastActivityPhase = value.activity?.phase
             self.shareMeasuredTime(force: changed, timing: value)
         }.store(in: &timeSubscriptions)
-        WorkTimeController.shared.$smallMetric.sink { [weak self] value in
-            self?.shareMeasuredTime(force: true, metric: value)
+        WorkTimeController.shared.$smallMetric.dropFirst().removeDuplicates().sink { [weak self] value in
+            self?.shareMeasuredTime(force: true, metric: value, preferenceChange: true)
+        }.store(in: &timeSubscriptions)
+        WorkTimeController.shared.$showWidgetMascot.dropFirst().removeDuplicates().sink { [weak self] value in
+            self?.shareMeasuredTime(force: true, mascot: value, preferenceChange: true)
         }.store(in: &timeSubscriptions)
     }
 
     /// Coalesce existing log-write notifications; keep the slow timer as a
     /// recovery path. This is not a promise of a fixed physical-display latency.
     private func queueTokenRefresh() {
-        guard queuedTokenRefresh == nil else { return }
-        let delay: TimeInterval = panelOpen ? 0.2 : 2
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.queuedTokenRefresh = nil
-                self.refreshSlow(includeWeek: false, priority: self.panelOpen ? .userInitiated : .utility)
-            }
+        guard !backgroundSuspended else { return }
+        tokenRefresh.schedule(after: UsageRefreshCoalescer.delay(visible: panelOpen, conservingEnergy: conservingEnergy)) { [weak self] in
+            guard let self else { return }
+            self.refreshSlow(includeWeek: false, priority: self.panelOpen ? .userInitiated : .utility)
         }
-        queuedTokenRefresh = timer
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     deinit {
         let center = DistributedNotificationCenter.default()
         [optimizedObserver, activityObserver, startObserver, stopObserver]
             .compactMap { $0 }.forEach { center.removeObserver($0) }
+        for (center, token) in runtimeObservers { center.removeObserver(token) }
     }
 
     // MARK: - Panel lifecycle
+
+    private func observeRuntimeState() {
+        func on(_ center: NotificationCenter, _ name: Notification.Name,
+                _ action: @escaping @MainActor (DashboardModel) -> Void) {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { if let self { action(self) } }
+            }
+            runtimeObservers.append((center, token))
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        let distributed = DistributedNotificationCenter.default()
+        on(.default, NSApplication.didResignActiveNotification) { model in
+            model.widgetPublisher.finishPreferenceChanges {
+                WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
+            }
+        }
+        on(workspace, NSWorkspace.screensDidSleepNotification) { $0.setSuspension(asleep: true) }
+        on(workspace, NSWorkspace.screensDidWakeNotification) { $0.setSuspension(asleep: false) }
+        on(workspace, NSWorkspace.sessionDidResignActiveNotification) { $0.setSuspension(inactive: true) }
+        on(workspace, NSWorkspace.sessionDidBecomeActiveNotification) { $0.setSuspension(inactive: false) }
+        on(distributed, Notification.Name("com.apple.screenIsLocked")) { $0.setSuspension(locked: true) }
+        on(distributed, Notification.Name("com.apple.screenIsUnlocked")) { $0.setSuspension(locked: false) }
+        on(.default, .NSProcessInfoPowerStateDidChange) { $0.energyPolicyChanged() }
+        on(.default, ProcessInfo.thermalStateDidChangeNotification) { $0.energyPolicyChanged() }
+        on(.default, .NSCalendarDayChanged) {
+            $0.refreshSlow(includeWeek: $0.panelOpen && $0.historyVisible, priority: .utility)
+        }
+        on(.default, .NSSystemTimeZoneDidChange) {
+            $0.refreshSlow(includeWeek: $0.panelOpen && $0.historyVisible, priority: .utility)
+        }
+    }
+
+    private func energyPolicyChanged() {
+        scheduleUsageRefresh()
+        if tokenRefresh.isPending { tokenRefresh.cancel(); queueTokenRefresh() }
+    }
+
+    private func scheduleSavingsRefresh() {
+        savingsTimer?.invalidate()
+        guard !backgroundSuspended else { savingsTimer = nil; return }
+        savingsTimer = Self.repeating(every: Self.savingsInterval) { [weak self] in self?.refreshFast() }
+    }
+
+    private func setSuspension(asleep: Bool? = nil, locked: Bool? = nil, inactive: Bool? = nil) {
+        let wasSuspended = backgroundSuspended
+        if let asleep { screensAsleep = asleep }
+        if let locked { screenLocked = locked }
+        if let inactive { sessionInactive = inactive }
+        guard backgroundSuspended != wasSuspended else { return }
+        if backgroundSuspended {
+            tokenRefresh.cancel()
+            [usageTimer, savingsTimer, pollTimer, recheckTimer].forEach { $0?.invalidate() }
+            usageTimer = nil; savingsTimer = nil; pollTimer = nil; recheckTimer = nil
+        } else {
+            refreshFast()
+            refreshSlow(includeWeek: panelOpen && historyVisible, priority: .utility)
+            watchSessionLogs()
+            rescanWorking()
+            scheduleUsageRefresh()
+            scheduleSavingsRefresh()
+        }
+    }
 
     /// The panel just opened: bring everything on it up to date now, then keep
     /// it live while it stays open.
     func panelDidOpen(_ surface: DashboardSurface = .popover) {
         guard dashboardVisibility.open(surface) else { return }
+        tokenRefresh.cancel() // opening reads immediately, including pending writes
         dayDetails = [:]
         refreshFast()
         refreshSlow(includeWeek: historyVisible, priority: .userInitiated)
@@ -245,6 +326,10 @@ final class DashboardModel: ObservableObject {
     /// The panel closed: nothing on it is visible, so drop to the slow cadence.
     func panelDidClose(_ surface: DashboardSurface = .popover) {
         guard dashboardVisibility.close(surface) else { return }
+        if tokenRefresh.isPending {
+            tokenRefresh.cancel()
+            queueTokenRefresh()
+        }
         scheduleUsageRefresh()
     }
 
@@ -256,7 +341,8 @@ final class DashboardModel: ObservableObject {
 
     private func scheduleUsageRefresh() {
         usageTimer?.invalidate()
-        let interval = panelOpen ? Self.openUsageInterval : Self.closedUsageInterval
+        guard !backgroundSuspended else { usageTimer = nil; return }
+        let interval = (panelOpen ? Self.openUsageInterval : Self.closedUsageInterval) * (conservingEnergy ? 2 : 1)
         usageTimer = Self.repeating(every: interval) { [weak self] in
             guard let self else { return }
             if self.panelOpen {
@@ -290,10 +376,22 @@ final class DashboardModel: ObservableObject {
     /// Anonymous cross-process notifications are wake-ups. Transcript events
     /// supply session identity and the actual start/end, including after relaunch.
     private func rescanWorking() {
+        guard !backgroundSuspended else { return }
+        guard !rescanningWorking else { pendingWorkingRescan = true; return }
+        rescanningWorking = true
         let monitor = activityMonitor
         Task.detached(priority: .utility) { [weak self] in
             monitor.rescan()
-            await self?.evaluateWorking()
+            await self?.workingRescanFinished()
+        }
+    }
+
+    private func workingRescanFinished() {
+        rescanningWorking = false
+        evaluateWorking()
+        if pendingWorkingRescan {
+            pendingWorkingRescan = false
+            rescanWorking()
         }
     }
 
@@ -342,10 +440,7 @@ final class DashboardModel: ObservableObject {
         } else {
             // No event stream: fall back to rescanning on a timer, like before.
             pollTimer = Self.repeating(every: 4) { [weak self] in
-                Task.detached(priority: .utility) {
-                    monitor.rescan()
-                    await self?.evaluateWorking()
-                }
+                self?.rescanWorking()
             }
         }
     }
@@ -353,6 +448,9 @@ final class DashboardModel: ObservableObject {
     /// Re-decide whether an agent is working, and arm a timer for the moment
     /// that answer next changes on its own.
     private func evaluateWorking() {
+        guard !backgroundSuspended else { return }
+        guard !evaluatingWorking else { pendingWorkingEvaluation = true; return }
+        evaluatingWorking = true
         evaluation += 1
         let ticket = evaluation
         recheckTimer?.invalidate()
@@ -367,6 +465,13 @@ final class DashboardModel: ObservableObject {
     }
 
     private func workingEvaluated(ticket: Int, snapshot: SessionActivitySnapshot) {
+        evaluatingWorking = false
+        guard !backgroundSuspended else { return }
+        if pendingWorkingEvaluation {
+            pendingWorkingEvaluation = false
+            evaluateWorking()
+            return
+        }
         guard ticket == evaluation else { return }
         update(\.working, snapshot.activeSessions > 0)
         live.update(snapshot)
@@ -397,6 +502,7 @@ final class DashboardModel: ObservableObject {
 
     // Cheap: savings counters from the local usage DB.
     private func refreshFast() {
+        guard !backgroundSuspended else { return }
         Task(priority: .utility) {
             let s = await Self.loadSavings()
             update(\.todaySaved, s.todaySaved)
@@ -413,6 +519,7 @@ final class DashboardModel: ObservableObject {
     // Heavier: AI token usage (parses session logs) + agent detection, and — only
     // when the panel will show it — the week in code, which shells out to git.
     private func refreshSlow(force: Bool = false, includeWeek: Bool, priority: TaskPriority) {
+        guard !backgroundSuspended else { return }
         // One at a time: a refresh that lands while another is still parsing
         // would only wait on the same lock and redo its work. Remember it instead.
         guard !isRefreshing else {
@@ -431,7 +538,7 @@ final class DashboardModel: ObservableObject {
             WorkTimeController.shared.updateAIExecution(usage.aiExecution)
             let apps = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
             usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
-            shareMeasuredTime()
+            shareMeasuredTime(force: force)
             let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
             isRefreshing = false
             update(\.aiTokens, a.aiTokens)
@@ -444,7 +551,13 @@ final class DashboardModel: ObservableObject {
             lastUpdated = Date()
             if let next = queuedUsageRefresh {
                 queuedUsageRefresh = nil
-                refreshSlow(force: next.force, includeWeek: next.includeWeek, priority: next.priority)
+                if panelOpen || next.force || next.includeWeek {
+                    refreshSlow(force: next.force, includeWeek: next.includeWeek, priority: next.priority)
+                } else { queueTokenRefresh() }
+            } else if usage.widget.providers.contains(where: { $0.isCollecting == true }) {
+                // Continue a bounded cold read even when no new log write arrives.
+                // The existing visible/background/low-power delays still apply.
+                queueTokenRefresh()
             }
         }
     }

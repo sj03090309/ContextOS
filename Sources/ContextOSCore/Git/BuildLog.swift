@@ -1,4 +1,5 @@
 import Foundation
+import ContextOSUsage
 
 /// One commit, with the code it moved and the AI agents credited for it.
 public struct BuildCommit: Sendable, Identifiable {
@@ -151,7 +152,7 @@ public enum BuildLogReader {
             var entry = byDay[day] ?? BuildDay(day: day)
             entry.tokens = tokens
             byDay[day] = entry
-            summary.tokens += tokens
+            summary.tokens = Int(UsageNumbers.add(Int64(summary.tokens), Int64(tokens)))
         }
 
         var log = BuildLog()
@@ -184,14 +185,18 @@ public enum BuildLogReader {
     }
 
     /// Local midnight that starts a `yyyy-MM-dd` key.
-    public static func dayStart(_ day: String) -> Double {
+    public static func dayStart(_ day: String, timeZone: TimeZone = .current) -> Double {
         let parts = day.split(separator: "-")
-        guard parts.count == 3, let y = Int(parts[0]), let m = Int(parts[1]), let d = Int(parts[2])
+        guard parts.count == 3, let y = Int(parts[0]), let m = Int(parts[1]), let d = Int(parts[2]),
+              (1...9999).contains(y), (1...12).contains(m), (1...31).contains(d)
         else { return 0 }
-        // Midnight UTC for the civil date is close enough to order day keys
-        // against a local-midnight bound; both sides use the same day string.
-        return Double(TimeKeys.daysFromCivil(year: y, month: m, day: d)) * 86_400
-            - Double(TimeZone.current.secondsFromGMT())
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        guard let date = calendar.date(from: DateComponents(year: y, month: m, day: d)),
+              calendar.component(.year, from: date) == y,
+              calendar.component(.month, from: date) == m,
+              calendar.component(.day, from: date) == d else { return 0 }
+        return calendar.startOfDay(for: date).timeIntervalSince1970
     }
 
     // MARK: - git log
@@ -200,7 +205,7 @@ public enum BuildLogReader {
     private static let unit = "\u{1f}"
     private static let record = "\u{1e}"
 
-    private struct Memo { var head: String; var since: Double; var commits: [BuildCommit] }
+    private struct Memo { var head: String; var since: Double; var output: String }
     nonisolated(unsafe) private static var memo: [String: Memo] = [:]
     private static let memoLock = NSLock()
 
@@ -215,28 +220,30 @@ public enum BuildLogReader {
         memoLock.lock()
         let hit = memo[root.path]
         memoLock.unlock()
+        let out: String
         if let hit, hit.head == head, hit.since <= since {
-            return hit.commits.filter { $0.timestamp >= since }
+            out = hit.output
+        } else {
+            let format = record + ["%H", "%ct", "%s", "%b"].joined(separator: unit) + unit
+            guard let output = GitRunner.run([
+                "log",
+                "--since=\(Int(since))",
+                "--no-merges",              // a merge's diff is its branch's, already counted
+                "--numstat",
+                "--pretty=format:\(format)"
+            ], in: root) else { return [] }
+            out = output
+            memoLock.lock()
+            memo[root.path] = Memo(head: head, since: since, output: out)
+            memoLock.unlock()
         }
-
-        let format = record + ["%H", "%ct", "%s", "%b"].joined(separator: unit) + unit
-        guard let out = GitRunner.run([
-            "log",
-            "--since=\(Int(since))",
-            "--no-merges",              // a merge's diff is its branch's, already counted
-            "--numstat",
-            "--pretty=format:\(format)"
-        ], in: root) else { return [] }
 
         let name = ProjectAITokenReader.lastComponent(root.path)
-        let parsed = out.components(separatedBy: record).compactMap {
+        // Session logs can arrive after the commit; cache only Git's history
+        // and calculate attribution against this refresh's usage snapshot.
+        return out.components(separatedBy: record).compactMap {
             parse($0, project: root.path, projectName: name, usage: usage)
-        }
-
-        memoLock.lock()
-        memo[root.path] = Memo(head: head, since: since, commits: parsed)
-        memoLock.unlock()
-        return parsed
+        }.filter { $0.timestamp >= since }
     }
 
     /// Parse one `\x1e`-delimited record: metadata fields, then numstat lines.

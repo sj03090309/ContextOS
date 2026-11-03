@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ContextOSCore
+import ContextOSUsage
 
 // MARK: - Live header
 
@@ -43,6 +44,7 @@ struct LiveHeader: View {
                 .frame(width: 6, height: 6)
             Text(phaseTitle)
                 .font(.system(size: 10, weight: .medium))
+                .contentTransition(.opacity)
         }
         .foregroundStyle(live.working ? Brand.positive : .secondary)
         .padding(.horizontal, 10)
@@ -50,6 +52,7 @@ struct LiveHeader: View {
         .background((live.working ? Brand.positiveDot.opacity(0.13) : Color.primary.opacity(0.07)),
                     in: Capsule())
         .animation(PanelMotion.feedback(reduced: reduced), value: live.phase)
+        .animation(PanelMotion.feedback(reduced: reduced), value: phaseTitle)
     }
 
     private var phaseTitle: String {
@@ -111,18 +114,53 @@ struct LiveHeader: View {
 
 struct CompactSavingsSummary: View {
     @EnvironmentObject var model: DashboardModel
+    @Environment(\.accessibilityReduceMotion) private var reduced
+
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("ContextOS 추정 절감").font(.system(size: 10)).foregroundStyle(.secondary)
-                Text(TokenEstimator.korean(model.totalSaved)).font(.system(size: 22, weight: .semibold, design: .rounded))
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("컨텍스트 최적화")
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer(minLength: 8)
+                Text("추정 절감 토큰")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.secondary)
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("오늘 +\(TokenEstimator.korean(model.todaySaved))").font(.system(size: 11)).monospacedDigit()
-                Text("누적 기록 \(model.queryCount)회").font(.system(size: 9)).foregroundStyle(.secondary)
+            HStack(alignment: .bottom, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(TokenEstimator.korean(model.totalSaved))
+                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .tracking(-0.6)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .contentTransition(.numericText(value: Double(model.totalSaved)))
+                        .animation(PanelMotion.feedback(reduced: reduced), value: model.totalSaved)
+                        .accessibilityLabel("누적 추정 절감 토큰")
+                        .accessibilityValue(String(model.totalSaved))
+                    Text("누적")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text("오늘 +\(TokenEstimator.korean(model.todaySaved))")
+                        .font(.system(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .contentTransition(.numericText(value: Double(model.todaySaved)))
+                        .animation(PanelMotion.feedback(reduced: reduced), value: model.todaySaved)
+                    Text("누적 기록 \(model.queryCount)회")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .padding(.bottom, 2)
             }
-        }.dashboardCard(radius: 13, padding: 12)
+        }
+        .dashboardCard(radius: 16, padding: 13)
+        .help("ContextOS가 선택한 컨텍스트와 전체 파일 크기를 비교한 추정치입니다. AI 제공자의 실제 청구 절감액이 아닙니다.")
     }
 }
 
@@ -372,7 +410,7 @@ struct CalendarCard: View {
                     level: Self.level(tokens, levels),
                     isFuture: day.key > today,
                     isSelected: ui.selectedDay == day.key) {
-                withAnimation(.snappy(duration: 0.2)) {
+                withAnimation(PanelMotion.response(reduced: reduced)) {
                     ui.selectedDay = ui.selectedDay == day.key ? nil : day.key
                 }
                 if ui.selectedDay == day.key { model.loadDetail(for: day.key) }
@@ -463,7 +501,7 @@ struct CalendarCard: View {
 
     static func sum(_ byDay: [String: Int]?, _ keys: Set<String>) -> Int {
         guard let byDay else { return 0 }
-        return keys.reduce(0) { $0 + (byDay[$1] ?? 0) }
+        return keys.reduce(0) { Int(UsageNumbers.add(Int64($0), Int64(byDay[$1] ?? 0))) }
     }
 
     /// "9월 22일 (화)"
@@ -547,7 +585,7 @@ struct ProjectsList: View {
             if model.projectUsage.isEmpty {
                 PanelEmptyState(symbol: "folder", title: "아직 프로젝트 기록이 없어요", detail: "Claude Code·Codex의 관측 가능한 로컬 기록이 여기에 모여요.")
             } else {
-                let everything = max(1, model.projectUsage.reduce(0) { $0 + $1.total })
+                let everything = max(1, model.projectUsage.reduce(0.0) { $0 + Double($1.total) })
                 ForEach(Array(model.projectUsage.enumerated()), id: \.element.id) { index, project in
                     ProjectCard(project: project,
                                 share: Int((Double(project.total) / Double(everything) * 100).rounded()),
@@ -690,7 +728,7 @@ struct SplitBar: View {
     var body: some View {
         GeometryReader { geo in
             let shown = parts.filter { $0.value > 0 }
-            let total = CGFloat(max(1, shown.reduce(0) { $0 + $1.value }))
+            let total = max(1, shown.reduce(CGFloat.zero) { $0 + CGFloat($1.value) })
             let gaps = CGFloat(max(0, shown.count - 1)) * 2
             HStack(spacing: 2) {
                 ForEach(shown.indices, id: \.self) { index in
@@ -785,11 +823,17 @@ struct ActivityList: View {
 /// from each other — an installed directory does not prove a connection, and
 /// an absent transcript is not zero usage.
 struct AgentsList: View {
+    @Environment(\.accessibilityReduceMotion) private var reduced
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject var ui: DashboardUIState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if ui.hidePrivateDetails {
+                Text("연결 설정을 변경하려면 개인 정보 표시를 켜 주세요.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
             if let notice = model.notice {
                 HStack(spacing: 8) {
                     Image(systemName: "info.circle")
@@ -819,7 +863,7 @@ struct AgentsList: View {
                 ForEach(Self.ordered(model.agents)) { agent in row(agent) }
             }
         }
-        .animation(.snappy(duration: 0.2), value: model.notice)
+        .animation(PanelMotion.response(reduced: reduced), value: model.notice)
     }
 
     private func row(_ agent: DetectedAgent) -> some View {
@@ -903,8 +947,11 @@ struct AgentsList: View {
                         .background(Brand.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .help("\(agent.name) 설정에 ContextOS MCP 서버를 등록해요")
+                .buttonStyle(PanelPressStyle())
+                .disabled(ui.hidePrivateDetails || model.connectionBusy)
+                .help(ui.hidePrivateDetails
+                      ? "개인 정보 표시를 켠 뒤 연결 설정을 확인하세요"
+                      : "\(agent.name) 설정에 ContextOS MCP 서버를 등록해요")
             }
         case .unsupported:
             Text("연동 미지원")

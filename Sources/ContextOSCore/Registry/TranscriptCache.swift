@@ -1,4 +1,5 @@
 import Foundation
+import ContextOSUsage
 
 /// The transcript parse cache: every session log's parse, kept in memory for the
 /// life of the process and written through to `UsageStore` so the next launch
@@ -66,19 +67,60 @@ final class TranscriptCache: @unchecked Sendable {
             // so the same full parse ran again on every refresh. Sixteen touched
             // logs made that 266MB of JSON every 32 seconds — a whole core for
             // six seconds out of every thirty-two, for as long as the app ran.
-            if cached?.size != row.size || cached?.mtime != row.mtime {
+            if cached?.size != row.size || cached?.mtime != row.mtime
+                || cached?.codexAccounting?.version != row.codexAccounting?.version
+                || cached?.claudeAccounting?.version != row.claudeAccounting?.version {
                 changed.append(row)
+            }
+        }
+
+        let modernSessions = Set(fresh.values.compactMap { row in
+            row.codexAccounting?.usesRequests == true ? row.codexAccounting?.session : nil
+        })
+        var seenRequests = Set<String>()
+        let ordered = fresh.values.sorted(by: { $0.path < $1.path })
+        var claudeMessages: [String: ClaudeSessionAccounting.Message] = [:]
+        for row in ordered {
+            for (id, message) in row.claudeAccounting?.messages ?? [:] {
+                if let old = claudeMessages[id], old.tokens >= message.tokens { continue }
+                claudeMessages[id] = message
+            }
+        }
+        var seenClaudeMessages = Set<String>()
+        for row in ordered {
+            var projects = row.projects
+            if let accounting = row.claudeAccounting {
+                var canonical = row
+                canonical.projects = [:]
+                for id in accounting.messages.keys where seenClaudeMessages.insert(id).inserted {
+                    if let message = claudeMessages[id] {
+                        canonical.add(tokens: message.tokens, at: message.timestamp, project: message.project)
+                    }
+                }
+                projects = canonical.projects
+            }
+            if let accounting = row.codexAccounting {
+                if accounting.usesRequests {
+                    var canonical = row
+                    canonical.projects = [:]
+                    for (id, request) in accounting.requests where seenRequests.insert(id).inserted {
+                        canonical.add(tokens: request.tokens, at: request.timestamp, project: request.project)
+                    }
+                    projects = canonical.projects
+                } else if !accounting.session.isEmpty && modernSessions.contains(accounting.session) {
+                    continue // a copied legacy stream cannot repeat modern requests
+                }
             }
 
             // One transcript can span several directories, so each is folded in
             // separately rather than the whole session landing on one project.
-            for (project, usage) in row.projects where usage.tokens > 0 {
-                snapshot.totalTokens += usage.tokens
-                snapshot.byAgent[row.agent, default: 0] += usage.tokens
-                snapshot.byProjectAgent[project, default: [:]][row.agent, default: 0] += usage.tokens
+            for (project, usage) in projects where usage.tokens > 0 {
+                snapshot.totalTokens = Self.add(snapshot.totalTokens, usage.tokens)
+                snapshot.byAgent[row.agent] = Self.add(snapshot.byAgent[row.agent] ?? 0, usage.tokens)
+                snapshot.byProjectAgent[project, default: [:]][row.agent] = Self.add(snapshot.byProjectAgent[project]?[row.agent] ?? 0, usage.tokens)
                 for (day, tokens) in usage.days {
-                    snapshot.byDay[day, default: 0] += tokens
-                    snapshot.byAgentDay[row.agent, default: [:]][day, default: 0] += tokens
+                    snapshot.byDay[day] = Self.add(snapshot.byDay[day] ?? 0, tokens)
+                    snapshot.byAgentDay[row.agent, default: [:]][day] = Self.add(snapshot.byAgentDay[row.agent]?[day] ?? 0, tokens)
                 }
                 snapshot.sessions.append(AgentSession(
                     agent: row.agent, project: project,
@@ -96,5 +138,9 @@ final class TranscriptCache: @unchecked Sendable {
         }
         rows = fresh
         return snapshot
+    }
+
+    private static func add(_ a: Int, _ b: Int) -> Int {
+        Int(UsageNumbers.add(Int64(a), Int64(b)))
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import ContextOSCore
 
 /// A minimal MCP server over stdio (newline-delimited JSON-RPC 2.0).
@@ -29,10 +30,15 @@ struct MCPServer {
         while let line = readLine(strippingNewline: true) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
-            guard let data = trimmed.data(using: .utf8),
-                  let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else {
-                log("failed to parse request JSON")
+            let object: Any
+            do {
+                object = try JSONSerialization.jsonObject(with: Data(trimmed.utf8), options: .fragmentsAllowed)
+            } catch {
+                replyError(id: NSNull(), code: -32700, message: "Parse error")
+                continue
+            }
+            guard let message = object as? [String: Any] else {
+                replyError(id: NSNull(), code: -32600, message: "Invalid Request")
                 continue
             }
             handle(message)
@@ -43,8 +49,18 @@ struct MCPServer {
     // MARK: - Dispatch
 
     private func handle(_ message: [String: Any]) {
-        let method = message["method"] as? String ?? ""
         let id = message["id"]           // absent → notification (no reply)
+        let validID = id == nil || id is NSNull || id is String
+            || (id is NSNumber && CFGetTypeID(id as! NSNumber) != CFBooleanGetTypeID())
+        guard message["jsonrpc"] as? String == "2.0",
+              let method = message["method"] as? String, !method.isEmpty, validID else {
+            replyError(id: validID ? (id ?? NSNull()) : NSNull(), code: -32600, message: "Invalid Request")
+            return
+        }
+        guard message["params"] == nil || message["params"] is [String: Any] else {
+            replyError(id: id, code: -32602, message: "Invalid params: expected an object")
+            return
+        }
         let params = message["params"] as? [String: Any] ?? [:]
 
         // Only real work counts as "the agent is busy". `ping`, `initialize`,
@@ -79,7 +95,8 @@ struct MCPServer {
         var result: [String: Any] = [
             "protocolVersion": requested ?? Self.defaultProtocolVersion,
             "capabilities": ["tools": [String: Any]()],
-            "serverInfo": ["name": Self.name, "version": Self.version]
+            "serverInfo": ["name": Self.name, "version": Self.version],
+            "instructions": MCPToolContract.usageInstructions
         ]
         if !RuntimeSupport.permits(.projectFiles) {
             result["instructions"] = PlatformSupportError(platform: .current, operation: .projectFiles).localizedDescription
@@ -91,7 +108,16 @@ struct MCPServer {
 
     private func handleToolCall(id: Any?, params: [String: Any]) {
         let name = params["name"] as? String ?? ""
+        guard let contract = MCPToolContract.all.first(where: { $0["name"] as? String == name }),
+              params["arguments"] == nil || params["arguments"] is [String: Any] else {
+            replyError(id: id, code: -32602, message: "Invalid tool name or arguments")
+            return
+        }
         let args = params["arguments"] as? [String: Any] ?? [:]
+        guard validArguments(args, contract: contract) else {
+            replyError(id: id, code: -32602, message: "Invalid tool arguments")
+            return
+        }
 
         do {
             try RuntimeSupport.require(.projectFiles)
@@ -158,7 +184,7 @@ struct MCPServer {
         Query: \(SensitiveFilePolicy.redactingReferences(in: query))
         Context Score: \(selection.contextScore)/100  |  Budget: \(TokenEstimator.humanReadable(selection.tokenBudget))  |  Estimated: \(TokenEstimator.humanReadable(selection.estimatedTokens))
 
-        Read ONLY these \(selection.included.count) files (already within budget):
+        Suggested starting files within the estimated budget (\(selection.included.count)):
         """
         for file in selection.included {
             let reason = file.reasons.first ?? ""
@@ -166,8 +192,9 @@ struct MCPServer {
         }
         if !selection.excluded.isEmpty {
             let names = selection.excluded.prefix(8).map(\.path).joined(separator: ", ")
-            out += "\n\nRelevant but over budget (not included): \(names)"
+            out += "\n\nAdditional ranked files outside this delivery budget: \(names)"
         }
+        if !selection.omissions.isEmpty { out += "\n\nRequired code incomplete: " + selection.omissions.joined(separator: "; ") }
         out += "\n\nTip: fetch these with `read_optimized` to get their contents inside the budget."
         return out
     }
@@ -240,13 +267,34 @@ struct MCPServer {
         args[key] as? String
     }
 
+    #endif
+
     private func integer(_ args: [String: Any], _ key: String) -> Int? {
-        if let n = args[key] as? NSNumber { return n.intValue }
-        if let i = args[key] as? Int { return i }
+        if let n = args[key] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
+            return Int(n.stringValue) ?? Int(exactly: n.doubleValue)
+        }
         return nil
     }
 
-    #endif
+    private func validArguments(_ args: [String: Any], contract: [String: Any]) -> Bool {
+        guard let schema = contract["inputSchema"] as? [String: Any],
+              let properties = schema["properties"] as? [String: [String: Any]],
+              let required = schema["required"] as? [String],
+              required.allSatisfy({ args[$0] != nil }) else { return false }
+        for (key, value) in args {
+            guard let property = properties[key] else { continue }
+            switch property["type"] as? String {
+            case "string":
+                guard let string = value as? String, !string.contains("\0"),
+                      key != "query" || !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            case "integer": guard integer(args, key) != nil else { return false }
+            case "boolean":
+                guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return false }
+            default: return false
+            }
+        }
+        return true
+    }
 
     // MARK: - JSON-RPC output
 
