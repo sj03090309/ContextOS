@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// A commit summary from `git log`.
 public struct GitCommit: Sendable, Equatable {
@@ -26,10 +27,29 @@ public enum GitRunner {
 
     /// Run `git <args>` in `root`, returning stdout, or nil on failure.
     public static func run(_ args: [String], in root: URL) -> String? {
+        run(args, in: root, timeout: 10)
+    }
+
+    /// Repository metadata is optional; a stalled filesystem/config read must
+    /// not hold a context request or dashboard refresh indefinitely.
+    static func run(_ args: [String], in root: URL, timeout: TimeInterval) -> String? {
         let process = Process()
         process.executableURL = executable
-        process.arguments = args
+        // Metadata reads must not execute a repository's fsmonitor hook or
+        // fetch promisor objects through a configured remote helper. Disable
+        // optional index refreshes so a background status read stays read-only.
+        process.arguments = ["--no-optional-locks", "-c", "core.fsmonitor=false",
+                             "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"] + args
         process.currentDirectoryURL = root
+        // Git-specific launcher state can redirect even an explicit cwd to a
+        // different repository/index, or send diagnostics to an arbitrary file.
+        // Keep ordinary environment (HOME, locale, etc.), not a parent Git job's
+        // private repository selection, trace, or command configuration.
+        var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        environment["GIT_NO_LAZY_FETCH"] = "1"
+        process.environment = environment
 
         let stdout = Pipe()
         process.standardOutput = stdout
@@ -42,6 +62,17 @@ public enum GitRunner {
         } catch {
             return nil
         }
+        let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        watchdog.schedule(deadline: .now() + max(0, timeout))
+        watchdog.setEventHandler {
+            // Kill only the child we launched. Git metadata is read-only and
+            // has no transaction to preserve; SIGKILL also handles blocked I/O
+            // or a process that ignores SIGTERM. The reader still drains EOF
+            // and waitUntilExit reaps the child below.
+            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+        }
+        watchdog.resume()
+        defer { watchdog.cancel() }
         // Read before waiting: a commit-heavy `git log` can fill the pipe buffer,
         // and git would block on write while we block on exit.
         let data = stdout.fileHandleForReading.readDataToEndOfFile()

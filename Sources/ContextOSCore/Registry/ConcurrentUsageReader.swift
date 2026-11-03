@@ -105,6 +105,11 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
     public func snapshot(home: URL = FileManager.default.homeDirectoryForCurrentUser,
                          now: Date = Date(), timeZone: TimeZone = .current) -> ConcurrentUsageSnapshot {
         lock.lock(); defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else {
+            rows.removeAll(); memo = nil
+            return ConcurrentUsageSnapshot(widget: .init(generatedAt: now, timeZoneID: timeZone.identifier,
+                providers: ["Codex", "Claude Code"].map { .init(name: $0, state: .paused) }))
+        }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = timeZone
         let today = calendar.startOfDay(for: now)
         let start = calendar.date(byAdding: .day, value: -6, to: today)!
@@ -364,7 +369,7 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
               let mtime = attrs[.modificationDate] as? Date else { return nil }
         // Permission revocation can leave inode/size/mtime unchanged. Validate
         // access before reusing a cached success; never fall back after denial.
-        guard let access = try? FileHandle(forReadingFrom: file) else { return nil }
+        guard let access = LineReader.openRegularFile(file) else { return nil }
         try? access.close()
         var row = rows[file.path] ?? Row()
         let oldCount = row.metrics.count + row.runEvents.count

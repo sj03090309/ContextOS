@@ -210,6 +210,19 @@ struct DashboardView: View {
         case .overview:
             ScrollView(.vertical) {
                 VStack(spacing: 10) {
+                    if !model.agentLogCollectionEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("AI 로컬 로그 집계 꺼짐", systemImage: "hand.raised")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("사용량과 AI 작업 상태를 보려면 로컬 세션 파일 읽기를 허용해 주세요. 파일에는 대화·도구 출력이 포함될 수 있어요. 기존 기록은 보존하며 설정에서 언제든 끌 수 있어요.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("내용 확인 · 집계 설정") { ui.showSettings = true }
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                    }
                     if !model.agents.contains(where: { $0.connection.isConfigured }) {
                         setupPrompt
                     }

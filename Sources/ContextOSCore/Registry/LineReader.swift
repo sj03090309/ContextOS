@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// Streams a file's complete lines without ever holding more than one chunk.
 ///
@@ -27,13 +28,15 @@ struct LineReader {
                              onSkipped: () -> Void,
                              onSkippedPrefix: ((UnsafeRawBufferPointer) -> Void)? = nil,
                              _ handler: (UnsafeRawBufferPointer) -> Void) -> BoundedResult? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        guard AgentLogCollectionPolicy.isEnabled else { return nil }
+        guard let handle = openRegularFile(file) else { return nil }
         defer { try? handle.close() }
         guard (try? handle.seek(toOffset: UInt64(offset))) != nil else { return nil }
         var pending: [UInt8] = []; pending.reserveCapacity(min(maximumLineBytes, chunkSize * 2))
         var consumed = 0, read = 0; var eof = false, failed = false
         var skipping = skippingOversizedLine
         while read < maximumReadBytes && !eof && !failed {
+            guard AgentLogCollectionPolicy.isEnabled else { return nil }
             autoreleasepool {
                 let chunk: Data?
                 do { chunk = try handle.read(upToCount: min(chunkSize, maximumReadBytes - read)) }
@@ -145,7 +148,8 @@ struct LineReader {
     /// - Returns: bytes consumed past `offset`, or nil if the file couldn't be read.
     static func forEachLine(of file: URL, from offset: Int, containingAny needles: [String] = [],
                             _ handler: (UnsafeRawBufferPointer) -> Void) -> Int? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+        guard AgentLogCollectionPolicy.isEnabled else { return nil }
+        guard let handle = openRegularFile(file) else { return nil }
         defer { try? handle.close() }
         if offset > 0 {
             guard (try? handle.seek(toOffset: UInt64(offset))) != nil else { return nil }
@@ -163,6 +167,7 @@ struct LineReader {
 
         var done = false
         while !done {
+            guard AgentLogCollectionPolicy.isEnabled else { return nil }
             // The pool has to wrap the *read* as well as the parsing.
             // `FileHandle.read` hands back an autoreleased `Data`, so with the
             // read outside the pool every 256KB chunk stayed alive until the
@@ -275,5 +280,16 @@ struct LineReader {
             guard utf8.count <= bytes.count, let start = utf8.baseAddress else { return false }
             return memmem(base, bytes.count, start, utf8.count) != nil
         }
+    }
+
+    static func openRegularFile(_ file: URL) -> FileHandle? {
+        guard AgentLogCollectionPolicy.isEnabled else { return nil }
+        let descriptor = Darwin.open(file.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & S_IFMT == S_IFREG else {
+            Darwin.close(descriptor); return nil
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 }

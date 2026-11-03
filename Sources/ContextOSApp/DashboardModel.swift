@@ -34,6 +34,11 @@ final class DashboardModel: ObservableObject {
     private(set) var usageSessionGroups: [String: [ModelSessionGroup]] = [:]
     @Published var usageAppPresence: [String: Bool] = [:]
     @Published var widgetBridgeStatus = "공유 권한 설정 필요"
+    @Published private(set) var agentLogCollectionEnabled = false
+    private var collectionGeneration = 0
+    private let servicesStarted: Bool
+    private let settings: AppSettings
+    private var logCollectionSuspended: Bool { backgroundSuspended || !agentLogCollectionEnabled }
     private let concurrentReader = ConcurrentUsageReader()
     private let widgetPublisher = WidgetSnapshotPublisher()
     private var pendingWidgetPreferenceChange = false
@@ -133,7 +138,7 @@ final class DashboardModel: ObservableObject {
     /// disagree about it.
     private func syncMascot() { mascot.set(eating: flashing || working) }
 
-    private let activityMonitor = AgentActivityMonitor()
+    private lazy var activityMonitor = AgentActivityMonitor()
     private let sessionTracker = SessionActivityTracker()
     private var logEvents: FileEventStream?
     /// The roots `logEvents` was started on, to notice a new one (Codex
@@ -175,14 +180,26 @@ final class DashboardModel: ObservableObject {
     /// which is the real trigger.
     private static let savingsInterval: TimeInterval = 60
 
-    init(startServices: Bool = true) {
+    init(startServices: Bool = true, settings: AppSettings = .shared) {
+        self.servicesStarted = startServices
+        self.settings = settings
+        agentLogCollectionEnabled = settings.agentLogsEnabled
+        if !agentLogCollectionEnabled { concurrentUsage = Self.pausedUsage() }
+        settings.$agentLogsEnabled.dropFirst().removeDuplicates().sink { [weak self] _ in
+            // @Published sends before UserDefaults is updated in didSet.
+            Task { @MainActor in
+                guard let self else { return }
+                self.setAgentLogCollectionEnabled(self.settings.agentLogsEnabled)
+            }
+        }.store(in: &timeSubscriptions)
         guard startServices else { return }
         screensAsleep = CGDisplayIsAsleep(CGMainDisplayID()) != 0
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         screenLocked = (session?["CGSSessionScreenIsLocked"] as? Bool) ?? false
         observeRuntimeState()
         refreshFast()
-        if !backgroundSuspended { refreshSlow(includeWeek: false, priority: .utility) }
+        refreshAgentPresence()
+        if !logCollectionSuspended { refreshSlow(includeWeek: false, priority: .utility) }
         let center = DistributedNotificationCenter.default()
         // Real-time: the MCP server posts this the instant it records an
         // optimization, so the mascot reacts with no polling lag.
@@ -230,10 +247,65 @@ final class DashboardModel: ObservableObject {
         }.store(in: &timeSubscriptions)
     }
 
+    /// Revocation also invalidates results already being parsed on a worker.
+    /// Source logs and stored history remain intact.
+    func setAgentLogCollectionEnabled(_ enabled: Bool) {
+        guard enabled != agentLogCollectionEnabled else { return }
+        collectionGeneration &+= 1
+        agentLogCollectionEnabled = enabled
+        if !enabled {
+            evaluation &+= 1
+            tokenRefresh.cancel()
+            logEvents?.stop(); logEvents = nil; watchedPaths = []
+            [usageTimer, pollTimer, recheckTimer].forEach { $0?.invalidate() }
+            usageTimer = nil; pollTimer = nil; recheckTimer = nil
+            queuedUsageRefresh = nil
+            pendingWorkingEvaluation = false; pendingWorkingRescan = false
+            working = false; live.update(.empty)
+            aiTokens = 0; projectUsage = []; tokensByDay = [:]; agentDayTokens = [:]
+            agents = agents.map { agent in
+                var agent = agent
+                if ManagedAgent(rawValue: agent.name) != nil {
+                    agent.usage = .paused
+                    agent.detail = nil
+                }
+                return agent
+            }
+            week = BuildSummary(); dayDetails = [:]
+            concurrentUsage = Self.pausedUsage()
+            if servicesStarted {
+                WorkTimeController.shared.clearAIExecution()
+                shareMeasuredTime(force: true)
+            }
+        } else if servicesStarted {
+            refreshSlow(force: true, includeWeek: panelOpen && historyVisible, priority: .utility)
+            watchSessionLogs(); rescanWorking(); scheduleUsageRefresh()
+        }
+        if servicesStarted { refreshAgentPresence() }
+    }
+
+    private static func pausedUsage() -> ConcurrentUsageSnapshot {
+        ConcurrentUsageSnapshot(widget: WidgetUsageSnapshot(providers: [
+            UsageProvider(name: "Claude Code", state: .paused),
+            UsageProvider(name: "Codex", state: .paused)
+        ]))
+    }
+
+    private func refreshAgentPresence() {
+        Task {
+            let found = await Task.detached(priority: .utility) { AgentDetector.detect() }.value
+            // Presence/configuration can be shown without opening session logs.
+            if !agentLogCollectionEnabled {
+                agents = found
+                connected = found.contains { $0.connection.isConfigured }
+            }
+        }
+    }
+
     /// Coalesce existing log-write notifications; keep the slow timer as a
     /// recovery path. This is not a promise of a fixed physical-display latency.
     private func queueTokenRefresh() {
-        guard !backgroundSuspended else { return }
+        guard !logCollectionSuspended else { return }
         tokenRefresh.schedule(after: UsageRefreshCoalescer.delay(visible: panelOpen, conservingEnergy: conservingEnergy)) { [weak self] in
             guard let self else { return }
             self.refreshSlow(includeWeek: false, priority: self.panelOpen ? .userInitiated : .utility)
@@ -341,7 +413,7 @@ final class DashboardModel: ObservableObject {
 
     private func scheduleUsageRefresh() {
         usageTimer?.invalidate()
-        guard !backgroundSuspended else { usageTimer = nil; return }
+        guard !logCollectionSuspended else { usageTimer = nil; return }
         let interval = (panelOpen ? Self.openUsageInterval : Self.closedUsageInterval) * (conservingEnergy ? 2 : 1)
         usageTimer = Self.repeating(every: interval) { [weak self] in
             guard let self else { return }
@@ -366,6 +438,7 @@ final class DashboardModel: ObservableObject {
     /// Manual refresh (the ↻ button): rebuild everything from disk now, rather
     /// than serving whatever the memo last computed.
     func refresh() {
+        refreshAgentPresence()
         LogoStore.shared.reset()
         refreshFast()
         refreshSlow(force: true, includeWeek: historyVisible, priority: .userInitiated)
@@ -376,7 +449,7 @@ final class DashboardModel: ObservableObject {
     /// Anonymous cross-process notifications are wake-ups. Transcript events
     /// supply session identity and the actual start/end, including after relaunch.
     private func rescanWorking() {
-        guard !backgroundSuspended else { return }
+        guard !logCollectionSuspended else { return }
         guard !rescanningWorking else { pendingWorkingRescan = true; return }
         rescanningWorking = true
         let monitor = activityMonitor
@@ -399,6 +472,7 @@ final class DashboardModel: ObservableObject {
     /// log is hottest, replacing the directory rescan the old 2s poll did every
     /// few seconds for as long as the app ran.
     private func watchSessionLogs() {
+        guard !logCollectionSuspended else { return }
         let fm = FileManager.default
         // A root that doesn't exist yet is watched through its parent, so the
         // agent's first session after install is seen too.
@@ -448,7 +522,7 @@ final class DashboardModel: ObservableObject {
     /// Re-decide whether an agent is working, and arm a timer for the moment
     /// that answer next changes on its own.
     private func evaluateWorking() {
-        guard !backgroundSuspended else { return }
+        guard !logCollectionSuspended else { return }
         guard !evaluatingWorking else { pendingWorkingEvaluation = true; return }
         evaluatingWorking = true
         evaluation += 1
@@ -466,7 +540,7 @@ final class DashboardModel: ObservableObject {
 
     private func workingEvaluated(ticket: Int, snapshot: SessionActivitySnapshot) {
         evaluatingWorking = false
-        guard !backgroundSuspended else { return }
+        guard !logCollectionSuspended else { return }
         if pendingWorkingEvaluation {
             pendingWorkingEvaluation = false
             evaluateWorking()
@@ -519,7 +593,7 @@ final class DashboardModel: ObservableObject {
     // Heavier: AI token usage (parses session logs) + agent detection, and — only
     // when the panel will show it — the week in code, which shells out to git.
     private func refreshSlow(force: Bool = false, includeWeek: Bool, priority: TaskPriority) {
-        guard !backgroundSuspended else { return }
+        guard !logCollectionSuspended else { return }
         // One at a time: a refresh that lands while another is still parsing
         // would only wait on the same lock and redo its work. Remember it instead.
         guard !isRefreshing else {
@@ -529,18 +603,29 @@ final class DashboardModel: ObservableObject {
             return
         }
         isRefreshing = true
+        let generation = collectionGeneration
         Task(priority: priority) {
+            defer {
+                isRefreshing = false
+                if let next = queuedUsageRefresh {
+                    queuedUsageRefresh = nil
+                    if !logCollectionSuspended {
+                        refreshSlow(force: next.force, includeWeek: next.includeWeek, priority: next.priority)
+                    }
+                }
+            }
             let reader = concurrentReader
             let usage = await Task.detached(priority: priority) {
                 reader.snapshot()
             }.value
+            guard !logCollectionSuspended, generation == collectionGeneration else { return }
             concurrentUsage = usage
             WorkTimeController.shared.updateAIExecution(usage.aiExecution)
             let apps = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
             usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
             shareMeasuredTime(force: force)
             let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
-            isRefreshing = false
+            guard !logCollectionSuspended, generation == collectionGeneration else { return }
             update(\.aiTokens, a.aiTokens)
             update(\.agents, a.agents)
             update(\.connected, a.connected)
@@ -549,12 +634,7 @@ final class DashboardModel: ObservableObject {
             update(\.agentDayTokens, a.agentDayTokens)
             if let week = a.week { update(\.week, week) }
             lastUpdated = Date()
-            if let next = queuedUsageRefresh {
-                queuedUsageRefresh = nil
-                if panelOpen || next.force || next.includeWeek {
-                    refreshSlow(force: next.force, includeWeek: next.includeWeek, priority: next.priority)
-                } else { queueTokenRefresh() }
-            } else if usage.widget.providers.contains(where: { $0.isCollecting == true }) {
+            if usage.widget.providers.contains(where: { $0.isCollecting == true }) {
                 // Continue a bounded cold read even when no new log write arrives.
                 // The existing visible/background/low-power delays still apply.
                 queueTokenRefresh()
@@ -566,9 +646,13 @@ final class DashboardModel: ObservableObject {
 
     /// Load a picked day's commits and lines, unless they are already known.
     func loadDetail(for day: String) {
+        guard agentLogCollectionEnabled else { return }
+        let generation = collectionGeneration
         guard dayDetails[day] == nil else { return }
         Task(priority: .userInitiated) {
-            dayDetails[day] = await Self.loadDayDetail(day)
+            let detail = await Self.loadDayDetail(day)
+            guard agentLogCollectionEnabled, generation == collectionGeneration else { return }
+            dayDetails[day] = detail
         }
     }
 
@@ -625,6 +709,7 @@ final class DashboardModel: ObservableObject {
             do {
                 _ = try await Task.detached(priority: .userInitiated) { try manager.apply(preview) }.value
                 showNotice(preview.hasChanges ? "설정 변경 완료 · 도구를 다시 시작해 주세요." : "변경할 설정이 없습니다.")
+                refreshAgentPresence()
                 refreshSlow(includeWeek: false, priority: .userInitiated)
             } catch { showNotice(error.localizedDescription) }
             connectionBusy = false

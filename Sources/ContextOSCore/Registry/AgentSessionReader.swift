@@ -80,6 +80,11 @@ public enum AgentSessionReader {
     /// Aggregate local AI usage. Results are memoized for `maxAge` seconds;
     /// pass `force: true` to rebuild now (the manual ↻ button).
     public static func snapshot(maxAge: Double = 25, force: Bool = false) -> AgentUsageSnapshot {
+        guard AgentLogCollectionPolicy.isEnabled else {
+            invalidate()
+            TranscriptCache.shared.reset()
+            return AgentUsageSnapshot()
+        }
         let now = Date().timeIntervalSince1970
         if !force {
             memoLock.lock()
@@ -99,6 +104,7 @@ public enum AgentSessionReader {
     /// folder name (lossy for names with a "-", so only a fallback). Never
     /// waits on a refresh that is parsing right now.
     public static func project(ofTranscript path: String) -> String? {
+        guard AgentLogCollectionPolicy.isEnabled else { return nil }
         if let recorded = TranscriptCache.shared.lastProject(forPath: path) { return recorded }
         let url = URL(fileURLWithPath: path)
         guard url.deletingLastPathComponent().deletingLastPathComponent().path == claudeProjectsDir.path
@@ -122,20 +128,34 @@ public enum AgentSessionReader {
     // MARK: - Transcript discovery
 
     private static func claudeTranscripts() -> [URL] {
+        guard realDirectory(claudeProjectsDir), realDirectory(claudeProjectsDir.deletingLastPathComponent()) else { return [] }
         guard let dirs = try? FileManager.default.contentsOfDirectory(
             at: claudeProjectsDir, includingPropertiesForKeys: nil) else { return [] }
         return dirs.flatMap { dir -> [URL] in
-            (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
+            guard AgentLogCollectionPolicy.isEnabled, realDirectory(dir) else { return [] }
+            return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
                 .filter { $0.pathExtension == "jsonl" } ?? []
         }
     }
 
     private static func codexTranscripts() -> [URL] {
+        guard realDirectory(codexSessionsDir), realDirectory(codexSessionsDir.deletingLastPathComponent()) else { return [] }
         guard let walker = FileManager.default.enumerator(
-            at: codexSessionsDir, includingPropertiesForKeys: nil) else { return [] }
-        return walker.compactMap { $0 as? URL }.filter {
-            $0.lastPathComponent.hasPrefix("rollout-") && $0.pathExtension == "jsonl"
+            at: codexSessionsDir, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey]) else { return [] }
+        var files: [URL] = []
+        for case let file as URL in walker {
+            guard AgentLogCollectionPolicy.isEnabled else { break }
+            guard let values = try? file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey]),
+                  values.isSymbolicLink != true else { walker.skipDescendants(); continue }
+            if values.isRegularFile == true, file.lastPathComponent.hasPrefix("rollout-"), file.pathExtension == "jsonl" {
+                files.append(file)
+            }
         }
+        return files
+    }
+
+    private static func realDirectory(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeDirectory
     }
 
     // MARK: - Incremental parsing
@@ -143,9 +163,22 @@ public enum AgentSessionReader {
     /// Return an up-to-date parse of one transcript, doing as little work as the
     /// file's state allows: nothing if it is unchanged, tail-only if it grew.
     static func row(for file: URL, agent: String, cached: SessionCacheRow?) -> SessionCacheRow? {
+        guard AgentLogCollectionPolicy.isEnabled else { return nil }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let modified = attributes[.modificationDate] as? Date,
+              let bytes = attributes[.size] as? NSNumber,
+              let identity = attributes[.systemFileNumber] as? NSNumber,
+              let permissions = attributes[.posixPermissions] as? NSNumber,
+              permissions.intValue & 0o444 != 0,
+              let access = LineReader.openRegularFile(file) else { return nil }
+        try? access.close()
+        let mtime = modified.timeIntervalSince1970
+        let size = bytes.intValue
         // Rebuild only obsolete derived transcript parses, leaving usage events
         // and the original logs intact. Older Claude caches summed stream copies.
         let cached = cached.flatMap { (row: SessionCacheRow) -> SessionCacheRow? in
+            guard row.agent == agent, row.fileIdentity == identity.uint64Value else { return nil }
             if agent == "Codex" {
                 guard let accounting = row.codexAccounting, accounting.version == 1 else { return nil }
                 // Reparse an old Double cursor if its integer value was lost.
@@ -158,10 +191,6 @@ public enum AgentSessionReader {
         // instance, so asking the same URL twice returns the size and mtime from
         // the first ask and an append would never be noticed. FileManager stats
         // the file every time.
-        let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
-        let mtime = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
-
         // Unchanged since the last read — reuse it verbatim.
         if let cached, cached.mtime == mtime, cached.size == size { return cached }
 
@@ -173,13 +202,14 @@ public enum AgentSessionReader {
             var row = cached
             row.mtime = mtime
             guard let consumed = accumulate(file, from: cached.size, agent: agent, into: &row)
-            else { return cached }
+            else { return nil }
             row.size = cached.size + consumed
             return row
         }
 
         // No cache, or the file shrank/was rewritten — parse it whole.
         var row = SessionCacheRow(path: file.path, agent: agent, mtime: mtime, size: 0)
+        row.fileIdentity = identity.uint64Value
         guard let consumed = accumulate(file, from: 0, agent: agent, into: &row) else { return nil }
         row.size = consumed
         return row

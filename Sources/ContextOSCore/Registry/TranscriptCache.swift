@@ -25,6 +25,13 @@ final class TranscriptCache: @unchecked Sendable {
         self.storePath = storePath
     }
 
+    /// Forget derived in-memory data when log collection is disabled. Existing
+    /// on-disk records and original agent transcripts are deliberately retained.
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        rows = nil
+    }
+
     /// The working directory a transcript last recorded, if parsed. Returns nil
     /// rather than waiting while a pass holds the lock — the caller is the UI.
     func lastProject(forPath path: String) -> String? {
@@ -38,6 +45,10 @@ final class TranscriptCache: @unchecked Sendable {
     func snapshot(of files: [(url: URL, agent: String)]) -> AgentUsageSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else {
+            rows = nil
+            return AgentUsageSnapshot()
+        }
 
         var store: UsageStore?
         func openStore() -> UsageStore? {
@@ -68,6 +79,7 @@ final class TranscriptCache: @unchecked Sendable {
             // logs made that 266MB of JSON every 32 seconds — a whole core for
             // six seconds out of every thirty-two, for as long as the app ran.
             if cached?.size != row.size || cached?.mtime != row.mtime
+                || cached?.fileIdentity != row.fileIdentity
                 || cached?.codexAccounting?.version != row.codexAccounting?.version
                 || cached?.claudeAccounting?.version != row.claudeAccounting?.version {
                 changed.append(row)

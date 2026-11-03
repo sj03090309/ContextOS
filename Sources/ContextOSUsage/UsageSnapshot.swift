@@ -1,7 +1,7 @@
 import Foundation
 
 public enum CollectionState: String, Codable, Sendable {
-    case ready, noRecords, unavailable, partial, unsupported
+    case ready, noRecords, unavailable, partial, unsupported, paused
     public var label: String {
         switch self {
         case .ready: "수집됨"
@@ -9,6 +9,7 @@ public enum CollectionState: String, Codable, Sendable {
         case .unavailable: "연결 끊김 · 수집 불가"
         case .partial: "일부 기록만 수집"
         case .unsupported: "수집 미지원"
+        case .paused: "로그 집계 꺼짐"
         }
     }
 }
@@ -147,6 +148,7 @@ public struct WidgetUsageSnapshot: Codable, Sendable, Equatable {
         if isSample { return "미리보기 · 예시 데이터" }
         let supported = providers.filter { $0.state != .unsupported }
         if supported.isEmpty { return "앱 연결 필요" }
+        if supported.allSatisfy({ $0.state == .paused }) { return "로그 집계 꺼짐" }
         if supported.contains(where: { $0.hasCollectionFailure && ($0.state != .partial || $0.issues?.isEmpty == false) }) {
             return "일부 수집 불가"
         }

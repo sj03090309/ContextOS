@@ -113,6 +113,7 @@ public struct ClaudeSessionAccounting: Codable, Sendable {
 private struct CachedSessionAccounting: Codable {
     var mtime: Double
     var size: Int
+    var fileIdentity: UInt64?
     var accounting: CodexSessionAccounting?
     var claude: ClaudeSessionAccounting?
 }
@@ -126,6 +127,9 @@ public struct SessionCacheRow: Sendable {
     /// only parses what was appended. A partial trailing line is left unread
     /// until the writer finishes it.
     public var size: Int
+    /// File identity prevents an atomically replaced, larger log from being
+    /// mistaken for appended bytes of the previous transcript.
+    public var fileIdentity: UInt64?
     /// Parser state carried across incremental reads. Codex reports a
     /// *cumulative* total per event, so resuming needs the previous value to
     /// turn the next one back into a delta. Unused (0) for Claude, whose usage
@@ -189,11 +193,8 @@ public final class UsageStore {
     }
 
     public init(path: String) throws {
-        if path != ":memory:" {
-            let dir = (path as NSString).deletingLastPathComponent
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        }
-        guard sqlite3_open(path, &db) == SQLITE_OK else {
+        let databasePath = path == ":memory:" ? path : try PrivateUsageDatabase.prepare(path: path)
+        guard sqlite3_open_v2(databasePath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK else {
             let message = String(cString: sqlite3_errmsg(db))
             sqlite3_close(db)
             db = nil
@@ -423,6 +424,7 @@ public final class UsageStore {
                cached.mtime == out[path]?.mtime, cached.size == out[path]?.size {
                 out[path]?.codexAccounting = cached.accounting
                 out[path]?.claudeAccounting = cached.claude
+                out[path]?.fileIdentity = cached.fileIdentity
             }
         }
         return out
@@ -465,7 +467,7 @@ public final class UsageStore {
                 }
                 do {
                     let data = try JSONEncoder().encode(CachedSessionAccounting(mtime: row.mtime, size: row.size,
-                        accounting: row.codexAccounting, claude: row.claudeAccounting))
+                        fileIdentity: row.fileIdentity, accounting: row.codexAccounting, claude: row.claudeAccounting))
                     sqlite3_reset(accountingStmt)
                     bindText(accountingStmt, 1, row.path)
                     bindText(accountingStmt, 2, String(decoding: data, as: UTF8.self))

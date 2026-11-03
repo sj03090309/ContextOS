@@ -19,6 +19,9 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+# Validate before building, creating directories or reading candidate binaries.
+# Packaging never doubles as an installer, including through a symlink alias.
+OUTPUT="$(python3 scripts/package_output.py check "$OUTPUT")"
 VERSION="$(sed -n 's/^    public static let current = "\([0-9.]*\)"/\1/p' Sources/ContextOSCore/Model/ContextOSVersion.swift)"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release version" >&2; exit 1; }
 BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
@@ -33,8 +36,15 @@ done
 [ "$("$BIN_DIR/contextos" --version)" = "$VERSION" ] || { echo "CLI version mismatch" >&2; exit 1; }
 [ "$("$BIN_DIR/contextos-mcp" --version)" = "$VERSION" ] || { echo "MCP version mismatch" >&2; exit 1; }
 mkdir -p "$OUTPUT"
+LOCK_DIR="$OUTPUT/.contextos-package.lock"
+mkdir "$LOCK_DIR" || { echo "Another package operation owns this output" >&2; exit 1; }
+STAGE_DIR=""
+cleanup() {
+    [ -z "$STAGE_DIR" ] || rm -rf "$STAGE_DIR"
+    rmdir "$LOCK_DIR"
+}
+trap cleanup EXIT
 STAGE_DIR="$(mktemp -d "$OUTPUT/.package-XXXXXX")"
-trap 'rm -rf "$STAGE_DIR"' EXIT
 APP="$STAGE_DIR/ContextOS.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ContextOSApp" "$APP/Contents/MacOS/ContextOSApp"
@@ -80,7 +90,12 @@ ARCH="$(lipo -archs "$BIN_DIR/ContextOSApp" | tr ' ' '-')"
 ARCHIVE="ContextOS-$VERSION-macos-$ARCH.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$STAGE_DIR/$ARCHIVE"
 SIGNING="ad-hoc-local-only"
-[ "$SIGN_IDENTITY" = "-" ] || SIGNING="developer-id-not-yet-notarized"
+SIGN_DETAILS="$(codesign --display --verbose=2 "$APP" 2>&1)"
+case "$SIGN_DETAILS" in
+    *"Authority=Developer ID Application:"*) SIGNING="developer-id-not-yet-notarized" ;;
+    *"Signature=adhoc"*) SIGNING="ad-hoc-local-only" ;;
+    *) SIGNING="development-local-only" ;;
+esac
 python3 - "$VERSION" "$ARCH" "$SIGNING" "$STAGE_DIR/$ARCHIVE" "$BUILD_NUMBER" <<'PY'
 import hashlib,json,pathlib,sys
 version,arch,signing,archive,build=sys.argv[1:]
@@ -89,11 +104,8 @@ digest=hashlib.sha256(p.read_bytes()).hexdigest()
 p.with_suffix('.sha256').write_text(digest+'  '+p.name+'\n')
 p.with_suffix('.json').write_text(json.dumps({'version':version,'build':build,'architecture':arch,'signing':signing,'notarized':False,'archive':p.name,'sha256':digest},indent=2)+'\n')
 PY
-# Only replace known build output, never an installed bundle or user data.
-if [ -e "$OUTPUT/ContextOS.app" ]; then
-    [ ! -L "$OUTPUT/ContextOS.app" ] || { echo "Output app cannot be a symlink" >&2; exit 1; }
-    mv "$OUTPUT/ContextOS.app" "$STAGE_DIR/previous-output.app"
-fi
-mv "$APP" "$OUTPUT/ContextOS.app"
-mv "$STAGE_DIR/$ARCHIVE" "$STAGE_DIR/${ARCHIVE%.zip}.sha256" "$STAGE_DIR/${ARCHIVE%.zip}.json" "$OUTPUT/"
+# Publish only new artifacts. A failed move restores all staged files; the EXIT
+# trap only removes this invocation's candidate, never a previous output/app.
+python3 scripts/package_output.py publish "$OUTPUT" "$STAGE_DIR" \
+    "$ARCHIVE" "${ARCHIVE%.zip}.sha256" "${ARCHIVE%.zip}.json" ContextOS.app
 echo "Created $OUTPUT/$ARCHIVE ($SIGNING; notarization still required). No installation or launch performed."

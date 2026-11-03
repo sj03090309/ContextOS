@@ -1,0 +1,74 @@
+{
+  "tools_list": {
+    "tool_count": 6
+  },
+  "explicit_filename": {
+    "selected": [
+      "Package.swift"
+    ],
+    "cold_ms": 109.01,
+    "warm_median_ms": 90.21
+  },
+  "large_file_small_budget": {
+    "budget": 250,
+    "body_present": true,
+    "response_tokens": 31,
+    "whole_source_tokens": 4665,
+    "response_bytes": 147,
+    "elapsed_ms": 97.2
+  },
+  "session_dedup": {
+    "first_tokens": 31,
+    "repeat_tokens": 12,
+    "repeat_body_present": false,
+    "fresh_body_present": true
+  },
+  "complete_response_budgets": [
+    {
+      "budget": 1,
+      "response_tokens": 0
+    },
+    {
+      "budget": 30,
+      "response_tokens": 29
+    },
+    {
+      "budget": 100,
+      "response_tokens": 99
+    },
+    {
+      "budget": 250,
+      "response_tokens": 247
+    },
+    {
+      "budget": 500,
+      "response_tokens": 485
+    }
+  ],
+  "forced_reindex": {
+    "first": "files: 10 (skipped 0), symbols: 10, imports: 0",
+    "second": "files: 10 (skipped 0), symbols: 10, imports: 0"
+  },
+  "project_stats": {
+    "responded": true
+  },
+  "get_project_rules": {
+    "responded": true
+  },
+  "restore_session": {
+    "responded": true
+  },
+  "privacy": {
+    "sensitive_fixtures_excluded": true,
+    "malformed_request_recovery": true
+  },
+  "project_boundary": {
+    "rule_links_excluded": true,
+    "linked_index_rejected": true,
+    "protected_root_not_read_or_indexed": true
+  },
+  "git_repository_isolation": {
+    "inherited_git_dir_ignored": true,
+    "requested_project_history_only": true
+  }
+}

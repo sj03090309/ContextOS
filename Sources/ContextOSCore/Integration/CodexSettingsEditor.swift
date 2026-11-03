@@ -141,6 +141,7 @@ struct CodexSettingsEditor {
                     }
                 }
             }
+            guard quote == nil else { throw SettingsSafetyError.invalid(file) }
         }
         guard multiline == nil, beginLines.count == endLines.count, beginLines.count <= 1 else {
             throw SettingsSafetyError.invalid(file)
@@ -184,17 +185,46 @@ struct CodexSettingsEditor {
     }
 
     private static func headerPath(_ text: String) throws -> [String] {
-        var parts: [String] = [], current = "", quote: Character?
-        for c in text {
-            if let q = quote {
-                if c == q { quote = nil } else { current.append(c) }
-            } else if c == "\"" || c == "'" { quote = c }
-            else if c == "." { parts.append(current.trimmingCharacters(in: .whitespaces)); current = "" }
-            else { current.append(c) }
+        var parts: [String] = []
+        var index = text.startIndex
+        func skipWhitespace() {
+            while index < text.endIndex, text[index] == " " || text[index] == "\t" {
+                index = text.index(after: index)
+            }
         }
-        guard quote == nil else { throw SettingsSafetyError.invalid("config.toml") }
-        parts.append(current.trimmingCharacters(in: .whitespaces))
-        guard parts.allSatisfy({ !$0.isEmpty && !$0.contains("\\") }) else { throw SettingsSafetyError.invalid("config.toml") }
+        while true {
+            skipWhitespace()
+            guard index < text.endIndex else { throw SettingsSafetyError.invalid("config.toml") }
+            var part = ""
+            if text[index] == "\"" || text[index] == "'" {
+                let quote = text[index]
+                index = text.index(after: index)
+                while index < text.endIndex, text[index] != quote {
+                    // Escaped keys remain outside this narrow editor's supported
+                    // grammar; never normalize one into a managed registration.
+                    guard text[index] != "\\" else { throw SettingsSafetyError.invalid("config.toml") }
+                    part.append(text[index]); index = text.index(after: index)
+                }
+                guard index < text.endIndex else { throw SettingsSafetyError.invalid("config.toml") }
+                index = text.index(after: index)
+            } else {
+                let start = index
+                while index < text.endIndex, text[index] != ".", text[index] != " ", text[index] != "\t" {
+                    let c = text[index]
+                    guard c.isASCII, c.isLetter || c.isNumber || c == "_" || c == "-" else {
+                        throw SettingsSafetyError.invalid("config.toml")
+                    }
+                    part.append(c); index = text.index(after: index)
+                }
+                guard index != start else { throw SettingsSafetyError.invalid("config.toml") }
+            }
+            // Whitespace inside a quoted TOML key is part of its identity.
+            parts.append(part)
+            skipWhitespace()
+            if index == text.endIndex { break }
+            guard text[index] == "." else { throw SettingsSafetyError.invalid("config.toml") }
+            index = text.index(after: index)
+        }
         return parts
     }
 

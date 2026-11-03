@@ -72,6 +72,7 @@ final class WorkTimeController: ObservableObject {
         }
     }
     func updateAIExecution(_ value: AIExecutionSummary) { aiExecution = value }
+    func clearAIExecution() { aiExecution = nil }
     func setBridgeEnabled(_ enabled: Bool) {
         guard !enabled || Bundle.main.bundleIdentifier == "com.contextos.app" else {
             bridgeStatus = "테스트 앱 · 자동 활동 연결은 운영 앱에서 켜세요"; return

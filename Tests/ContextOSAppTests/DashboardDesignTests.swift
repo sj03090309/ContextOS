@@ -9,6 +9,42 @@ import ContextOSCore
 @Suite("Dashboard design", .serialized)
 @MainActor
 struct DashboardDesignTests {
+    @Test("Log aggregation waits for a persistent choice and revocation clears observed UI only")
+    func logConsentAndRevocation() throws {
+        let suite = "ContextOS.ConsentTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(!AppSettings(defaults: defaults).agentLogsEnabled)
+        defaults.set(1, forKey: AgentLogCollectionPolicy.preferenceKey)
+        let settings = AppSettings(defaults: defaults)
+        #expect(!settings.agentLogsEnabled)
+        let model = DashboardModel(startServices: false, settings: settings)
+        #expect(!model.agentLogCollectionEnabled)
+        #expect(model.concurrentUsage.widget.health == "로그 집계 꺼짐")
+        settings.agentLogsEnabled = true
+        #expect(AppSettings(defaults: defaults).agentLogsEnabled)
+        model.setAgentLogCollectionEnabled(true)
+        model.aiTokens = 123
+        model.agents = [.init(name: "Codex", present: true, detail: "previous session detail",
+                              connection: .configured(path: "/fixture/config.toml"), usage: .reported(tokens: 123))]
+        model.connected = true
+        model.tokensByDay = ["2026-11-03": 123]
+        model.todaySaved = 42
+        model.queryCount = 7
+        model.concurrentUsage = .init(widget: .init(days: [.init(date: Date(), tokens: 123)]),
+                                      sessions: [.init(id: "fixture", agent: "Codex", project: "/fixture", model: "test",
+                                                       state: .working, lastEvent: Date(), todayTokens: 123, totalTokens: 123)])
+        settings.agentLogsEnabled = false
+        model.setAgentLogCollectionEnabled(false)
+        #expect(!AppSettings(defaults: defaults).agentLogsEnabled)
+        #expect(model.aiTokens == 0 && model.tokensByDay.isEmpty)
+        #expect(model.concurrentUsage.sessions.isEmpty && model.concurrentUsage.widget.today == nil)
+        #expect(model.concurrentUsage.widget.health == "로그 집계 꺼짐")
+        #expect(model.todaySaved == 42 && model.queryCount == 7)
+        #expect(model.connected && model.agents.first?.connection.isConfigured == true)
+        #expect(model.agents.first?.usage == .paused && model.agents.first?.detail == nil)
+    }
+
     @Test("content fits compact and full screen budgets without moving the anchor")
     func screenBudgets() {
         for visibleHeight: CGFloat in [300, 480, 650, 861, 1100] {

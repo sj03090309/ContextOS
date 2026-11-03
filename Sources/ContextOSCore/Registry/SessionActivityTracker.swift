@@ -129,10 +129,17 @@ public final class SessionActivityTracker: @unchecked Sendable {
 
     public func snapshot(logs: [(url: URL, mtime: Date)], now: Date = Date()) -> SessionActivitySnapshot {
         lock.lock(); defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else {
+            entries.removeAll()
+            return .empty
+        }
         // Bounded work at launch; fresh active sessions take priority over history.
         var unique: [String: (url: URL, mtime: Date)] = [:]
         for log in logs {
-            let url = log.url.resolvingSymlinksInPath()
+            // Canonicalize legitimate parent aliases such as /tmp, while
+            // preserving the last component so a linked log is still rejected.
+            let url = log.url.deletingLastPathComponent().resolvingSymlinksInPath()
+                .appendingPathComponent(log.url.lastPathComponent)
             if unique[url.path] == nil || unique[url.path]!.mtime < log.mtime {
                 unique[url.path] = (url, log.mtime)
             }
@@ -147,6 +154,7 @@ public final class SessionActivityTracker: @unchecked Sendable {
             let path = log.url.path
             var entry = entries[path] ?? Entry()
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+                  attrs[.type] as? FileAttributeType == .typeRegular,
                   let size = attrs[.size] as? NSNumber,
                   let inode = attrs[.systemFileNumber] as? NSNumber else {
                 statuses.append(entry.state.status(session: path, agent: Self.agent(path), now: now, readable: false))

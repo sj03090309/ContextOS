@@ -240,6 +240,16 @@ struct SettingsOverlay: View {
                 LaunchAtLoginRow()
                 toggleRow("메뉴바에 오늘 아낀 토큰", isOn: $settings.showMenuBarSavings)
                 separator
+                toggleRow("AI 로컬 로그 집계", isOn: $settings.agentLogsEnabled)
+                Text("Claude Code·Codex의 로컬 세션 파일을 읽어 사용량과 작업 상태를 집계해요. 파일에는 대화·도구 출력이 포함될 수 있어요. 끄면 새 로그 읽기를 중지하며 기존 기록은 보존해요.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10).padding(.bottom, 8)
+                Text("선택한 프로젝트 코드는 연결한 AI 도구에 전달되며, 외부 전송은 그 도구의 설정을 따라요.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10).padding(.bottom, 8)
+                separator
                 VStack(alignment: .leading, spacing: 8) {
                     Text("뭉치 움직임").font(.system(size: 13))
                     SlidingSegments(options: AppSettings.MascotMotion.allCases,

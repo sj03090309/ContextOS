@@ -35,6 +35,8 @@ swift test
 
 `dist/`에 앱, ZIP, SHA256과 JSON 메타데이터를 만듭니다. 패키징은 설치 앱을 교체하거나 실행하지 않습니다. 기본값은 로컬 ad-hoc 서명이며 Developer ID 서명·Apple 공증을 대신하지 않습니다. 다운로드한 미공증 앱은 Gatekeeper에서 차단될 수 있습니다. 보안 기능을 끄는 방법은 제공하지 않습니다.
 
+패키징은 기존 앱·동일 이름의 배포 파일을 덮어쓰지 않습니다. 이전 출력이 있으면 `--output dist/<새 빌드 번호>`처럼 새 디렉터리를 지정하세요. `/Applications`, `~/Applications`와 그 하위 경로·별칭, 앱 번들 내부, 심볼릭 링크 출력은 빌드 전에 거부합니다. 서명 메타데이터는 실제 인증서를 확인해 ad-hoc·개발용·Developer ID를 구분하며, 개발용 서명은 고객 배포 서명을 뜻하지 않습니다.
+
 ```sh
 # 설치를 원하는 사용자가 명시적으로 실행합니다.
 ./scripts/install_app.sh dist/ContextOS.app --to "$HOME/Applications/ContextOS.app"
