@@ -1,0 +1,19 @@
+{
+  "passed": 14,
+  "checks": [
+    "parse/request error {broken",
+    "parse/request error {}",
+    "parse/request error []",
+    "parse/request error 42",
+    "reject malformed request 1",
+    "reject malformed request True",
+    "reject malformed request 2",
+    "reject malformed request 3",
+    "reject malformed request 4",
+    "reject malformed request 5",
+    "reject malformed request 6",
+    "reject malformed request 7",
+    "valid notification stays silent and ping still responds",
+    "valid integral numeric budget and real body delivery"
+  ]
+}

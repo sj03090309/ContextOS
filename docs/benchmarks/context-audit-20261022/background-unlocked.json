@@ -1,0 +1,556 @@
+{
+  "scope": "hidden app; 80 synthetic logs x 300 counters, one log appended each second; fresh processes",
+  "battery_duration_measured": false,
+  "baseline": {
+    "workload_seconds": 65.29811541596428,
+    "cpu_ms": 114.619843,
+    "verified_synthetic_session_rows": 80,
+    "cache_grew_during_workload": true,
+    "cpu_percent_one_core": 0.1755331563090983,
+    "physical_footprint_start_bytes": 26412016,
+    "physical_footprint_end_bytes": 26199024,
+    "physical_footprint_max_sampled_bytes": 26543088,
+    "package_idle_wakeups": 11,
+    "interrupt_wakeups": 1014,
+    "disk_read_bytes": 278528,
+    "disk_write_bytes": 4096,
+    "samples": [
+      {
+        "second": 1,
+        "physical_footprint_bytes": 26461168
+      },
+      {
+        "second": 2,
+        "physical_footprint_bytes": 26510320
+      },
+      {
+        "second": 3,
+        "physical_footprint_bytes": 26543088
+      },
+      {
+        "second": 4,
+        "physical_footprint_bytes": 26543088
+      },
+      {
+        "second": 5,
+        "physical_footprint_bytes": 26526704
+      },
+      {
+        "second": 6,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 7,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 8,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 9,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 10,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 11,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 12,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 13,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 14,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 15,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 16,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 17,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 18,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 19,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 20,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 21,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 22,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 23,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 24,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 25,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 26,
+        "physical_footprint_bytes": 26182640
+      },
+      {
+        "second": 27,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 28,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 29,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 30,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 31,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 32,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 33,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 34,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 35,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 36,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 37,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 38,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 39,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 40,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 41,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 42,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 43,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 44,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 45,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 46,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 47,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 48,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 49,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 50,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 51,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 52,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 53,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 54,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 55,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 56,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 57,
+        "physical_footprint_bytes": 26215408
+      },
+      {
+        "second": 58,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 59,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 60,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 61,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 62,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 63,
+        "physical_footprint_bytes": 26199024
+      },
+      {
+        "second": 64,
+        "physical_footprint_bytes": 26231792
+      },
+      {
+        "second": 65,
+        "physical_footprint_bytes": 26199024
+      }
+    ]
+  },
+  "candidate": {
+    "workload_seconds": 65.30394325003726,
+    "cpu_ms": 40.802226,
+    "verified_synthetic_session_rows": 80,
+    "cache_grew_during_workload": true,
+    "cpu_percent_one_core": 0.06248049347307479,
+    "physical_footprint_start_bytes": 24904664,
+    "physical_footprint_end_bytes": 24495064,
+    "physical_footprint_max_sampled_bytes": 25002968,
+    "package_idle_wakeups": 18,
+    "interrupt_wakeups": 982,
+    "disk_read_bytes": 823296,
+    "disk_write_bytes": 4096,
+    "samples": [
+      {
+        "second": 1,
+        "physical_footprint_bytes": 25002968
+      },
+      {
+        "second": 2,
+        "physical_footprint_bytes": 25002968
+      },
+      {
+        "second": 3,
+        "physical_footprint_bytes": 25002968
+      },
+      {
+        "second": 4,
+        "physical_footprint_bytes": 24953816
+      },
+      {
+        "second": 5,
+        "physical_footprint_bytes": 24675288
+      },
+      {
+        "second": 6,
+        "physical_footprint_bytes": 24282072
+      },
+      {
+        "second": 7,
+        "physical_footprint_bytes": 24282072
+      },
+      {
+        "second": 8,
+        "physical_footprint_bytes": 24298456
+      },
+      {
+        "second": 9,
+        "physical_footprint_bytes": 24151000
+      },
+      {
+        "second": 10,
+        "physical_footprint_bytes": 24151000
+      },
+      {
+        "second": 11,
+        "physical_footprint_bytes": 24151000
+      },
+      {
+        "second": 12,
+        "physical_footprint_bytes": 24167384
+      },
+      {
+        "second": 13,
+        "physical_footprint_bytes": 24167384
+      },
+      {
+        "second": 14,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 15,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 16,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 17,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 18,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 19,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 20,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 21,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 22,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 23,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 24,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 25,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 26,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 27,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 28,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 29,
+        "physical_footprint_bytes": 24183768
+      },
+      {
+        "second": 30,
+        "physical_footprint_bytes": 24216536
+      },
+      {
+        "second": 31,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 32,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 33,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 34,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 35,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 36,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 37,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 38,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 39,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 40,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 41,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 42,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 43,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 44,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 45,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 46,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 47,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 48,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 49,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 50,
+        "physical_footprint_bytes": 24380376
+      },
+      {
+        "second": 51,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 52,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 53,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 54,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 55,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 56,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 57,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 58,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 59,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 60,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 61,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 62,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 63,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 64,
+        "physical_footprint_bytes": 24495064
+      },
+      {
+        "second": 65,
+        "physical_footprint_bytes": 24495064
+      }
+    ]
+  }
+}

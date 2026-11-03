@@ -1,0 +1,100 @@
+{
+  "scope": "Six fixed source-level cross-file requirements, 200 or 250 local estimated tokens; not model task accuracy",
+  "cases": [
+    {
+      "case": "ts-alias-chain",
+      "budget": 250,
+      "required": {
+        "=> check(token)": true,
+        "REQUIRED_VERIFY": true,
+        "REQUIRED_NORMALIZE": true
+      },
+      "all_required_present": true,
+      "unrelated_body_absent": true,
+      "estimated_tokens": 113,
+      "within_budget": true,
+      "cold_ms": 96.731,
+      "warm_median_5_ms": 90.707
+    },
+    {
+      "case": "ts-namespace",
+      "budget": 200,
+      "required": {
+        "crypto.verify(token)": true,
+        "REQUIRED_NAMESPACE": true
+      },
+      "all_required_present": true,
+      "unrelated_body_absent": true,
+      "estimated_tokens": 64,
+      "within_budget": true,
+      "cold_ms": 93.771,
+      "warm_median_5_ms": 91.58
+    },
+    {
+      "case": "python-relative-alias-constant",
+      "budget": 250,
+      "required": {
+        "return check(token)": true,
+        "REQUIRED_PYTHON": true,
+        "REQUIRED_CONSTANT": true
+      },
+      "all_required_present": true,
+      "unrelated_body_absent": true,
+      "estimated_tokens": 80,
+      "within_budget": true,
+      "cold_ms": 99.974,
+      "warm_median_5_ms": 91.269
+    },
+    {
+      "case": "swift-free-and-type-method",
+      "budget": 250,
+      "required": {
+        "verifySignature(token)": true,
+        "REQUIRED_SWIFT": true,
+        "REQUIRED_RULE": true
+      },
+      "all_required_present": true,
+      "unrelated_body_absent": true,
+      "estimated_tokens": 101,
+      "within_budget": true,
+      "cold_ms": 97.636,
+      "warm_median_5_ms": 95.763
+    },
+    {
+      "case": "reexport-cycle",
+      "budget": 250,
+      "required": {
+        "=> verify(token)": true,
+        "REQUIRED_CYCLE": true,
+        "REQUIRED_CYCLE_CHECK": true
+      },
+      "all_required_present": true,
+      "unrelated_body_absent": true,
+      "estimated_tokens": 114,
+      "within_budget": true,
+      "cold_ms": 101.066,
+      "warm_median_5_ms": 94.894
+    },
+    {
+      "case": "default-and-named",
+      "budget": 250,
+      "required": {
+        "check(token)": true,
+        "REQUIRED_DEFAULT": true,
+        "REQUIRED_NAMED": true
+      },
+      "all_required_present": true,
+      "unrelated_body_absent": true,
+      "estimated_tokens": 87,
+      "within_budget": true,
+      "cold_ms": 100.207,
+      "warm_median_5_ms": 91.68
+    }
+  ],
+  "totals": {
+    "cases": 6,
+    "complete_required_code": 6,
+    "all_within_budget": true,
+    "all_unrelated_bodies_absent": true
+  }
+}

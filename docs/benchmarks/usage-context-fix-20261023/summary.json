@@ -1,0 +1,41 @@
+{
+  "build": "2119",
+  "macOS_tests_passed": 438,
+  "macOS_platform_skips": 3,
+  "query_refiner_final_tests_passed": 6,
+  "portable_preparation_passed": 15,
+  "portable_preparation_skips": 5,
+  "observed_calendar_independent_agree": true,
+  "quality": {
+    "queries": 12,
+    "essential_at_1": 12,
+    "essential_in_first_3": 12,
+    "essential_delivered": 12,
+    "reported_required_omission_cases": 5,
+    "all_responses_within_estimated_budget": true,
+    "retention_probes_present": 4
+  },
+  "korean_queries": [
+    {
+      "version": "before",
+      "top3": 1,
+      "delivered": 2,
+      "total": 4
+    },
+    {
+      "version": "after",
+      "top3": 2,
+      "delivered": 4,
+      "total": 4
+    }
+  ],
+  "cross_file": {
+    "cases": 6,
+    "complete_required_code": 6,
+    "all_within_budget": true,
+    "all_unrelated_bodies_absent": true
+  },
+  "installed_four_binaries_match": true,
+  "live_ui_collection_healthy": true,
+  "current_chat_requires_mcp_reconnect": true
+}

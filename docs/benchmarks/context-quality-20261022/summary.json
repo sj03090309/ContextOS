@@ -1,0 +1,87 @@
+{
+  "scope": "Fixed 12 labelled queries and 4 retention probes, original bf42f28 corpus. Performance versus already optimized build 2116 sources; 7 alternating process runs per version. Local estimates, not model task accuracy.",
+  "quality": {
+    "baseline": {
+      "4000": {
+        "queries": 12,
+        "essential_at_1": 4,
+        "essential_in_first_3": 5,
+        "essential_delivered": 5,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 1
+      },
+      "8000": {
+        "queries": 12,
+        "essential_at_1": 5,
+        "essential_in_first_3": 6,
+        "essential_delivered": 8,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 1
+      }
+    },
+    "candidate": {
+      "4000": {
+        "queries": 12,
+        "essential_at_1": 7,
+        "essential_in_first_3": 7,
+        "essential_delivered": 9,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 4
+      },
+      "8000": {
+        "queries": 12,
+        "essential_at_1": 10,
+        "essential_in_first_3": 10,
+        "essential_delivered": 12,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 4
+      }
+    }
+  },
+  "performance": {
+    "baseline": {
+      "ms": {
+        "cold_index": 288.466791,
+        "query_median_5": 319.186167,
+        "rank_median_7": 38.158208,
+        "scan_median_9": 14.30275,
+        "warm_index_median_9": 15.621792
+      },
+      "peak_rss_mib": 25.3125,
+      "correctness_digests": [
+        "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922"
+      ],
+      "bundle_estimated_tokens": [
+        7994
+      ]
+    },
+    "candidate": {
+      "ms": {
+        "cold_index": 263.204709,
+        "query_median_5": 273.221458,
+        "rank_median_7": 38.185167,
+        "scan_median_9": 14.395708,
+        "warm_index_median_9": 15.8025
+      },
+      "peak_rss_mib": 25.234375,
+      "correctness_digests": [
+        "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922"
+      ],
+      "bundle_estimated_tokens": [
+        7994
+      ]
+    },
+    "whole_query_improvement_percent": 14.40059556215042
+  },
+  "validation": {
+    "native_passed": 414,
+    "native_skipped_windows_only": 3,
+    "portable_passed": 15,
+    "portable_skipped": 5,
+    "mcp_regressions": "passed",
+    "build": "2.1.0 (2117)",
+    "installed": "2.1.0 (2117), signatures and four executable hashes verified; native UI checked; background process running",
+    "packaged_quality": "12/12 essential file bodies and 4/4 retention probes at 8000 estimated tokens",
+    "cleanup": 1356005066
+  }
+}
