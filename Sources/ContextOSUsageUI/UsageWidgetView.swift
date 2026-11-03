@@ -41,6 +41,7 @@ public struct UsageWidgetView: View {
         let value: String
         if old { value = "오래됨" }
         else if snapshot.providers.isEmpty { value = "연결 필요" }
+        else if snapshot.providers.allSatisfy({ $0.state == .paused }) { value = "로그 집계 꺼짐" }
         else if snapshot.providers.allSatisfy({ $0.state == .unsupported }) { value = "지원 안 됨" }
         else if snapshot.providers.contains(where: { $0.state == .unavailable }) {
             value = snapshot.today == nil ? "연결 끊김" : "일부 수집 불가"

@@ -3,7 +3,7 @@
   "scope": "local macOS release candidate; public distribution not certified",
   "platform": "macOS 27.2 arm64",
   "version": "2.1.0",
-  "build": "2135",
+  "build": "2137",
   "full_swift_tests": {
     "collected": 492,
     "passed": 489,
@@ -27,6 +27,9 @@
   "preserved_usage_db_quick_check": "ok",
   "agent_settings_hashes_unchanged": true,
   "public_distribution_gate": "expected rejection: Apple Development is not Developer ID Application",
-  "interactive_installed_ui": "pending: Mac session locked",
-  "source_history_and_usage_preserved": true
+  "interactive_installed_ui": "verified: dashboard/settings/connection preview-cancel and actual native widget",
+  "source_history_and_usage_preserved": true,
+  "native_widget_paused_display_verified": true,
+  "analytics_directory_mode": "0700",
+  "analytics_database_mode": "0600"
 }

@@ -852,8 +852,12 @@ struct AgentsList: View {
             } else {
                 HStack(spacing: 5) {
                     Image(systemName: "clock.arrow.circlepath")
-                    Text("이 Mac의 로컬 기록 ")
-                        + Text(TokenEstimator.korean(model.aiTokens) + " 토큰").fontWeight(.semibold)
+                    if model.agentLogCollectionEnabled {
+                        Text("이 Mac의 로컬 기록 ")
+                            + Text(TokenEstimator.korean(model.aiTokens) + " 토큰").fontWeight(.semibold)
+                    } else {
+                        Text("AI 로컬 로그 집계 꺼짐")
+                    }
                     Spacer()
                 }
                 .font(.system(size: 11.5).monospacedDigit())

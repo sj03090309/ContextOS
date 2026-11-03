@@ -6,8 +6,8 @@
     "selected": [
       "Package.swift"
     ],
-    "cold_ms": 109.01,
-    "warm_median_ms": 90.21
+    "cold_ms": 95.06,
+    "warm_median_ms": 89.55
   },
   "large_file_small_budget": {
     "budget": 250,
@@ -15,7 +15,7 @@
     "response_tokens": 31,
     "whole_source_tokens": 4665,
     "response_bytes": 147,
-    "elapsed_ms": 97.2
+    "elapsed_ms": 106.4
   },
   "session_dedup": {
     "first_tokens": 31,

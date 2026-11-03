@@ -298,13 +298,15 @@ struct DashboardDesignTests {
 
     private func widgetPNG(_ snapshot: WidgetUsageSnapshot, size: UsageWidgetView.Size,
                            scheme: ColorScheme, now: Date) throws -> Data {
+        let width: CGFloat = size == .small ? 158 : 338
+        let height: CGFloat = size == .large ? 354 : 158
         let view = UsageWidgetView(snapshot: snapshot, size: size, now: now)
-            .padding(14).frame(width: size == .small ? 158 : 338, height: size == .large ? 354 : 158)
+            .padding(14).frame(width: width, height: height)
             .background { UsageWidgetBackground() }.environment(\.colorScheme, scheme)
-        let renderer = ImageRenderer(content: view)
-        renderer.scale = 2
-        let image = try #require(renderer.cgImage)
-        return try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
+        // ImageRenderer invokes a Metal path that aborts on the Intel CI
+        // virtual GPU. Use the same native AppKit bitmap path as the dashboard
+        // so every size/theme still receives an actual pixel comparison.
+        return try renderNative(view, height: height, scheme: scheme, width: width)
     }
 
     private func widgetDifference(_ first: Data, _ second: Data) throws -> Double {
@@ -322,21 +324,22 @@ struct DashboardDesignTests {
 
     /// ScrollView uses native drawing on macOS; ImageRenderer alone leaves its
     /// viewport blank. Attach to an offscreen window and cache the native view.
-    private func renderNative<V: View>(_ view: V, height: CGFloat, scheme: ColorScheme) throws -> Data {
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: height),
+    private func renderNative<V: View>(_ view: V, height: CGFloat, scheme: ColorScheme, width: CGFloat = 340) throws -> Data {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: height),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         let host = NSHostingView(rootView: view)
         host.sizingOptions = []
-        host.frame = NSRect(x: 0, y: 0, width: 340, height: height)
+        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
         window.contentView = host
         window.layoutIfNeeded()
         host.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
-        #expect(bitmap.pixelsWide >= 340)
+        #expect(bitmap.pixelsWide >= Int(width))
         #expect(bitmap.pixelsHigh >= Int(height))
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         window.close()
