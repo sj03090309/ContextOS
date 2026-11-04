@@ -125,6 +125,14 @@ final class DashboardUIState: ObservableObject {
     @Published var hidePrivateDetails = true
     /// Wired by the app's public window command; no independent data source.
     var openWindow: (() -> Void)?
+
+    /// Public menu and widget routes reveal their destination even when a
+    /// settings overlay was left open, including routes to the current page.
+    func navigate(to destination: Page) {
+        showSettings = false
+        showConnections = false
+        page = destination
+    }
 }
 
 /// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a

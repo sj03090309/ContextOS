@@ -262,7 +262,8 @@ final class DashboardModel: ObservableObject {
             queuedUsageRefresh = nil
             pendingWorkingEvaluation = false; pendingWorkingRescan = false
             working = false; live.update(.empty)
-            aiTokens = 0; projectUsage = []; tokensByDay = [:]; agentDayTokens = [:]
+            aiTokens = 0; projectUsage = []
+            // Stop observing new logs without hiding the already saved calendar.
             agents = agents.map { agent in
                 var agent = agent
                 if ManagedAgent(rawValue: agent.name) != nil {
@@ -276,6 +277,7 @@ final class DashboardModel: ObservableObject {
             if servicesStarted {
                 WorkTimeController.shared.clearAIExecution()
                 shareMeasuredTime(force: true)
+                refreshFast(forceHistory: true)
             }
         } else if servicesStarted {
             refreshSlow(force: true, includeWeek: panelOpen && historyVisible, priority: .utility)
@@ -389,7 +391,7 @@ final class DashboardModel: ObservableObject {
         guard dashboardVisibility.open(surface) else { return }
         tokenRefresh.cancel() // opening reads immediately, including pending writes
         dayDetails = [:]
-        refreshFast()
+        refreshFast(forceHistory: true)
         refreshSlow(includeWeek: historyVisible, priority: .userInitiated)
         rescanWorking()
         scheduleUsageRefresh()
@@ -408,7 +410,10 @@ final class DashboardModel: ObservableObject {
     func setHistoryVisible(_ visible: Bool) {
         guard historyVisible != visible else { return }
         historyVisible = visible
-        if visible && panelOpen { refreshSlow(includeWeek: true, priority: .userInitiated) }
+        if visible && panelOpen {
+            if agentLogCollectionEnabled { refreshSlow(includeWeek: true, priority: .userInitiated) }
+            else { refreshFast(forceHistory: true) }
+        }
     }
 
     private func scheduleUsageRefresh() {
@@ -440,7 +445,7 @@ final class DashboardModel: ObservableObject {
     func refresh() {
         refreshAgentPresence()
         LogoStore.shared.reset()
-        refreshFast()
+        refreshFast(forceHistory: true)
         refreshSlow(force: true, includeWeek: historyVisible, priority: .userInitiated)
     }
 
@@ -575,14 +580,22 @@ final class DashboardModel: ObservableObject {
     }
 
     // Cheap: savings counters from the local usage DB.
-    private func refreshFast() {
+    private func refreshFast(forceHistory: Bool = false) {
         guard !backgroundSuspended else { return }
+        let generation = collectionGeneration
+        let includeHistory = !agentLogCollectionEnabled && (forceHistory || tokensByDay.isEmpty)
+        let includeWeek = includeHistory && panelOpen && historyVisible
         Task(priority: .utility) {
-            let s = await Self.loadSavings()
+            let s = await Self.loadSavings(includeHistory: includeHistory, includeWeek: includeWeek)
             update(\.todaySaved, s.todaySaved)
             update(\.totalSaved, s.totalSaved)
             update(\.recent, s.recent)
             update(\.savingsByDay, s.savingsByDay)
+            if !agentLogCollectionEnabled, generation == collectionGeneration, let history = s.history {
+                update(\.tokensByDay, history.byDay)
+                update(\.agentDayTokens, history.byAgentDay)
+                if let week = s.week { update(\.week, week) }
+            }
             lastUpdated = Date()
             if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
             lastQueryCount = s.queryCount
@@ -646,18 +659,17 @@ final class DashboardModel: ObservableObject {
 
     /// Load a picked day's commits and lines, unless they are already known.
     func loadDetail(for day: String) {
-        guard agentLogCollectionEnabled else { return }
         let generation = collectionGeneration
         guard dayDetails[day] == nil else { return }
         Task(priority: .userInitiated) {
             let detail = await Self.loadDayDetail(day)
-            guard agentLogCollectionEnabled, generation == collectionGeneration else { return }
+            guard generation == collectionGeneration else { return }
             dayDetails[day] = detail
         }
     }
 
     private nonisolated static func loadDayDetail(_ day: String) async -> DayDetail {
-        let usage = AgentSessionReader.snapshot()
+        guard let usage = try? AgentSessionReader.historySnapshot() else { return DayDetail() }
         let log = BuildLogReader.log(since: BuildLogReader.dayStart(day), snapshot: usage)
         guard let entry = log.days.first(where: { $0.day == day }) else { return DayDetail() }
         return DayDetail(commits: entry.commits.count, added: entry.added, deleted: entry.deleted)
@@ -756,6 +768,8 @@ final class DashboardModel: ObservableObject {
         var todaySaved = 0, totalSaved = 0, queryCount = 0
         var recent: [UsageEvent] = []
         var savingsByDay: [String: Int] = [:]
+        var history: AgentUsageSnapshot?
+        var week: BuildSummary?
     }
     /// One calendar day's work in Git.
     struct DayDetail: Sendable, Equatable {
@@ -774,14 +788,19 @@ final class DashboardModel: ObservableObject {
         var week: BuildSummary?
     }
 
-    private nonisolated static func loadSavings() async -> Savings {
-        guard let store = try? UsageStore(path: UsageStore.defaultURL().path) else { return Savings() }
+    nonisolated static func loadSavings(includeHistory: Bool = false, includeWeek: Bool = false,
+                                       storePath: String = UsageStore.defaultURL().path) async -> Savings {
+        guard let store = try? UsageStore(path: storePath) else { return Savings() }
         let totals = store.savingsTotals(
             since: Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
         let twoWeeks = TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 13 * 86_400)
+        let history = includeHistory ? AgentSessionReader.savedSnapshot(from: store) : nil
+        let week = includeWeek ? history.map {
+            BuildLogReader.log(since: TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 6 * 86_400), snapshot: $0).summary
+        } : nil
         return Savings(todaySaved: totals.todaySaved, totalSaved: totals.totalSaved,
                        queryCount: totals.queryCount, recent: store.recentEvents(limit: 30),
-                       savingsByDay: store.savingsByDay(since: twoWeeks))
+                       savingsByDay: store.savingsByDay(since: twoWeeks), history: history, week: week)
     }
 
     private nonisolated static func loadAgentsAndUsage(force: Bool, includeWeek: Bool) async -> AgentsUsage {

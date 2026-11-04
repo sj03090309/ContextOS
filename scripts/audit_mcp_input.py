@@ -15,6 +15,20 @@ def main():
     checks = []
     with tempfile.TemporaryDirectory(prefix="contextos-wire-audit-") as directory:
         root = pathlib.Path(directory)
+        # Each initialization starts a new transport, as real clients do.
+        # Unknown revisions must select the server's actual supported revision.
+        for requested in ["2024-11-05", "2099-01-01", "1999-01-01"]:
+            negotiation = MCP(args.binary, cwd=directory)
+            try:
+                response, _ = negotiation.request("initialize", {
+                    "protocolVersion": requested,
+                    "capabilities": {},
+                    "clientInfo": {"name": "ContextOS Wire Fixture", "version": "1"},
+                })
+                assert response["protocolVersion"] == "2024-11-05", response
+                checks.append("supported revision negotiated from " + requested)
+            finally:
+                negotiation.close()
         server = MCP(args.binary, cwd=directory)
         try:
             def exchange(raw):

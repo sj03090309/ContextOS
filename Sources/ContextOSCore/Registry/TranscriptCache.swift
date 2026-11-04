@@ -60,11 +60,8 @@ final class TranscriptCache: @unchecked Sendable {
         var fresh: [String: SessionCacheRow] = [:]
         var changed: [SessionCacheRow] = []
         var live: Set<String> = []
-        var snapshot = AgentUsageSnapshot()
-
         for file in files {
             let path = file.url.path
-            snapshot.availableAgents.insert(file.agent)
             live.insert(path)
             let cached = cache[path]
             guard let row = AgentSessionReader.row(for: file.url, agent: file.agent, cached: cached)
@@ -86,11 +83,31 @@ final class TranscriptCache: @unchecked Sendable {
             }
         }
 
-        let modernSessions = Set(fresh.values.compactMap { row in
+        var snapshot = Self.summarize(fresh.values)
+        snapshot.availableAgents.formUnion(files.map(\.agent))
+
+        // Rows for transcripts that no longer exist are parse-cache entries,
+        // not the authoritative original logs. Explicit cache pruning remains
+        // separate from reading the saved calendar while collection is paused.
+        let gone = cache.keys.filter { !live.contains($0) }
+        if !changed.isEmpty || !gone.isEmpty, let db = openStore() {
+            try? db.upsertSessionCache(changed)
+            db.deleteSessionCache(paths: gone)
+        }
+        rows = fresh
+        return snapshot
+    }
+
+    /// Fold saved counters with the same de-duplication as a live refresh.
+    /// Does not stat, open or enumerate any original transcript or project.
+    static func summarize<S: Sequence>(_ rows: S) -> AgentUsageSnapshot where S.Element == SessionCacheRow {
+        let ordered = rows.sorted(by: { $0.path < $1.path })
+        var snapshot = AgentUsageSnapshot()
+        snapshot.availableAgents = Set(ordered.map(\.agent))
+        let modernSessions = Set(ordered.compactMap { row in
             row.codexAccounting?.usesRequests == true ? row.codexAccounting?.session : nil
         })
         var seenRequests = Set<String>()
-        let ordered = fresh.values.sorted(by: { $0.path < $1.path })
         var claudeMessages: [String: ClaudeSessionAccounting.Message] = [:]
         for row in ordered {
             for (id, message) in row.claudeAccounting?.messages ?? [:] {
@@ -141,14 +158,6 @@ final class TranscriptCache: @unchecked Sendable {
             }
         }
 
-        // Rows for transcripts that no longer exist, so the table can't grow
-        // forever as sessions are deleted or rotated away.
-        let gone = cache.keys.filter { !live.contains($0) }
-        if !changed.isEmpty || !gone.isEmpty, let db = openStore() {
-            try? db.upsertSessionCache(changed)
-            db.deleteSessionCache(paths: gone)
-        }
-        rows = fresh
         return snapshot
     }
 

@@ -37,7 +37,7 @@ struct DashboardDesignTests {
         settings.agentLogsEnabled = false
         model.setAgentLogCollectionEnabled(false)
         #expect(!AppSettings(defaults: defaults).agentLogsEnabled)
-        #expect(model.aiTokens == 0 && model.tokensByDay.isEmpty)
+        #expect(model.aiTokens == 0 && model.tokensByDay == ["2026-11-03": 123])
         #expect(model.concurrentUsage.sessions.isEmpty && model.concurrentUsage.widget.today == nil)
         #expect(model.concurrentUsage.widget.health == "로그 집계 꺼짐")
         #expect(model.todaySaved == 42 && model.queryCount == 7)

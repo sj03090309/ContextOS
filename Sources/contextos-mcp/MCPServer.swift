@@ -74,7 +74,7 @@ struct MCPServer {
 
         switch method {
         case "initialize":
-            reply(id: id, result: initializeResult(params: params))
+            reply(id: id, result: initializeResult())
         case "notifications/initialized", "initialized":
             break // notification, nothing to return
         case "ping":
@@ -90,10 +90,11 @@ struct MCPServer {
         }
     }
 
-    private func initializeResult(params: [String: Any]) -> [String: Any] {
-        let requested = params["protocolVersion"] as? String
+    private func initializeResult() -> [String: Any] {
         var result: [String: Any] = [
-            "protocolVersion": requested ?? Self.defaultProtocolVersion,
+            // This server implements one revision. Unsupported client versions
+            // must negotiate that revision instead of being echoed as supported.
+            "protocolVersion": Self.defaultProtocolVersion,
             "capabilities": ["tools": [String: Any]()],
             "serverInfo": ["name": Self.name, "version": Self.version],
             "instructions": MCPToolContract.usageInstructions

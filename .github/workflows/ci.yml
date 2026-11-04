@@ -42,8 +42,12 @@ jobs:
         run: swift build -c release --jobs 2
       - name: Temporary-home CLI connections
         run: python3 scripts/smoke_connections.py --binary "$(swift build -c release --show-bin-path)/contextos"
+      - name: Development updater regression (temporary fixtures only)
+        run: python3 scripts/smoke_dev_auto_update.py
       - name: Isolated MCP regression
-        run: python3 scripts/benchmark_context.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp" --verify
+        run: |
+          python3 scripts/benchmark_context.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp" --verify
+          python3 scripts/audit_mcp_input.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp"
       - name: Local packaging (no installation, launch or public upload)
         run: |
           python3 scripts/smoke_package_output.py

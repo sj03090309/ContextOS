@@ -301,6 +301,11 @@ struct CalendarCard: View {
 
         VStack(alignment: .leading, spacing: 7) {
             header(month, total: CalendarGrid.total(month, model.tokensByDay))
+            if !model.agentLogCollectionEnabled {
+                Text("저장된 기록 · 새 로그 집계 꺼짐")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
             split(keys: keys)
             HStack(spacing: 4) {
                 ForEach(Self.weekdays, id: \.self) { day in
@@ -370,15 +375,15 @@ struct CalendarCard: View {
     private func split(keys: Set<String>) -> some View {
         let claude = Self.sum(model.agentDayTokens["Claude Code"], keys)
         let codex = Self.sum(model.agentDayTokens["Codex"], keys)
-        let total = claude + codex
-        if total > 0 {
-            let claudeShare = Int((Double(claude) / Double(total) * 100).rounded())
+        if claude > 0 || codex > 0 {
+            let fraction = Self.providerFraction(claude, other: codex)
+            let claudeShare = Int((fraction * 100).rounded())
             HStack(spacing: 8) {
                 GeometryReader { geo in
                     HStack(spacing: codex > 0 && claude > 0 ? 2 : 0) {
                         if claude > 0 {
                             Capsule().fill(Brand.claude)
-                                .frame(width: max(3, geo.size.width * CGFloat(claude) / CGFloat(total)))
+                                .frame(width: max(3, geo.size.width * fraction))
                         }
                         if codex > 0 {
                             Capsule().fill(Brand.codex)
@@ -502,6 +507,12 @@ struct CalendarCard: View {
     static func sum(_ byDay: [String: Int]?, _ keys: Set<String>) -> Int {
         guard let byDay else { return 0 }
         return keys.reduce(0) { Int(UsageNumbers.add(Int64($0), Int64(byDay[$1] ?? 0))) }
+    }
+
+    static func providerFraction(_ tokens: Int, other: Int) -> Double {
+        let part = Double(max(0, tokens))
+        let total = part + Double(max(0, other))
+        return total > 0 ? part / total : 0
     }
 
     /// "9월 22일 (화)"

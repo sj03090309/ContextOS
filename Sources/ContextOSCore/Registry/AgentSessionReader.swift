@@ -99,6 +99,21 @@ public enum AgentSessionReader {
         return fresh
     }
 
+    /// Previously saved aggregates remain readable when new log collection is
+    /// off. Reading the application's own database never opens agent logs.
+    public static func savedSnapshot(from store: UsageStore) -> AgentUsageSnapshot {
+        TranscriptCache.summarize(store.sessionCache().values)
+    }
+
+    /// History windows use live aggregation only with consent; otherwise show
+    /// the last saved counts instead of making the calendar appear erased.
+    public static func historySnapshot(force: Bool = false,
+                                       storePath: String = UsageStore.defaultURL().path) throws -> AgentUsageSnapshot {
+        if AgentLogCollectionPolicy.isEnabled { return snapshot(force: force) }
+        guard FileManager.default.fileExists(atPath: storePath) else { return AgentUsageSnapshot() }
+        return savedSnapshot(from: try UsageStore(path: storePath))
+    }
+
     /// The working directory a transcript last recorded, if it has been parsed;
     /// for a Claude Code log not parsed yet, the directory decoded from its
     /// folder name (lossy for names with a "-", so only a fallback). Never
