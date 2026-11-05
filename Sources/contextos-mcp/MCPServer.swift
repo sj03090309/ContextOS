@@ -27,7 +27,16 @@ struct MCPServer {
 
     func run() {
         log("contextos-mcp \(Self.version) started (stdio)")
-        while let line = readLine(strippingNewline: true) {
+        #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
+        let input = MCPStdioInput(contract: (try? RuntimeContract.jsonData()) ?? Data())
+        if input.resumedSession {
+            send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
+        }
+        let nextLine = { input.nextLine() }
+        #else
+        let nextLine = { readLine(strippingNewline: true) }
+        #endif
+        while let line = nextLine() {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
             let object: Any
@@ -41,25 +50,31 @@ struct MCPServer {
                 replyError(id: NSNull(), code: -32600, message: "Invalid Request")
                 continue
             }
-            handle(message)
+            let handshake = handle(message)
+            #if os(macOS) && !CONTEXTOS_PORTABLE_BUILD
+            if handshake == .negotiated { input.markNegotiated() }
+            else if handshake == .ready { input.markInitialized() }
+            #endif
         }
         log("stdin closed, exiting")
     }
 
     // MARK: - Dispatch
 
-    private func handle(_ message: [String: Any]) {
+    private enum HandshakeEvent: Equatable { case negotiated, ready }
+
+    private func handle(_ message: [String: Any]) -> HandshakeEvent? {
         let id = message["id"]           // absent → notification (no reply)
         let validID = id == nil || id is NSNull || id is String
             || (id is NSNumber && CFGetTypeID(id as! NSNumber) != CFBooleanGetTypeID())
         guard message["jsonrpc"] as? String == "2.0",
               let method = message["method"] as? String, !method.isEmpty, validID else {
             replyError(id: validID ? (id ?? NSNull()) : NSNull(), code: -32600, message: "Invalid Request")
-            return
+            return nil
         }
         guard message["params"] == nil || message["params"] is [String: Any] else {
             replyError(id: id, code: -32602, message: "Invalid params: expected an object")
-            return
+            return nil
         }
         let params = message["params"] as? [String: Any] ?? [:]
 
@@ -75,8 +90,9 @@ struct MCPServer {
         switch method {
         case "initialize":
             reply(id: id, result: initializeResult())
+            return id == nil ? nil : .negotiated
         case "notifications/initialized", "initialized":
-            break // notification, nothing to return
+            return id == nil ? .ready : nil // notification, nothing to return
         case "ping":
             reply(id: id, result: [:])
         case "tools/list":
@@ -88,6 +104,7 @@ struct MCPServer {
                 replyError(id: id, code: -32601, message: "Method not found: \(method)")
             }
         }
+        return nil
     }
 
     private func initializeResult() -> [String: Any] {
@@ -95,7 +112,7 @@ struct MCPServer {
             // This server implements one revision. Unsupported client versions
             // must negotiate that revision instead of being echoed as supported.
             "protocolVersion": Self.defaultProtocolVersion,
-            "capabilities": ["tools": [String: Any]()],
+            "capabilities": ["tools": ["listChanged": true]],
             "serverInfo": ["name": Self.name, "version": Self.version],
             "instructions": MCPToolContract.usageInstructions
         ]

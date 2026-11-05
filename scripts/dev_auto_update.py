@@ -221,7 +221,7 @@ def update(app, folder, state, files, fingerprint):
                         shutil.rmtree(old)
                     except (OSError, ValueError):
                         log('Could not prune a previous development bundle: ' + str(old))
-        log('Installed and relaunched ContextOS build ' + number + '. Existing MCP sessions remain connected.')
+        log('Installed and relaunched ContextOS build ' + number + '. Eligible MCP sessions will load the update before their next request.')
         return True
 
 

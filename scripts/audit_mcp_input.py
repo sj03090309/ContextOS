@@ -27,6 +27,9 @@ def main():
                 })
                 assert response["protocolVersion"] == "2024-11-05", response
                 checks.append("supported revision negotiated from " + requested)
+                if requested == "2024-11-05":
+                    assert response.get("capabilities", {}).get("tools", {}).get("listChanged") is True, response
+                    checks.append("tool-list change notifications advertised")
             finally:
                 negotiation.close()
         server = MCP(args.binary, cwd=directory)

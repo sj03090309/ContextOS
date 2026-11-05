@@ -38,6 +38,9 @@ jobs:
           swift test --scratch-path .build-portable --jobs 2 --no-parallel --filter PortableContractTests
           BIN="$(swift build --scratch-path .build-portable --show-bin-path)"
           python3 scripts/verify_contract.py --cli "$BIN/contextos" --mcp "$BIN/contextos-mcp" --preparation --compare-to "$RUNNER_TEMP/contextos-native-contract.json"
+      - name: MCP executable reload regression (temporary fixtures only)
+        if: runner.os == 'macOS'
+        run: python3 scripts/smoke_mcp_hot_reload.py --binary "$(swift build --show-bin-path)/contextos-mcp"
       - name: Release build
         run: swift build -c release --jobs 2
       - name: Temporary-home CLI connections
