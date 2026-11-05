@@ -1,4 +1,5 @@
 import Foundation
+import ContextOSUsage
 
 /// The transcript parse cache: every session log's parse, kept in memory for the
 /// life of the process and written through to `UsageStore` so the next launch
@@ -24,6 +25,13 @@ final class TranscriptCache: @unchecked Sendable {
         self.storePath = storePath
     }
 
+    /// Forget derived in-memory data when log collection is disabled. Existing
+    /// on-disk records and original agent transcripts are deliberately retained.
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        rows = nil
+    }
+
     /// The working directory a transcript last recorded, if parsed. Returns nil
     /// rather than waiting while a pass holds the lock — the caller is the UI.
     func lastProject(forPath path: String) -> String? {
@@ -37,6 +45,10 @@ final class TranscriptCache: @unchecked Sendable {
     func snapshot(of files: [(url: URL, agent: String)]) -> AgentUsageSnapshot {
         lock.lock()
         defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else {
+            rows = nil
+            return AgentUsageSnapshot()
+        }
 
         var store: UsageStore?
         func openStore() -> UsageStore? {
@@ -48,11 +60,8 @@ final class TranscriptCache: @unchecked Sendable {
         var fresh: [String: SessionCacheRow] = [:]
         var changed: [SessionCacheRow] = []
         var live: Set<String> = []
-        var snapshot = AgentUsageSnapshot()
-
         for file in files {
             let path = file.url.path
-            snapshot.availableAgents.insert(file.agent)
             live.insert(path)
             let cached = cache[path]
             guard let row = AgentSessionReader.row(for: file.url, agent: file.agent, cached: cached)
@@ -66,19 +75,81 @@ final class TranscriptCache: @unchecked Sendable {
             // so the same full parse ran again on every refresh. Sixteen touched
             // logs made that 266MB of JSON every 32 seconds — a whole core for
             // six seconds out of every thirty-two, for as long as the app ran.
-            if cached?.size != row.size || cached?.mtime != row.mtime {
+            if cached?.size != row.size || cached?.mtime != row.mtime
+                || cached?.fileIdentity != row.fileIdentity
+                || cached?.codexAccounting?.version != row.codexAccounting?.version
+                || cached?.claudeAccounting?.version != row.claudeAccounting?.version {
                 changed.append(row)
+            }
+        }
+
+        var snapshot = Self.summarize(fresh.values)
+        snapshot.availableAgents.formUnion(files.map(\.agent))
+
+        // Rows for transcripts that no longer exist are parse-cache entries,
+        // not the authoritative original logs. Explicit cache pruning remains
+        // separate from reading the saved calendar while collection is paused.
+        let gone = cache.keys.filter { !live.contains($0) }
+        if !changed.isEmpty || !gone.isEmpty, let db = openStore() {
+            try? db.upsertSessionCache(changed)
+            db.deleteSessionCache(paths: gone)
+        }
+        rows = fresh
+        return snapshot
+    }
+
+    /// Fold saved counters with the same de-duplication as a live refresh.
+    /// Does not stat, open or enumerate any original transcript or project.
+    static func summarize<S: Sequence>(_ rows: S) -> AgentUsageSnapshot where S.Element == SessionCacheRow {
+        let ordered = rows.sorted(by: { $0.path < $1.path })
+        var snapshot = AgentUsageSnapshot()
+        snapshot.availableAgents = Set(ordered.map(\.agent))
+        let modernSessions = Set(ordered.compactMap { row in
+            row.codexAccounting?.usesRequests == true ? row.codexAccounting?.session : nil
+        })
+        var seenRequests = Set<String>()
+        var claudeMessages: [String: ClaudeSessionAccounting.Message] = [:]
+        for row in ordered {
+            for (id, message) in row.claudeAccounting?.messages ?? [:] {
+                if let old = claudeMessages[id], old.tokens >= message.tokens { continue }
+                claudeMessages[id] = message
+            }
+        }
+        var seenClaudeMessages = Set<String>()
+        for row in ordered {
+            var projects = row.projects
+            if let accounting = row.claudeAccounting {
+                var canonical = row
+                canonical.projects = [:]
+                for id in accounting.messages.keys where seenClaudeMessages.insert(id).inserted {
+                    if let message = claudeMessages[id] {
+                        canonical.add(tokens: message.tokens, at: message.timestamp, project: message.project)
+                    }
+                }
+                projects = canonical.projects
+            }
+            if let accounting = row.codexAccounting {
+                if accounting.usesRequests {
+                    var canonical = row
+                    canonical.projects = [:]
+                    for (id, request) in accounting.requests where seenRequests.insert(id).inserted {
+                        canonical.add(tokens: request.tokens, at: request.timestamp, project: request.project)
+                    }
+                    projects = canonical.projects
+                } else if !accounting.session.isEmpty && modernSessions.contains(accounting.session) {
+                    continue // a copied legacy stream cannot repeat modern requests
+                }
             }
 
             // One transcript can span several directories, so each is folded in
             // separately rather than the whole session landing on one project.
-            for (project, usage) in row.projects where usage.tokens > 0 {
-                snapshot.totalTokens += usage.tokens
-                snapshot.byAgent[row.agent, default: 0] += usage.tokens
-                snapshot.byProjectAgent[project, default: [:]][row.agent, default: 0] += usage.tokens
+            for (project, usage) in projects where usage.tokens > 0 {
+                snapshot.totalTokens = Self.add(snapshot.totalTokens, usage.tokens)
+                snapshot.byAgent[row.agent] = Self.add(snapshot.byAgent[row.agent] ?? 0, usage.tokens)
+                snapshot.byProjectAgent[project, default: [:]][row.agent] = Self.add(snapshot.byProjectAgent[project]?[row.agent] ?? 0, usage.tokens)
                 for (day, tokens) in usage.days {
-                    snapshot.byDay[day, default: 0] += tokens
-                    snapshot.byAgentDay[row.agent, default: [:]][day, default: 0] += tokens
+                    snapshot.byDay[day] = Self.add(snapshot.byDay[day] ?? 0, tokens)
+                    snapshot.byAgentDay[row.agent, default: [:]][day] = Self.add(snapshot.byAgentDay[row.agent]?[day] ?? 0, tokens)
                 }
                 snapshot.sessions.append(AgentSession(
                     agent: row.agent, project: project,
@@ -87,14 +158,10 @@ final class TranscriptCache: @unchecked Sendable {
             }
         }
 
-        // Rows for transcripts that no longer exist, so the table can't grow
-        // forever as sessions are deleted or rotated away.
-        let gone = cache.keys.filter { !live.contains($0) }
-        if !changed.isEmpty || !gone.isEmpty, let db = openStore() {
-            try? db.upsertSessionCache(changed)
-            db.deleteSessionCache(paths: gone)
-        }
-        rows = fresh
         return snapshot
+    }
+
+    private static func add(_ a: Int, _ b: Int) -> Int {
+        Int(UsageNumbers.add(Int64(a), Int64(b)))
     }
 }

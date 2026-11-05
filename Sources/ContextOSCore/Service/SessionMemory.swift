@@ -17,11 +17,14 @@ public final class SessionMemory: @unchecked Sendable {
 
     private var served: [String: (hash: String, at: Date)] = [:]
     private let lock = NSLock()
+    private let maximumEntries: Int
+    private var nextPrune = Date.distantPast
     /// How long a delivered body stays "known" before we resend it anyway.
     public let ttl: TimeInterval
 
-    public init(ttl: TimeInterval = 15 * 60) {
+    public init(ttl: TimeInterval = 15 * 60, maximumEntries: Int = 2048) {
         self.ttl = ttl
+        self.maximumEntries = max(1, maximumEntries)
     }
 
     private func key(_ project: String, _ path: String) -> String {
@@ -32,13 +35,31 @@ public final class SessionMemory: @unchecked Sendable {
     /// recently enough that it's still plausibly in the agent's context.
     public func isUnchanged(project: String, path: String, bodyHash: String, now: Date = Date()) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard let entry = served[key(project, path)] else { return false }
-        return entry.hash == bodyHash && now.timeIntervalSince(entry.at) <= ttl
+        let key = key(project, path)
+        guard let entry = served[key] else { return false }
+        let age = now.timeIntervalSince(entry.at)
+        guard age >= 0, age <= ttl else {
+            served.removeValue(forKey: key)
+            return false
+        }
+        return entry.hash == bodyHash
     }
 
     public func markServed(project: String, path: String, bodyHash: String, now: Date = Date()) {
         lock.lock(); defer { lock.unlock() }
-        served[key(project, path)] = (bodyHash, now)
+        if now >= nextPrune {
+            served = served.filter {
+                let age = now.timeIntervalSince($0.value.at)
+                return age >= 0 && age <= ttl
+            }
+            nextPrune = now.addingTimeInterval(min(60, max(1, ttl)))
+        }
+        let key = key(project, path)
+        if served[key] == nil, served.count >= maximumEntries,
+           let oldest = served.min(by: { $0.value.at < $1.value.at })?.key {
+            served.removeValue(forKey: oldest)
+        }
+        served[key] = (bodyHash, now)
     }
 
     /// Number of distinct files remembered (for tests/telemetry).

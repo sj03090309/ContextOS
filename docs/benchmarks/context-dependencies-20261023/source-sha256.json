@@ -1,0 +1,34 @@
+{
+  "baseline": {
+    "Sources/ContextOSCore/Indexer/HeuristicParser.swift": "e1acece417d84b1ad1dbcc14c4a6f042e750c6af51fbaba1cbf6647d3379fda8",
+    "Sources/ContextOSCore/Optimizer/CodeSlicer.swift": "3bfb7d52c92cf5aefd210eea5a998063307d85676d801ce2f61cfa7a5ef8f314",
+    "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift": "248965fe15a7179ae70b576e2c3187fd19ce2bd3df42f7c3c93ad9a119ae010a",
+    "Sources/ContextOSCore/Optimizer/ContextSelection.swift": "7323fe8dd9c7e672b8ed9aef9c6ea8c8b124ac6dbe78ef50c7a9b764889ea7fd",
+    "Sources/ContextOSCore/Platform/macOS/IndexStore.swift": "ee18f8cb11ccc1fe88ab9a4970a55ee19be0319d41cf790856e9380faba02134",
+    "Sources/ContextOSCore/Service/ContextService.swift": "33ff706d7a7c2526ea887ea99b701142cc43ab92a88d06ed348e13fa7aac305d",
+    "Sources/contextos-mcp/MCPServer.swift": "b686f84afd5cf200dce9d82b665c503b7942f288ee84362d68d2645cd9965bcb",
+    "scripts/audit_context_quality.py": "2de0f077b157d6b6f1d00ae275414f74c6f0637392405a49c7289293faa2d3c6"
+  },
+  "candidate": {
+    "Sources/ContextOSCore/Dependency/ProjectModuleResolver.swift": "80cadde9eb4bb9a5d75ca9f88c4d1a087e865d78729e737f2d8cac9b9a01300d",
+    "Sources/ContextOSCore/Indexer/HeuristicParser.swift": "d2c19d92db1acfc04bba51d635b996d7b052bb0b1059ce7ba1cd367e0cb1e73c",
+    "Sources/ContextOSCore/Optimizer/CodeSlicer.swift": "b82f35f94449bfc217bbdf82daf43eed47c6940967295dd2ea6db550b3559a49",
+    "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift": "ce44c557519af1e17b01d3ad032c4b6ccff9ff33f46a4cf5c20242dd5e7ea4a1",
+    "Sources/ContextOSCore/Optimizer/ContextSelection.swift": "b17aad795bbed6bdfe2eaebace36a741db86cd0c521b78cf93cefaefa58f9aaa",
+    "Sources/ContextOSCore/Platform/macOS/IndexStore.swift": "09fd38a440e4888b1fd28830d8ba694e431bd2289a82684e7f45a53ee9362839",
+    "Sources/ContextOSCore/Platform/macOS/ContextBundleBuilder.swift": "afb9fb4f301137ca39020684da16dd321a93d26dc92e8846a9ef438189e6e553",
+    "Sources/ContextOSCore/Platform/macOS/SourceDependencyResolver.swift": "fafc7b74621cf0e998b585fbdca6fede534efb34ad02049e8982d031dbc07932",
+    "Sources/ContextOSCore/Service/ContextService.swift": "0943cfc9566c95a81f68abe1dae9c50954010a720e9fb725368c058dfef32821",
+    "Sources/contextos-mcp/MCPServer.swift": "877135a2e2dcfe66917167ee7e9299bd563bf7a8aeeece37444931306b216a04",
+    "Tests/ContextOSCoreTests/CrossFileContextTests.swift": "0e220ce5df48312b2c19b35ab84a4a903138d1fcf07044c8443861a4b6837ba8",
+    "scripts/audit_context_quality.py": "f00d077bf3975ec83a0e2904c2162e264693760e0b4236253855c6c3d8763789",
+    "scripts/audit_dependency_context.py": "afb62bc55e1aaf8a9df875fd79b74a6f4b5a654597022d564acfa96b8bf6a1c1"
+  },
+  "preserved_efficiency_sources": {
+    "Sources/ContextOSApp/DashboardModel.swift": "58249593da3ecb80eea00284c0d96b02fe8a1cf28604376312f2a70962e48144",
+    "Sources/ContextOSApp/UsageRefreshCoalescer.swift": "580e31d641869b7adf875f7b8e29d67208891bdb1a6ee77d4747234a2cee8b2b",
+    "Sources/ContextOSCore/Registry/AgentActivityMonitor.swift": "5ce97c6ed6088de421eeb8910cb9d139f92ddcd8e5a21b16b56283698b6268a0",
+    "Sources/ContextOSCore/Registry/SessionActivityTracker.swift": "18ed904fbeaea09abd1a1142ef3cd9b9d3f79b68d37df312897206d6c429fca4",
+    "Sources/ContextOSCore/Service/SessionMemory.swift": "8f2bf4c4f851e59a7a0abcb97bb4bbfeb2e78827aa2c910f9fef9b81eea4cb92"
+  }
+}

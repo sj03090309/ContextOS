@@ -1,0 +1,105 @@
+{
+  "date": "2026-10-23",
+  "scope": "Already optimized build 2117 source snapshot versus build 2118; fixed bf42f28 corpus. Core-file section presence includes explicitly incomplete deliveries. Six cross-file probes assert all required bodies at 200/250 estimated tokens.",
+  "quality": {
+    "baseline": {
+      "4000": {
+        "queries": 12,
+        "essential_at_1": 7,
+        "essential_in_first_3": 7,
+        "essential_delivered": 9,
+        "reported_required_omission_cases": 0,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 4
+      },
+      "8000": {
+        "queries": 12,
+        "essential_at_1": 10,
+        "essential_in_first_3": 10,
+        "essential_delivered": 12,
+        "reported_required_omission_cases": 0,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 4
+      }
+    },
+    "candidate": {
+      "4000": {
+        "queries": 12,
+        "essential_at_1": 12,
+        "essential_in_first_3": 12,
+        "essential_delivered": 12,
+        "reported_required_omission_cases": 7,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 4
+      },
+      "8000": {
+        "queries": 12,
+        "essential_at_1": 12,
+        "essential_in_first_3": 12,
+        "essential_delivered": 12,
+        "reported_required_omission_cases": 5,
+        "all_responses_within_estimated_budget": true,
+        "retention_probes_present": 4
+      }
+    }
+  },
+  "dependencies": {
+    "baseline": {
+      "cases": 6,
+      "complete_required_code": 0,
+      "all_within_budget": true,
+      "all_unrelated_bodies_absent": false
+    },
+    "candidate": {
+      "cases": 6,
+      "complete_required_code": 6,
+      "all_within_budget": true,
+      "all_unrelated_bodies_absent": true
+    }
+  },
+  "performance": {
+    "baseline": {
+      "ms": {
+        "cold_index": 279.667125,
+        "query_median_5": 279.452167,
+        "rank_median_7": 38.761542,
+        "scan_median_9": 14.621417,
+        "warm_index_median_9": 16.758
+      },
+      "peak_rss_mib": 24.578125,
+      "correctness_digests": [
+        "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922"
+      ]
+    },
+    "candidate": {
+      "ms": {
+        "cold_index": 278.598,
+        "query_median_5": 86.481833,
+        "rank_median_7": 38.933291,
+        "scan_median_9": 14.5575,
+        "warm_index_median_9": 16.121375
+      },
+      "peak_rss_mib": 25.46875,
+      "correctness_digests": [
+        "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922"
+      ]
+    },
+    "query_reduction_percent": 69.05308198951987
+  },
+  "validation": {
+    "native_passed": 428,
+    "native_skipped_windows_only": 3,
+    "portable_passed": 15,
+    "portable_skipped": 5,
+    "mcp_regressions": "passed",
+    "installed": "2.1.0 (2118), matching host/CLI/MCP/widget hashes, signatures and native UI checked",
+    "packaged_dependency_probes": {
+      "cases": 6,
+      "complete_required_code": 6,
+      "all_within_budget": true,
+      "all_unrelated_bodies_absent": true
+    },
+    "cleanup_logical_bytes": 1367037646,
+    "reverse_patch_check": "passed without changing the workspace"
+  }
+}

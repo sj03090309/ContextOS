@@ -75,7 +75,7 @@ final class BuildLogModel: ObservableObject {
             AgentSessionReader.invalidate()
             BuildLogReader.invalidate()
         }
-        let usage = AgentSessionReader.snapshot(force: force)
+        let usage = (try? AgentSessionReader.historySnapshot(force: force)) ?? AgentUsageSnapshot()
         return (BuildLogReader.log(since: since, snapshot: usage), usage.byDay)
     }
 }

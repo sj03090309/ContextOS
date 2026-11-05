@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import ContextOSCore
 
 /// The few choices the settings menu offers, kept in `UserDefaults`.
 ///
@@ -54,6 +55,17 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(mascotMotion.rawValue, forKey: Keys.mascotMotion) }
     }
 
+    /// Log files can contain conversations and tool output. A fresh install
+    /// must wait for this choice even when an older build collected by default.
+    @Published var agentLogsEnabled: Bool {
+        didSet {
+            // UserDefaults may consider numeric 1 equal to true and keep an
+            // invalid legacy value. Persist the user's explicit Boolean choice.
+            defaults.removeObject(forKey: AgentLogCollectionPolicy.preferenceKey)
+            defaults.set(agentLogsEnabled, forKey: AgentLogCollectionPolicy.preferenceKey)
+        }
+    }
+
     private let defaults: UserDefaults
 
     private enum Keys {
@@ -63,6 +75,7 @@ final class AppSettings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        agentLogsEnabled = AgentLogCollectionPolicy.permits(defaults: defaults, applicationBundleIdentifier: "com.contextos.app")
         showMenuBarSavings = defaults.object(forKey: Keys.menuBarSavings) as? Bool ?? true
         mascotMotion = defaults.string(forKey: Keys.mascotMotion)
             .flatMap(MascotMotion.init(rawValue:)) ?? .whileWorking

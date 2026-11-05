@@ -24,6 +24,21 @@ struct TranscriptCacheTests {
         try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
     }
 
+    /// Cache-hit fixtures must retain the file identity as well as its metadata.
+    /// An atomic replacement is now deliberately detected and reparsed.
+    private func rewriteSameFile(_ url: URL, _ text: String) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let identity = try #require(attributes[.systemFileNumber] as? NSNumber)
+        let data = Data(text.utf8)
+        #expect((attributes[.size] as? NSNumber)?.intValue == data.count)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: 0)
+        try handle.write(contentsOf: data)
+        let after = try FileManager.default.attributesOfItem(atPath: url.path)
+        #expect(after[.systemFileNumber] as? NSNumber == identity)
+    }
+
     @Test("a transcript touched without growing is re-parsed once, then served from the cache")
     func touchedTranscriptIsWrittenBack() throws {
         let dir = try tempDir()
@@ -47,8 +62,9 @@ struct TranscriptCacheTests {
         #expect(row.mtime == touched.timeIntervalSince1970)
 
         // Prove the next pass trusts the row: change the content behind the
-        // cache's back (same size), keep the saved mtime. A re-parse would see 910.
-        try (claudeLine(input: 900) + "\n").write(to: log, atomically: true, encoding: .utf8)
+        // cache's back in the same inode (same size), keep the saved mtime.
+        // A re-parse would see 910; replacement detection is tested separately.
+        try rewriteSameFile(log, claudeLine(input: 900) + "\n")
         try setMTime(log, touched)
         #expect(TranscriptCache(storePath: db).snapshot(of: files).totalTokens == 110)
     }
@@ -70,8 +86,9 @@ struct TranscriptCacheTests {
 
         // Same size, new content, original mtime — and no database to fall back
         // on. A pass that re-read the table would find it empty and re-parse (910);
-        // one working from its rows in memory trusts the unchanged size and mtime.
-        try (claudeLine(input: 900) + "\n").write(to: log, atomically: true, encoding: .utf8)
+        // one working from its rows in memory trusts the unchanged identity,
+        // size and mtime. Preserve the inode instead of replacing the file.
+        try rewriteSameFile(log, claudeLine(input: 900) + "\n")
         try setMTime(log, mtime)
         for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: db + suffix) }
         #expect(cache.snapshot(of: files).totalTokens == 110)

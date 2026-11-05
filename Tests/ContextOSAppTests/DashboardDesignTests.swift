@@ -2,12 +2,49 @@ import AppKit
 import SwiftUI
 import Testing
 import ContextOSUsage
+import ContextOSUsageUI
 import ContextOSCore
 @testable import ContextOSApp
 
 @Suite("Dashboard design", .serialized)
 @MainActor
 struct DashboardDesignTests {
+    @Test("Log aggregation waits for a persistent choice and revocation clears observed UI only")
+    func logConsentAndRevocation() throws {
+        let suite = "ContextOS.ConsentTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        #expect(!AppSettings(defaults: defaults).agentLogsEnabled)
+        defaults.set(1, forKey: AgentLogCollectionPolicy.preferenceKey)
+        let settings = AppSettings(defaults: defaults)
+        #expect(!settings.agentLogsEnabled)
+        let model = DashboardModel(startServices: false, settings: settings)
+        #expect(!model.agentLogCollectionEnabled)
+        #expect(model.concurrentUsage.widget.health == "로그 집계 꺼짐")
+        settings.agentLogsEnabled = true
+        #expect(AppSettings(defaults: defaults).agentLogsEnabled)
+        model.setAgentLogCollectionEnabled(true)
+        model.aiTokens = 123
+        model.agents = [.init(name: "Codex", present: true, detail: "previous session detail",
+                              connection: .configured(path: "/fixture/config.toml"), usage: .reported(tokens: 123))]
+        model.connected = true
+        model.tokensByDay = ["2026-11-03": 123]
+        model.todaySaved = 42
+        model.queryCount = 7
+        model.concurrentUsage = .init(widget: .init(days: [.init(date: Date(), tokens: 123)]),
+                                      sessions: [.init(id: "fixture", agent: "Codex", project: "/fixture", model: "test",
+                                                       state: .working, lastEvent: Date(), todayTokens: 123, totalTokens: 123)])
+        settings.agentLogsEnabled = false
+        model.setAgentLogCollectionEnabled(false)
+        #expect(!AppSettings(defaults: defaults).agentLogsEnabled)
+        #expect(model.aiTokens == 0 && model.tokensByDay == ["2026-11-03": 123])
+        #expect(model.concurrentUsage.sessions.isEmpty && model.concurrentUsage.widget.today == nil)
+        #expect(model.concurrentUsage.widget.health == "로그 집계 꺼짐")
+        #expect(model.todaySaved == 42 && model.queryCount == 7)
+        #expect(model.connected && model.agents.first?.connection.isConfigured == true)
+        #expect(model.agents.first?.usage == .paused && model.agents.first?.detail == nil)
+    }
+
     @Test("content fits compact and full screen budgets without moving the anchor")
     func screenBudgets() {
         for visibleHeight: CGFloat in [300, 480, 650, 861, 1100] {
@@ -24,11 +61,37 @@ struct DashboardDesignTests {
         ui.expanded = ["one-project"]
         ui.usageExpanded = true
         ui.tab = .activity
+        ui.page = .time
+        #expect(ui.navigatingForward)
+        ui.page = .overview
+        #expect(!ui.navigatingForward)
+        ui.page = .overview
+        #expect(!ui.navigatingForward)
         for index in 0..<90 { ui.page = DashboardUIState.Page.allCases[index % 3] }
         #expect(ui.expanded == ["one-project"])
         #expect(ui.usageExpanded)
         #expect(ui.tab == .activity)
         #expect(ui.hidePrivateDetails)
+    }
+
+    @Test("Maximum recorded counters render project shares, split bars and monthly totals safely")
+    func maximumCounterRendering() throws {
+        _ = NSApplication.shared
+        let model = DashboardModel(startServices: false)
+        let ui = DashboardUIState()
+        model.projectUsage = ["one", "two"].map {
+            ProjectAIUsage(name: $0, path: "/fixture/" + $0, total: .max,
+                           byAgent: [.init(agent: "Codex", tokens: .max), .init(agent: "Claude Code", tokens: .max)])
+        }
+        ui.expanded = Set(model.projectUsage.map(\.id))
+        let prefix = String(TimeKeys.localDay(Date().timeIntervalSince1970).prefix(7))
+        model.tokensByDay = Dictionary(uniqueKeysWithValues: (1...28).map {
+            (prefix + String(format: "-%02d", $0), Int.max)
+        })
+        let view = VStack { CalendarCard(); ProjectsList() }
+            .padding(16).frame(width: 340, height: 880).background(Brand.canvas)
+            .environmentObject(model).environmentObject(ui)
+        #expect(try !renderNative(view, height: 880, scheme: .dark).isEmpty)
     }
 
     @Test("fresh settings are still at rest, existing motion choices survive")
@@ -41,6 +104,7 @@ struct DashboardDesignTests {
         #expect(AppSettings(defaults: defaults).mascotMotion == .always)
         #expect(PanelMotion.response(reduced: true) == nil)
         #expect(PanelMotion.feedback(reduced: true) == nil)
+        #expect(PanelMotion.navigation(reduced: true) == nil)
     }
 
     @Test("privacy rendering preserves projects, questions and numeric history")
@@ -131,6 +195,7 @@ struct DashboardDesignTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: defaults)
         model.concurrentUsage = UsagePreviewData.snapshot()
+        model.agents = [.init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml"))]
         model.totalSaved = 12000
         model.todaySaved = 200
         ui.usageExpanded = true
@@ -172,29 +237,109 @@ struct DashboardDesignTests {
             let png = try renderNative(view, height: 400, scheme: .dark)
             try png.write(to: directory.appendingPathComponent("state-\(state).png"))
         }
-        ui.showSettings = true; ui.page = .overview; ui.panelHeight = 440
-        let settingsView = DashboardView(workTime: time).environmentObject(model).environmentObject(ui)
-            .environment(\.colorScheme, .dark).transaction { $0.animation = nil; $0.disablesAnimations = true }
-        try renderNative(settingsView, height: 440, scheme: .dark).write(to: directory.appendingPathComponent("settings-compact.png"))
+        ui.page = .overview; ui.panelHeight = 440
+        for state in ["setup", "settings", "connections"] {
+            model.agents = state == "setup" ? [] : [
+                .init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml")),
+                .init(name: "Claude Code", present: true, connection: .notConfigured(path: "/fixture/settings.json"))
+            ]
+            ui.showSettings = state == "settings"
+            ui.showConnections = state == "connections"
+            for scheme in [ColorScheme.dark, .light] {
+                let view = DashboardView(workTime: time).environmentObject(model).environmentObject(ui)
+                    .environment(\.colorScheme, scheme)
+                    .transaction { $0.animation = nil; $0.disablesAnimations = true }
+                let theme = scheme == .dark ? "dark" : "light"
+                try renderNative(view, height: 440, scheme: scheme)
+                    .write(to: directory.appendingPathComponent("\(state)-\(theme).png"))
+            }
+        }
+    }
+
+    @Test("Changing the selected metric changes every widget size, with legacy token snapshots preserved")
+    func widgetMetricSelection() throws {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        var snapshot = UsagePreviewData.snapshot(now: now).widget
+        snapshot.timing = .init(generatedAt: now,
+            manualNanoseconds: 5_432_000_000_000, foregroundNanoseconds: 1_234_000_000_000,
+            manualState: .paused, foregroundState: .paused, isSample: true,
+            activity: .init(now: now, estimatedNanoseconds: 9_032_000_000_000, phase: .paused))
+        for size in UsageWidgetView.Size.allCases {
+            for scheme in [ColorScheme.dark, .light] {
+                var images: [Data] = []
+                for metric in SmallWidgetMetric.allCases {
+                    snapshot.smallMetric = metric
+                    let png = try widgetPNG(snapshot, size: size, scheme: scheme, now: now)
+                    images.append(png)
+                    if let path = ProcessInfo.processInfo.environment["CONTEXTOS_DESIGN_QA_DIR"] {
+                        let theme = scheme == .dark ? "dark" : "light"
+                        try png.write(to: URL(fileURLWithPath: path)
+                            .appendingPathComponent("widget-\(metric.rawValue)-\(size.rawValue)-\(theme).png"))
+                    }
+                }
+                for first in images.indices {
+                    for second in images.indices where second > first {
+                        #expect(try widgetDifference(images[first], images[second]) > 0.0005,
+                                "Every selection must visibly change the \(size.rawValue) widget")
+                    }
+                }
+                snapshot.smallMetric = nil
+                let legacy = try widgetPNG(snapshot, size: size, scheme: scheme, now: now)
+                if let path = ProcessInfo.processInfo.environment["CONTEXTOS_DESIGN_QA_DIR"] {
+                    let theme = scheme == .dark ? "dark" : "light"
+                    try legacy.write(to: URL(fileURLWithPath: path)
+                        .appendingPathComponent("widget-legacy-\(size.rawValue)-\(theme).png"))
+                }
+                #expect(try widgetDifference(legacy, images[0]) < 0.00001,
+                        "Legacy token rendering: \(size.rawValue), \(scheme)")
+            }
+        }
+    }
+
+    private func widgetPNG(_ snapshot: WidgetUsageSnapshot, size: UsageWidgetView.Size,
+                           scheme: ColorScheme, now: Date) throws -> Data {
+        let width: CGFloat = size == .small ? 158 : 338
+        let height: CGFloat = size == .large ? 354 : 158
+        let view = UsageWidgetView(snapshot: snapshot, size: size, now: now)
+            .padding(14).frame(width: width, height: height)
+            .background { UsageWidgetBackground() }.environment(\.colorScheme, scheme)
+        // ImageRenderer invokes a Metal path that aborts on the Intel CI
+        // virtual GPU. Use the same native AppKit bitmap path as the dashboard
+        // so every size/theme still receives an actual pixel comparison.
+        return try renderNative(view, height: height, scheme: scheme, width: width)
+    }
+
+    private func widgetDifference(_ first: Data, _ second: Data) throws -> Double {
+        let a = try #require(NSBitmapImageRep(data: first))
+        let b = try #require(NSBitmapImageRep(data: second))
+        #expect(a.pixelsWide == b.pixelsWide && a.pixelsHigh == b.pixelsHigh && a.bytesPerRow == b.bytesPerRow)
+        let count = a.bytesPerRow * a.pixelsHigh
+        let pixelsA = try #require(a.bitmapData), pixelsB = try #require(b.bitmapData)
+        var difference = 0
+        for index in 0..<count { difference += abs(Int(pixelsA[index]) - Int(pixelsB[index])) }
+        // Native text rasterization may differ by one antialiasing color step;
+        // compare actual pixels with a small tolerance, rather than PNG bytes.
+        return Double(difference) / Double(count) / 255
     }
 
     /// ScrollView uses native drawing on macOS; ImageRenderer alone leaves its
     /// viewport blank. Attach to an offscreen window and cache the native view.
-    private func renderNative<V: View>(_ view: V, height: CGFloat, scheme: ColorScheme) throws -> Data {
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 340, height: height),
+    private func renderNative<V: View>(_ view: V, height: CGFloat, scheme: ColorScheme, width: CGFloat = 340) throws -> Data {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: height),
                               styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         let host = NSHostingView(rootView: view)
         host.sizingOptions = []
-        host.frame = NSRect(x: 0, y: 0, width: 340, height: height)
+        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
         window.contentView = host
         window.layoutIfNeeded()
         host.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
-        #expect(bitmap.pixelsWide >= 340)
+        #expect(bitmap.pixelsWide >= Int(width))
         #expect(bitmap.pixelsHigh >= Int(height))
         let png = try #require(bitmap.representation(using: .png, properties: [:]))
         window.close()

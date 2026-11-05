@@ -1,0 +1,26 @@
+{
+  "baseline": {
+    "Sources/ContextOSCore/Indexer/HeuristicParser.swift": "c0cbe583ebdbb92d6340e5ab40f689725a06983650c24fbd654db92b5e1d8a4c",
+    "Sources/ContextOSCore/Indexer/Indexer.swift": "43f41335675224371671a65652fe23c3e568a5c92a2c9591c3c500d76f45969e",
+    "Sources/ContextOSCore/Optimizer/CodeSlicer.swift": "13f36658a556db2ba11d00a925bdd5dbd607219024b4ef38ada4ad33f0a00b10",
+    "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift": "b3d34d1939ad193517cf46c34b2d5e1e497f5f82efbf868a19361f7a8dfd9361",
+    "Sources/ContextOSCore/Optimizer/QueryRefiner.swift": "027134de622a6d3a2cc79f28da2f3c4d45ae50d9f9f73d5054d037e2f13fe3b1",
+    "Sources/ContextOSCore/Optimizer/TextTokens.swift": "35ad2f4031c84d32452bda50081c23ee8592fec79bf82fc0438d81eaf98753ae",
+    "Sources/ContextOSCore/Platform/macOS/IndexStore.swift": "44bdde6cd36c553a7c8725cf28bf8f28db801ffa3d588c734e4b6b8e12594c2e",
+    "Sources/contextos-mcp/MCPServer.swift": "18788b70c9e6de376b45f1415209f0382d4e94f7e4fa54816554b2bd3310f1b3",
+    "scripts/audit_context_quality.py": "17d9111c431244b32a5f938b1c2ca2a3b2103d40427847cdc08da881d8b0e269"
+  },
+  "candidate": {
+    "Sources/ContextOSCore/Indexer/SourceLexicon.swift": "151f3410a75c03c24e137b257df289c430c0c87a67430b0d239c27f45ca6ff83",
+    "Sources/ContextOSCore/Indexer/HeuristicParser.swift": "e1acece417d84b1ad1dbcc14c4a6f042e750c6af51fbaba1cbf6647d3379fda8",
+    "Sources/ContextOSCore/Indexer/Indexer.swift": "ed4cd904ab3552d768e2336db54f17949a40ee5406c807772d689f8b70d22c3c",
+    "Sources/ContextOSCore/Optimizer/CodeSlicer.swift": "3bfb7d52c92cf5aefd210eea5a998063307d85676d801ce2f61cfa7a5ef8f314",
+    "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift": "248965fe15a7179ae70b576e2c3187fd19ce2bd3df42f7c3c93ad9a119ae010a",
+    "Sources/ContextOSCore/Optimizer/QueryRefiner.swift": "979a039a3a82cdf11a53dca63559131e4db7cdb99667522d184d82f2e68c89d0",
+    "Sources/ContextOSCore/Optimizer/TextTokens.swift": "35ad2f4031c84d32452bda50081c23ee8592fec79bf82fc0438d81eaf98753ae",
+    "Sources/ContextOSCore/Platform/macOS/IndexStore.swift": "ee18f8cb11ccc1fe88ab9a4970a55ee19be0319d41cf790856e9380faba02134",
+    "Sources/contextos-mcp/MCPServer.swift": "b686f84afd5cf200dce9d82b665c503b7942f288ee84362d68d2645cd9965bcb",
+    "Tests/ContextOSCoreTests/ContextQualityTests.swift": "9ecd8e5d4506744bf3e4eed0ea427147378caed6ff7e7f21ba36bd9a54ac6ecc",
+    "scripts/audit_context_quality.py": "2de0f077b157d6b6f1d00ae275414f74c6f0637392405a49c7289293faa2d3c6"
+  }
+}

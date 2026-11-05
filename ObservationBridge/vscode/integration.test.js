@@ -75,7 +75,7 @@ test('isolated cross-process activation, shared values, multi-window union, idle
     await until(()=>a.renderedFrames>=beforeA+20&&c.renderedFrames>=beforeC+20,'all real Unix burst frames rendered');await same(s,a,c);
     assert.ok(!a.sockets[0].destroyed&&!c.sockets[0].destroyed);checks.push('20-frame production host burst preserves connections; >2KiB coalescence is a separate deterministic unit fixture');
     const report={scope:'real Unix IPC and production Swift ledger/store; mocked VS Code API and synthetic monotonic clock',gui:false,realExtensionHost:false,realUserActivity:false,productionUserSettingsTouched:false,productionSocketOrAggregateTouched:false,checks,finalEstimatedNanoseconds:s.estimatedNanoseconds,largestRealSocketChunk:Math.max(...clients.map(w=>w.largestChunk)),temporaryStoreBytes:fs.statSync(file).size};
-    const out=path.join(repo,'artifacts/bridge-cross-process-integration.json');fs.writeFileSync(out,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
+    const out=path.join(repo,'artifacts/bridge-cross-process-integration.json');fs.mkdirSync(path.dirname(out),{recursive:true});fs.writeFileSync(out,JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
   } finally {
     clients.forEach(w=>w.dispose());child.stdin.write(JSON.stringify({action:'quit'})+'\n');child.stdin.end();
     await until(()=>child.exitCode!==null||child.signalCode!==null,'test host exit').catch(()=>{child.kill('SIGTERM');});

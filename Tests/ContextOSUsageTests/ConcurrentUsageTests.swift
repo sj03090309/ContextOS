@@ -365,4 +365,30 @@ extension ConcurrentUsageTests {
         #expect(s.widget.today == 50)
         #expect(s.todayModels.count == 1 && s.todayModels.first?.tokens == 50)
     }
+    @Test func versionOneCollectionIssueVocabulariesRemainReadable() throws {
+        let rawValues = ["fileLimit", "scanLimit", "unreadable", "invalidRecord", "oversizedRecord", "recordLimit", "inheritedHistory", "ambiguousCounters",
+                         "entryLimit", "eventLimit", "readBudget", "malformedRecord", "excludedSubagent", "unreportedUsage", "unsupportedAccounting"]
+        #expect(Set(CollectionIssue.allCases.map(\.rawValue)) == Set(rawValues))
+        for rawValue in rawValues {
+            let json = Data("{\"name\":\"Codex\",\"state\":\"partial\",\"issues\":[\"\(rawValue)\"]}".utf8)
+            let provider = try JSONDecoder().decode(UsageProvider.self, from: json)
+            #expect(provider.issues?.first?.rawValue == rawValue)
+            #expect(try JSONDecoder().decode(UsageProvider.self, from: JSONEncoder().encode(provider)) == provider)
+        }
+    }
+
+    @Test func collectionProgressScopeAndFailuresKeepDistinctWarnings() throws {
+        func health(_ provider: UsageProvider) -> String { WidgetUsageSnapshot(providers: [provider]).health }
+        #expect(health(.init(name: "Codex", state: .partial, isCollecting: true)) == "기록 집계 중")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.readBudget])) == "기록 집계 중")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.entryLimit])) == "집계 범위 제한")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.recordLimit])) == "집계 범위 제한")
+        #expect(health(.init(name: "Codex", state: .partial, isCollecting: true, issues: [.invalidRecord])) == "일부 수집 불가")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.malformedRecord])) == "일부 수집 불가")
+        #expect(health(.init(name: "Codex", state: .unavailable)) == "일부 수집 불가")
+        let legacy = try JSONDecoder().decode(UsageProvider.self, from: Data(#"{"name":"Codex","state":"partial"}"#.utf8))
+        #expect(legacy.hasCollectionFailure)
+        #expect(health(legacy) == "일부 기록만 수집")
+    }
+
 }

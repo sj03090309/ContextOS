@@ -54,14 +54,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         if isUsageReview {
             usageWindow.show(UsageReviewRoot(), title: reviewTitle)
         } else {
-            dashboardUI.page = .usage
+            dashboardUI.navigate(to: .usage)
             showPopover()
         }
     }
     private func showPage(_ page: DashboardUIState.Page) {
         if isUsageReview { showUsage(); return }
-        dashboardUI.showSettings = false
-        dashboardUI.page = page
+        dashboardUI.navigate(to: page)
         showPopover()
     }
     private lazy var mascot = MascotRenderer(state: model.mascot)
@@ -218,8 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
 
     @objc private func openPageFromMenu(_ sender: NSMenuItem) {
         guard DashboardUIState.Page.allCases.indices.contains(sender.tag) else { return }
-        dashboardUI.showSettings = false
-        dashboardUI.page = DashboardUIState.Page.allCases[sender.tag]
+        dashboardUI.navigate(to: DashboardUIState.Page.allCases[sender.tag])
         showPopover()
     }
 

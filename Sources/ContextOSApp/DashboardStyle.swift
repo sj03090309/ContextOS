@@ -28,14 +28,31 @@ enum PanelMotion {
     static func feedback(reduced: Bool) -> Animation? {
         reduced ? nil : .easeOut(duration: 0.14)
     }
+    static func navigation(reduced: Bool) -> Animation? {
+        reduced ? nil : .easeInOut(duration: 0.20)
+    }
+    static func page(reduced: Bool, forward: Bool) -> AnyTransition {
+        guard !reduced else { return .identity }
+        let offset: CGFloat = forward ? 10 : -10
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: offset)),
+            removal: .opacity.combined(with: .offset(x: -offset)))
+    }
+    static func disclosure(reduced: Bool) -> AnyTransition {
+        reduced ? .identity : .opacity.combined(with: .offset(y: -5))
+    }
+    static func overlay(reduced: Bool) -> AnyTransition {
+        reduced ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing))
+    }
 }
 
 struct PanelPressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .opacity(configuration.isPressed ? 0.76 : 1)
-            .scaleEffect(configuration.isPressed && !reduced ? 0.985 : 1)
+            .opacity(!isEnabled ? 0.42 : configuration.isPressed ? 0.76 : 1)
+            .scaleEffect(isEnabled && configuration.isPressed && !reduced ? 0.985 : 1)
             .animation(PanelMotion.feedback(reduced: reduced), value: configuration.isPressed)
     }
 }

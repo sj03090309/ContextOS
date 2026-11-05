@@ -17,8 +17,13 @@ Windows용은 **빌드 준비 단계**입니다. 같은 Swift 순수 로직·CLI
 - Claude Code·Codex 연결/해제/복구는 미리보기 후 적용합니다. 사용자 키·다른 MCP·혼합 훅·주석을 보존하고 변경 전 private 백업을 남깁니다. 형식 오류·동시 수정이 감지되면 중단합니다.
 - Claude의 `UserPromptSubmit` 훅은 관련 파일·심볼 힌트를 제공합니다. Codex는 MCP 등록과 지침을 제공합니다. 에이전트가 실제로 도구를 호출하는지는 해당 도구에서 확인해야 합니다.
 - 메뉴바 앱은 로컬 기록의 사용량·활동, ContextOS의 추정 전달량, Git 빌드 로그·코드 부채 휴리스틱과 마스코트를 표시합니다. Gemini/Cursor/Windsurf의 탐지 코드는 남아 있으나 이번 자동 설정 관리 범위는 Claude Code·Codex입니다.
+- AI 로컬 로그 집계는 기본 꺼짐입니다. 설정에서 세션 파일에 대화·도구 출력이 포함될 수 있음을 확인한 뒤 켜고, 언제든 중지할 수 있습니다. 기존 원본·저장 기록은 삭제하지 않습니다.
 
 토큰 수는 로컬 근사치입니다. 전체 파일 대비 선택한 텍스트의 추정 차이는 실제 모델 청구액 절감·모델별 호환성·생산성·수익성이 검증됐다는 뜻이 아닙니다. 기존 UI 자료와 수치는 현재 릴리스의 외부 고객 실험을 대신하지 않습니다.
+
+최신 배포 점검은 [2026-11-03 상세 분석](docs/PRODUCTION_AUDIT_2026-11-03.md)에 있습니다. 로컬 앱 검증과 공개 배포용 Developer ID·공증·Gatekeeper 검증을 각각 기록합니다.
+
+[2026-11-05 기능 점검](docs/BUG_AUDIT_2026-11-05.md)에서는 로그 수집이 꺼진 상태의 달력 기록 복원, 화면 잠금 시 타이머 중단, 화면 이동과 MCP 초기화·자동 반영 회귀를 확인했습니다.
 
 ## 빌드·패키징
 
@@ -37,6 +42,8 @@ swift build -c release
 ```
 
 설치 스크립트는 기존 앱을 이전 버전 백업으로 보존합니다. 설정·인덱스·사용 기록은 자동 삭제하지 않습니다. [설치·업데이트·해제·복구 안내](docs/INSTALL.md), [개인정보와 데이터 위치](docs/PRIVACY.md)를 먼저 읽어 주세요.
+
+이 Mac에서 소스 저장 시 설치 앱도 자동으로 갱신하려면 `python3 scripts/dev_auto_update.py enable`을 실행합니다. 기존 서명·위젯을 유지하며 빌드 성공 후 정상 종료·설치·재실행합니다. [자동 반영 개발 환경과 해제 방법](docs/DEVELOPMENT.md)을 확인하세요.
 
 ## AI 도구 연결
 
@@ -88,6 +95,8 @@ CLI="$HOME/Applications/ContextOS.app/Contents/Resources/contextos"
 코어 로직은 `ContextOSCore`, 어댑터는 CLI `contextos`, stdio 서버 `contextos-mcp`, SwiftUI 앱 `ContextOSApp`입니다. `contextos-bench`는 합성 입력을 쓰는 개발용 벤치마크이며 앱 번들에 포함하지 않습니다.
 
 ## 검증·성능
+
+최신 변경은 [작은 예산·다른 파일의 보조 구현 개선](docs/CONTEXT_DEPENDENCIES_2026-10-23.md)에 있습니다. 이전 [상시 실행 최적화·최초 진단](docs/CONTEXT_AUDIT_2026-10-22.md), [검색·같은 파일의 보조 함수·화살표 함수 개선](docs/CONTEXT_QUALITY_2026-10-22.md)도 전후 실행 증거와 함께 보존했습니다.
 
 ```sh
 python3 scripts/smoke_connections.py --binary .build/release/contextos

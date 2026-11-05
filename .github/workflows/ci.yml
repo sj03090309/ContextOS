@@ -38,14 +38,22 @@ jobs:
           swift test --scratch-path .build-portable --jobs 2 --no-parallel --filter PortableContractTests
           BIN="$(swift build --scratch-path .build-portable --show-bin-path)"
           python3 scripts/verify_contract.py --cli "$BIN/contextos" --mcp "$BIN/contextos-mcp" --preparation --compare-to "$RUNNER_TEMP/contextos-native-contract.json"
+      - name: MCP executable reload regression (temporary fixtures only)
+        if: runner.os == 'macOS'
+        run: python3 scripts/smoke_mcp_hot_reload.py --binary "$(swift build --show-bin-path)/contextos-mcp"
       - name: Release build
         run: swift build -c release --jobs 2
       - name: Temporary-home CLI connections
         run: python3 scripts/smoke_connections.py --binary "$(swift build -c release --show-bin-path)/contextos"
+      - name: Development updater regression (temporary fixtures only)
+        run: python3 scripts/smoke_dev_auto_update.py
       - name: Isolated MCP regression
-        run: python3 scripts/benchmark_context.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp" --verify
+        run: |
+          python3 scripts/benchmark_context.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp" --verify
+          python3 scripts/audit_mcp_input.py --binary "$(swift build -c release --show-bin-path)/contextos-mcp"
       - name: Local packaging (no installation, launch or public upload)
         run: |
+          python3 scripts/smoke_package_output.py
           bash scripts/package_app.sh --binary-dir "$(swift build -c release --show-bin-path)"
           python3 scripts/verify_bundle.py dist/ContextOS.app
           python3 scripts/smoke_install.py --app dist/ContextOS.app

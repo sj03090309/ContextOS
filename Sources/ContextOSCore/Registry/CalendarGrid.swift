@@ -1,4 +1,5 @@
 import Foundation
+import ContextOSUsage
 
 /// Lays a month out into calendar rows, and labels days.
 ///
@@ -44,7 +45,9 @@ public enum CalendarGrid {
     /// Sum of a month's daily values.
     public static func total(_ month: Date, _ byDay: [String: Int]) -> Int {
         let keys = Set(weeks(of: month).flatMap { $0 }.compactMap { $0?.key })
-        return byDay.filter { keys.contains($0.key) }.values.reduce(0, +)
+        return byDay.filter { keys.contains($0.key) }.values.reduce(0) {
+            Int(UsageNumbers.add(Int64($0), Int64($1)))
+        }
     }
 
     // MARK: - Day labels

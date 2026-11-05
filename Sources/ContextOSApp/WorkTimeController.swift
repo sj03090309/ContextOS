@@ -63,7 +63,15 @@ final class WorkTimeController: ObservableObject {
     private var bridgeLedgers: [String: ObservationBridgeLedger] = [:]
     private var closedEditCount: UInt64?
     private var bridgeServer: ObservationBridgeServer?
-    init(restoreConnections: Bool = true) {
+    private let workspaceNotifications: NotificationCenter
+    private let distributedNotifications: NotificationCenter
+    private let applicationNotifications: NotificationCenter
+    init(restoreConnections: Bool = true, workspaceNotifications: NotificationCenter? = nil,
+         distributedNotifications: NotificationCenter? = nil,
+         applicationNotifications: NotificationCenter = .default) {
+        self.workspaceNotifications = workspaceNotifications ?? NSWorkspace.shared.notificationCenter
+        self.distributedNotifications = distributedNotifications ?? DistributedNotificationCenter.default()
+        self.applicationNotifications = applicationNotifications
         guard restoreConnections else { return }
         // Only a prior explicit host opt-in restores receiver startup. Fresh
         // candidates remain off; never infer consent from an installed VSIX.
@@ -72,6 +80,7 @@ final class WorkTimeController: ObservableObject {
         }
     }
     func updateAIExecution(_ value: AIExecutionSummary) { aiExecution = value }
+    func clearAIExecution() { aiExecution = nil }
     func setBridgeEnabled(_ enabled: Bool) {
         guard !enabled || Bundle.main.bundleIdentifier == "com.contextos.app" else {
             bridgeStatus = "테스트 앱 · 자동 활동 연결은 운영 앱에서 켜세요"; return
@@ -183,7 +192,7 @@ final class WorkTimeController: ObservableObject {
         capture(); foregroundEnabled = enabled; interrupted = false; boundaryReason = nil
         if enabled {
             prepareEpochPoint(); ensureBoundaries()
-            activationObserver = workspace.notificationCenter.addObserver(
+            activationObserver = workspaceNotifications.addObserver(
                 forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
                     DispatchQueue.main.async { self?.reconcileForeground() }
                 }
@@ -191,7 +200,7 @@ final class WorkTimeController: ObservableObject {
         } else {
             if foregroundActive { ledger.end(.editorForeground, id: "foreground", at: DispatchTime.now().uptimeNanoseconds) }
             foregroundActive = false; editorLabel = nil
-            if let activationObserver { workspace.notificationCenter.removeObserver(activationObserver) }
+            if let activationObserver { workspaceNotifications.removeObserver(activationObserver) }
             activationObserver = nil; publish(); schedule(); releaseUnusedBoundaries()
         }
     }
@@ -262,7 +271,7 @@ final class WorkTimeController: ObservableObject {
         ledger.interrupt(); manualRunning = false; foregroundActive = false; foregroundEnabled = false
         suspendAutomaticActivity()
         editorLabel = nil; interrupted = true; boundaryReason = reason
-        if let activationObserver { workspace.notificationCenter.removeObserver(activationObserver) }
+        if let activationObserver { workspaceNotifications.removeObserver(activationObserver) }
         activationObserver = nil; timer?.invalidate(); timer = nil
         publish(); releaseUnusedBoundaries()
     }
@@ -274,10 +283,13 @@ final class WorkTimeController: ObservableObject {
     private func ensureBoundaries() {
         guard boundaries.isEmpty else { return }
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
-            observe(workspace.notificationCenter, name, "절전 또는 세션 비활성")
+            observe(workspaceNotifications, name, "절전 또는 세션 비활성")
         }
+        // Locking does not require display sleep or switching login sessions.
+        // Stop the observation epoch immediately, even while the display stays on.
+        observe(distributedNotifications, Notification.Name("com.apple.screenIsLocked"), "화면 잠금")
         for name in [Notification.Name.NSSystemTimeZoneDidChange, .NSCalendarDayChanged, NSApplication.willTerminateNotification] {
-            observe(.default, name, "일자 또는 시간대 변경")
+            observe(applicationNotifications, name, "일자 또는 시간대 변경")
         }
     }
     private func observe(_ center: NotificationCenter, _ name: Notification.Name, _ reason: String) {

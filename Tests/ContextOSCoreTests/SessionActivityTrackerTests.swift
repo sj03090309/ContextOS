@@ -322,4 +322,44 @@ struct SessionActivityTrackerTests {
             #expect(v.selected?.session == a.path)
         }
     }
+
+    @Test("Oversized records remain uncertain across read budgets and recover on an explicit new turn")
+    func oversizedRecord() throws {
+        try withLogs { root in
+            let file = root.appendingPathComponent("large.jsonl")
+            try write([begin(-100), claude(-1, content: String(repeating: "x", count: 20_000), stop: "end_turn")], to: file)
+            let tracker = SessionActivityTracker(maximumLineBytes: 512, maximumReadBytes: 2048)
+            var value = tracker.snapshot(logs: try logs([file]), now: now)
+            for _ in 0..<15 {
+                #expect(value.selected?.phase != .completed)
+                value = tracker.snapshot(logs: try logs([file]), now: now)
+            }
+            #expect(value.selected?.phase == .unknown)
+            // The skipped end_turn cannot be fabricated from the log becoming quiet.
+            #expect(value.selected?.endedAt == nil)
+            let handle = try FileHandle(forWritingTo: file)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            var data = try JSONSerialization.data(withJSONObject: begin(0)); data.append(10)
+            try handle.write(contentsOf: data)
+            #expect(tracker.snapshot(logs: try logs([file]), now: now).selected?.phase == .working)
+        }
+    }
+
+    @Test("A shared read budget continues across multiple sessions without losing their lifecycle")
+    func sharedReadBudget() throws {
+        try withLogs { root in
+            let files = (0..<8).map { root.appendingPathComponent("\($0).jsonl") }
+            for file in files { try write([begin(-30), call(-1)], to: file) }
+            let tracker = SessionActivityTracker(maximumLineBytes: 512, maximumReadBytes: 1024)
+            let metadata = try logs(files)
+            let first = tracker.snapshot(logs: metadata, now: now)
+            #expect(first.activeSessions < 8)
+            #expect(first.recheckAt == at(1))
+            var last = first
+            for _ in 0..<15 { last = tracker.snapshot(logs: metadata, now: now) }
+            #expect(last.activeSessions == 8)
+            #expect(last.selected?.pendingTools == 1)
+        }
+    }
 }

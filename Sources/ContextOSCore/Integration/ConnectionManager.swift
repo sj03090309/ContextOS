@@ -52,20 +52,22 @@ public struct ConnectionManager: Sendable {
     private func receiptPath(_ agent: ManagedAgent) -> String { ".contextos-backups/owners/\(agent.key).json" }
 
     public func previewConnect(_ agent: ManagedAgent) throws -> ConnectionPreview {
+        var snapshot = SettingsSnapshot(transaction: transaction)
         var changes: [SettingsChange] = [], mutations: [OwnedMutation] = [], warnings: [String] = []
-        let prior = try receipt(agent)
+        let prior = try receipt(agent, snapshot: &snapshot)
         if let prior {
             // Fail before changing any file when an owned entry was edited.
-            for mutation in prior.mutations { try verify(mutation) }
+            for mutation in prior.mutations { try verify(mutation, snapshot: &snapshot) }
         }
         if agent == .codex {
             let file = agent.files[0]
-            var editor = try CodexSettingsEditor(transaction.read(file))
+            var editor = try CodexSettingsEditor(snapshot.read(file))
             if try !editor.hasSection {
                 try editor.addSection(command: mcpBinaryPath)
                 mutations.append(OwnedMutation(kind: .tomlSection, file: file,
                                                after: Data(try editor.ownedSection()!.utf8)))
-            } else if let marked = try editor.ownedSection(), Self.onlyManagedTOMLKeys(marked) {
+            } else if let marked = try editor.ownedSection(), try !editor.hasChildSections,
+                      Self.onlyManagedTOMLKeys(marked) {
                 try editor.set("command", to: String(data: JSONSettingsEditor.encode(mcpBinaryPath), encoding: .utf8)!)
                 try editor.set("args", to: "[]")
                 mutations.append(OwnedMutation(kind: .tomlSection, file: file,
@@ -78,10 +80,10 @@ public struct ConnectionManager: Sendable {
                     mutations.append(OwnedMutation(kind: .tomlValue, file: file, path: [key], before: before, after: Data(value.utf8)))
                 }
             }
-            changes.append(try transaction.change(file, after: editor.data))
+            changes.append(try snapshot.change(file, after: editor.data))
         } else {
             let file = agent.files[0]
-            var editor = try JSONSettingsEditor(transaction.read(file), file: ".claude.json")
+            var editor = try JSONSettingsEditor(snapshot.read(file), file: ".claude.json")
             let entryPath = ["mcpServers", "contextos"]
             let existing = try editor.value(entryPath)
             if existing == nil || Self.isLegacyMCP(existing) {
@@ -98,22 +100,22 @@ public struct ConnectionManager: Sendable {
                     mutations.append(OwnedMutation(kind: .json, file: file, path: path, before: before, after: value))
                 }
             }
-            changes.append(try transaction.change(file, after: editor.data))
+            changes.append(try snapshot.change(file, after: editor.data))
             let settingsFile = agent.files[1]
-            var settings = try JSONSettingsEditor(transaction.read(settingsFile), file: "settings.json")
+            var settings = try JSONSettingsEditor(snapshot.read(settingsFile), file: "settings.json")
             let hook = try JSONSettingsEditor.encode(["type": "command", "command": cliBinaryPath, "args": ["hook"], "timeout": 20])
             for event in ["UserPromptSubmit", "Stop"] {
                 try Self.updateHooks(&settings, event: event, insert: hook, expected: nil)
                 mutations.append(OwnedMutation(kind: .hook, file: settingsFile, path: ["hooks", event], after: hook))
             }
-            changes.append(try transaction.change(settingsFile, after: settings.data))
+            changes.append(try snapshot.change(settingsFile, after: settings.data))
         }
         let instructionFile = agent.files.last!
-        let original = try SettingsTransaction.text(transaction.read(instructionFile), file: (instructionFile as NSString).lastPathComponent)
+        let original = try SettingsTransaction.text(snapshot.read(instructionFile), file: (instructionFile as NSString).lastPathComponent)
         let block = "<!-- ContextOS:begin -->\n" + ClaudeIntegration.instructionBody() + "\n<!-- ContextOS:end -->"
         let instruction = try Self.settingInstruction(original, to: block)
         mutations.append(OwnedMutation(kind: .instruction, file: instructionFile, after: Data(block.utf8)))
-        changes.append(try transaction.change(instructionFile, after: Data(instruction.utf8)))
+        changes.append(try snapshot.change(instructionFile, after: Data(instruction.utf8)))
         if let prior {
             for index in mutations.indices {
                 if let old = prior.mutations.first(where: { $0.kind == mutations[index].kind && $0.file == mutations[index].file && $0.path == mutations[index].path }) {
@@ -122,13 +124,14 @@ public struct ConnectionManager: Sendable {
             }
         }
         let owner = ConnectionReceipt(agent: agent, mutations: mutations)
-        changes.append(try transaction.change(receiptPath(agent), after: Self.encodeReceipt(owner)))
+        changes.append(try snapshot.change(receiptPath(agent), after: Self.encodeReceipt(owner)))
         return preview(agent, action: "connect", changes: changes, warnings: warnings)
     }
 
     public func previewDisconnect(_ agent: ManagedAgent) throws -> ConnectionPreview {
-        guard let owner = try receipt(agent) else {
-            let data = try transaction.read(agent.files[0])
+        var snapshot = SettingsSnapshot(transaction: transaction)
+        guard let owner = try receipt(agent, snapshot: &snapshot) else {
+            let data = try snapshot.read(agent.files[0])
             if data != nil, (agent == .codex ? try CodexSettingsEditor(data).hasSection : try JSONSettingsEditor(data, file: ".claude.json").value(["mcpServers", "contextos"]) != nil) {
                 return preview(agent, action: "disconnect", changes: [], warnings: ["관리 기록이 없는 기존 등록은 보존합니다. 연결 설정을 먼저 확인하면 ContextOS 변경만 안전하게 관리할 수 있습니다."])
             }
@@ -136,7 +139,7 @@ public struct ConnectionManager: Sendable {
         }
         var edited: [String: Data] = [:]
         for mutation in owner.mutations {
-            var data = try edited[mutation.file] ?? transaction.read(mutation.file)
+            var data = try edited[mutation.file] ?? snapshot.read(mutation.file)
             switch mutation.kind {
             case .json:
                 var editor = try JSONSettingsEditor(data, file: (mutation.file as NSString).lastPathComponent)
@@ -174,14 +177,14 @@ public struct ConnectionManager: Sendable {
             }
             edited[mutation.file] = data
         }
-        var changes = try edited.sorted(by: { $0.key < $1.key }).map { try transaction.change($0.key, after: $0.value) }
-        changes.append(try transaction.change(receiptPath(agent), after: nil))
+        var changes = try edited.sorted(by: { $0.key < $1.key }).map { try snapshot.change($0.key, after: $0.value) }
+        changes.append(try snapshot.change(receiptPath(agent), after: nil))
         return preview(agent, action: "disconnect", changes: changes)
     }
 
     public func previewRestore(_ agent: ManagedAgent) throws -> ConnectionPreview {
-        let backup = try transaction.latestBackup(agent: agent.rawValue)
         let allowed = Set(agent.files + [receiptPath(agent)])
+        let backup = try transaction.latestBackup(agent: agent.rawValue, allowedPaths: allowed)
         var changes: [SettingsChange] = []
         for old in backup.changes {
             guard allowed.contains(old.relativePath) else { throw SettingsSafetyError.invalid("백업") }
@@ -191,7 +194,9 @@ public struct ConnectionManager: Sendable {
             changes.append(SettingsChange(relativePath: old.relativePath, before: current, after: old.before, permissions: old.permissions))
         }
         return preview(agent, action: "restore", changes: changes,
-                       warnings: ["최근 연결·해제 직전의 설정을 복구합니다. 이후 사용자 변경이 있으면 덮어쓰지 않고 중단합니다."])
+                       warnings: [backup.committed
+                           ? "최근 연결·해제 직전의 설정을 복구합니다. 이후 사용자 변경이 있으면 덮어쓰지 않고 중단합니다."
+                           : "중단된 설정 변경의 백업을 복구합니다. 일부만 적용된 파일도 원래 상태로 복원하며, 이후 사용자 변경이 있으면 덮어쓰지 않고 중단합니다."])
     }
 
     @discardableResult
@@ -212,8 +217,8 @@ public struct ConnectionManager: Sendable {
         return try encoder.encode(owner)
     }
 
-    private func receipt(_ agent: ManagedAgent) throws -> ConnectionReceipt? {
-        guard let data = try transaction.read(receiptPath(agent)) else { return nil }
+    private func receipt(_ agent: ManagedAgent, snapshot: inout SettingsSnapshot) throws -> ConnectionReceipt? {
+        guard let data = try snapshot.read(receiptPath(agent)) else { return nil }
         guard let owner = try? JSONDecoder().decode(ConnectionReceipt.self, from: data), owner.version == 1, owner.agent == agent,
               !owner.mutations.isEmpty,
               owner.mutations.allSatisfy({ mutation in
@@ -237,22 +242,26 @@ public struct ConnectionManager: Sendable {
                           && [["command"], ["args"]].contains(mutation.path) && String(data: after, encoding: .utf8) != nil
                   case .tomlSection:
                       guard agent == .codex && mutation.file == ".codex/config.toml", mutation.path.isEmpty,
-                            let editor = try? CodexSettingsEditor(after), let section = try? editor.ownedSection() else { return false }
+                            let editor = try? CodexSettingsEditor(after),
+                            (try? editor.hasChildSections) == false,
+                            let section = try? editor.ownedSection() else { return false }
                       return Data(section.utf8) == after
                   }
               }) else { throw SettingsSafetyError.invalid("관리 기록") }
         return owner
     }
 
-    private func verify(_ mutation: OwnedMutation) throws {
-        let data = try transaction.read(mutation.file)
+    private func verify(_ mutation: OwnedMutation, snapshot: inout SettingsSnapshot) throws {
+        let data = try snapshot.read(mutation.file)
         switch mutation.kind {
         case .json:
             guard JSONSettingsEditor.equal(try JSONSettingsEditor(data, file: mutation.file).value(mutation.path), mutation.after) else { throw SettingsSafetyError.conflict((mutation.file as NSString).lastPathComponent) }
         case .tomlValue:
             guard try CodexSettingsEditor(data).value(mutation.path[0]).map({ Data($0.utf8) }) == mutation.after else { throw SettingsSafetyError.conflict("config.toml") }
         case .tomlSection:
-            guard try CodexSettingsEditor(data).ownedSection().map({ Data($0.utf8) }) == mutation.after else { throw SettingsSafetyError.conflict("config.toml") }
+            let editor = try CodexSettingsEditor(data)
+            guard try !editor.hasChildSections,
+                  try editor.ownedSection().map({ Data($0.utf8) }) == mutation.after else { throw SettingsSafetyError.conflict("config.toml") }
         case .instruction:
             let text = try SettingsTransaction.text(data, file: mutation.file)
             guard try Self.instructionRange(text).map({ Data(text[$0].utf8) }) == mutation.after else { throw SettingsSafetyError.conflict((mutation.file as NSString).lastPathComponent) }

@@ -1,0 +1,307 @@
+{
+  "scope": "12 hand-labelled ContextOS queries; lexical retrieval, not task success",
+  "budget": 4000,
+  "queries": [
+    {
+      "case": "bundle",
+      "query": "ContextService optimizedBundle assembleBundle",
+      "labelled_essential_file": "Sources/ContextOSCore/Service/ContextService.swift",
+      "selected": [
+        "Sources/ContextOSCore/Service/ContextService.swift",
+        "Sources/ContextOSCore/Service/SessionTools.swift",
+        "Sources/ContextOSCore/Git/GitAnalyzer.swift",
+        "Sources/ContextOSCore/Indexer/Indexer.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 61,
+      "bundle_estimated_tokens": 3994,
+      "within_budget": true,
+      "bundle_sha256": "452fed19e64033e9073bdaa3665441e512fd1437c8282a701f9e771e143bf7c1",
+      "planning_ms": 478.393,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "korean-context",
+      "query": "토큰 예산에 맞는 컨텍스트 요약과 본문 슬라이싱",
+      "labelled_essential_file": "Sources/ContextOSCore/Service/ContextService.swift",
+      "selected": [
+        "Sources/ContextOSCore/Service/ContextService.swift",
+        "Sources/ContextOSCore/Git/GitAnalyzer.swift",
+        "Sources/ContextOSCore/Indexer/Indexer.swift",
+        "Sources/ContextOSCore/Optimizer/TextTokens.swift",
+        "Sources/ContextOSCore/Platform/macOS/ContextOptimizerStoreAdapter.swift",
+        "Sources/ContextOSCore/Tokenizer/TokenEstimator.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 45,
+      "bundle_estimated_tokens": 3995,
+      "within_budget": true,
+      "bundle_sha256": "a116209078bc8cc02739563b53739fde5b47dfd40f144a50d032c7014117340c",
+      "planning_ms": 463.039,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "ranking",
+      "query": "ContextOptimizer selectContext ranking import graph",
+      "labelled_essential_file": "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift",
+      "selected": [
+        "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift",
+        "Sources/ContextOSCore/Platform/macOS/ContextOptimizerStoreAdapter.swift",
+        "Sources/ContextOSCore/Dependency/PathResolution.swift",
+        "Sources/ContextOSCore/Optimizer/ContextSelection.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 57,
+      "bundle_estimated_tokens": 3998,
+      "within_budget": true,
+      "bundle_sha256": "12a92ddd04db2107e10a7428dcc891df66a6cd1c7f7c62ea1228753960dfdfd1",
+      "planning_ms": 333.358,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "background",
+      "query": "DashboardModel queueTokenRefresh background polling",
+      "labelled_essential_file": "Sources/ContextOSApp/DashboardModel.swift",
+      "selected": [
+        "Sources/ContextOSApp/DashboardModel.swift",
+        "Sources/ContextOSApp/DashboardStyle.swift",
+        "Sources/ContextOSApp/UsageRefreshCoalescer.swift",
+        "Sources/ContextOSApp/WidgetSnapshotPublisher.swift",
+        "Sources/ContextOSApp/WorkTimeController.swift",
+        "Sources/ContextOSCore/Registry/AgentSessionReader.swift",
+        "Sources/ContextOSCore/Tokenizer/TokenEstimator.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 60,
+      "bundle_estimated_tokens": 3986,
+      "within_budget": true,
+      "bundle_sha256": "ae3c865513da650303db13faf06c2054ce279f43ea4e006ed3231e57c1c46fd0",
+      "planning_ms": 411.585,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "watcher",
+      "query": "파일 변경 감시 FileWatcher",
+      "labelled_essential_file": "Sources/ContextOSCore/Platform/macOS/FileWatcher.swift",
+      "selected": [
+        "Sources/ContextOSCore/Platform/macOS/FileWatcher.swift",
+        "Sources/ContextOSCore/Filter/FileFilter.swift",
+        "Sources/ContextOSCore/Filter/SensitiveFilePolicy.swift",
+        "Sources/ContextOSCore/Platform/macOS/FileEventStream.swift",
+        "Sources/ContextOSCore/Optimizer/ContextSelection.swift",
+        "Sources/ContextOSCore/Optimizer/TextTokens.swift",
+        "Sources/ContextOSCore/Model/Language.swift",
+        "Sources/ContextOSCore/Service/ContextService.swift",
+        "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 55,
+      "bundle_estimated_tokens": 3999,
+      "within_budget": true,
+      "bundle_sha256": "b6b2c10140a24339d68dc0a52322c8de73dfa2a7429ad68c802c47782b7b9a4e",
+      "planning_ms": 437.866,
+      "reported_required_omissions": false
+    },
+    {
+      "case": "scanner",
+      "query": "ProjectScanner gitignore directory pruning",
+      "labelled_essential_file": "Sources/ContextOSCore/Indexer/ProjectScanner.swift",
+      "selected": [
+        "Sources/ContextOSCore/Indexer/ProjectScanner.swift",
+        "Sources/ContextOSCore/Filter/FileFilter.swift",
+        "Sources/ContextOSCore/Filter/SensitiveFilePolicy.swift",
+        "Sources/ContextOSCore/Model/Language.swift",
+        "Sources/ContextOSCore/Platform/macOS/GitignoreFileLoader.swift",
+        "Sources/ContextOSCore/Platform/macOS/ProjectFileAccess.swift",
+        "scripts/benchmark_context.py",
+        "Tests/ContextOSCoreTests/SensitiveFileTests.swift",
+        "UsageBenchmarks/main.swift",
+        "Sources/ContextOSCore/Filter/GitignoreMatcher.swift",
+        "Sources/CWindowsNative/include/CWindowsNative.h",
+        "Sources/ContextOSCore/Registry/TranscriptCache.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 58,
+      "bundle_estimated_tokens": 4000,
+      "within_budget": true,
+      "bundle_sha256": "266b34a19dfaa65846a4183e93016af965d02b5cd982a14338d76cbec5024de2",
+      "planning_ms": 842.249,
+      "reported_required_omissions": false
+    },
+    {
+      "case": "usage",
+      "query": "AgentSessionReader token usage logs",
+      "labelled_essential_file": "Sources/ContextOSCore/Registry/AgentSessionReader.swift",
+      "selected": [
+        "Sources/ContextOSCore/Registry/AgentSessionReader.swift",
+        "Sources/ContextOSCore/Analytics/UsageStore.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 47,
+      "bundle_estimated_tokens": 3997,
+      "within_budget": true,
+      "bundle_sha256": "1ac750c4ca78bab2a0685a1b5576a13872a45a6e0f8c9428ac95a9030ca35c1e",
+      "planning_ms": 352.222,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "concurrent",
+      "query": "ConcurrentUsageReader snapshot accounting",
+      "labelled_essential_file": "Sources/ContextOSCore/Registry/ConcurrentUsageReader.swift",
+      "selected": [
+        "Sources/ContextOSCore/Registry/ConcurrentUsageReader.swift",
+        "Sources/ContextOSCore/Registry/TimeKeys.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 46,
+      "bundle_estimated_tokens": 3997,
+      "within_budget": true,
+      "bundle_sha256": "c68aaa141115b8ec666e0e62ce371a2bdc5af2965b0896dd0efb40d6cb601f9a",
+      "planning_ms": 339.473,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "dedup",
+      "query": "SessionMemory 중복 전달",
+      "labelled_essential_file": "Sources/ContextOSCore/Service/SessionMemory.swift",
+      "selected": [
+        "Sources/ContextOSCore/Service/SessionMemory.swift",
+        "Tests/ContextOSCoreTests/BuildLogTests.swift",
+        "Sources/ContextOSCore/Git/BuildLog.swift",
+        "Sources/ContextOSCore/Registry/AgentSessionReader.swift",
+        "Sources/ContextOSCore/Registry/ProjectAITokenReader.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 52,
+      "bundle_estimated_tokens": 4000,
+      "within_budget": true,
+      "bundle_sha256": "9ec5649de903af3c517aa9a0d5c04c0502c354bdc515456a2fce139431f29046",
+      "planning_ms": 812.668,
+      "reported_required_omissions": false
+    },
+    {
+      "case": "mascot",
+      "query": "ContextOSApp MascotRenderer animation",
+      "labelled_essential_file": "Sources/ContextOSApp/ContextOSApp.swift",
+      "selected": [
+        "Sources/ContextOSApp/ContextOSApp.swift",
+        "Sources/ContextOSApp/AppSettings.swift",
+        "Sources/ContextOSApp/ConcurrentUsageView.swift",
+        "Sources/ContextOSApp/DashboardView.swift",
+        "Sources/ContextOSApp/DashboardWindowController.swift",
+        "Sources/ContextOSApp/Mascot.swift",
+        "Sources/ContextOSApp/UsageReviewRenderer.swift",
+        "Sources/ContextOSCore/Tokenizer/TokenEstimator.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 57,
+      "bundle_estimated_tokens": 3993,
+      "within_budget": true,
+      "bundle_sha256": "3b4da222b2ed916cdcfa780625f62fadbd0dda743595dde11e2f7523a21402ce",
+      "planning_ms": 719.282,
+      "reported_required_omissions": true
+    },
+    {
+      "case": "parser",
+      "query": "HeuristicParser blockEnd Python",
+      "labelled_essential_file": "Sources/ContextOSCore/Indexer/HeuristicParser.swift",
+      "selected": [
+        "Sources/ContextOSCore/Indexer/HeuristicParser.swift",
+        "Sources/ContextOSCore/Indexer/SourceLexicon.swift",
+        "Sources/ContextOSCore/Platform/macOS/IndexStore.swift",
+        "Sources/ContextOSCore/Registry/ConcurrentUsageReader.swift",
+        "Sources/ContextOSCore/Indexer/LanguageParser.swift",
+        "Sources/ContextOSUsage/MeasuredTimeLedger.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 60,
+      "bundle_estimated_tokens": 3991,
+      "within_budget": true,
+      "bundle_sha256": "d16ddd728c81ac2d9288efff9431bae4e53c9129646e5c918cb97e4fe13ae024",
+      "planning_ms": 877.1,
+      "reported_required_omissions": false
+    },
+    {
+      "case": "filename",
+      "query": "Package.swift",
+      "labelled_essential_file": "Package.swift",
+      "selected": [
+        "Package.swift"
+      ],
+      "essential_at_1": true,
+      "essential_in_first_3": true,
+      "essential_delivered": true,
+      "heuristic_context_score": 100,
+      "bundle_estimated_tokens": 855,
+      "within_budget": true,
+      "bundle_sha256": "c629dd2bf6165d90db886a23444fde231fd02762139e2bda7d7b63c8fb05d86a",
+      "planning_ms": 284.941,
+      "reported_required_omissions": false
+    }
+  ],
+  "retention_probes": [
+    {
+      "case": "python-target",
+      "query": "target",
+      "required_information_present": true,
+      "response_estimated_tokens": 33,
+      "within_budget": true,
+      "elapsed_ms": 98.336
+    },
+    {
+      "case": "same-file-helper",
+      "query": "login",
+      "required_information_present": true,
+      "response_estimated_tokens": 55,
+      "within_budget": true,
+      "elapsed_ms": 97.124
+    },
+    {
+      "case": "typescript-arrow",
+      "query": "authorize",
+      "required_information_present": true,
+      "response_estimated_tokens": 37,
+      "within_budget": true,
+      "elapsed_ms": 105.714
+    },
+    {
+      "case": "swift-type-small-budget",
+      "query": "AccountService",
+      "required_information_present": true,
+      "response_estimated_tokens": 45,
+      "within_budget": true,
+      "elapsed_ms": 102.469
+    }
+  ],
+  "totals": {
+    "queries": 12,
+    "essential_at_1": 12,
+    "essential_in_first_3": 12,
+    "essential_delivered": 12,
+    "reported_required_omission_cases": 7,
+    "all_responses_within_estimated_budget": true,
+    "retention_probes_present": 4
+  }
+}

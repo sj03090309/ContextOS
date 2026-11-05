@@ -100,8 +100,16 @@ final class DashboardUIState: ObservableObject {
     enum Page: String, CaseIterable {
         case overview = "대시보드", usage = "AI 사용량", time = "개발 시간"
         var label: String { rawValue }
+        var position: Int { Self.allCases.firstIndex(of: self) ?? 0 }
     }
-    @Published var page: Page = .overview
+    @Published var page: Page = .overview {
+        willSet {
+            if newValue != page { navigatingForward = newValue.position > page.position }
+        }
+    }
+    // Updated with the selection, so every navigation entry (tabs, cards and
+    // public menu commands) uses the same spatial relationship.
+    private(set) var navigatingForward = true
     @Published var usageExpanded = false
     @Published var panelHeight: CGFloat = 520
     @Published var historyExpanded = false
@@ -111,11 +119,20 @@ final class DashboardUIState: ObservableObject {
     @Published var monthOffset = 0
     @Published var selectedDay: String?
     @Published var showSettings = false
+    @Published var showConnections = false
     // Display only: never mutates the project store, history or usage snapshot.
     // Safe by default when this release preview is shared or screen recorded.
     @Published var hidePrivateDetails = true
     /// Wired by the app's public window command; no independent data source.
     var openWindow: (() -> Void)?
+
+    /// Public menu and widget routes reveal their destination even when a
+    /// settings overlay was left open, including routes to the current page.
+    func navigate(to destination: Page) {
+        showSettings = false
+        showConnections = false
+        page = destination
+    }
 }
 
 /// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a
@@ -152,44 +169,14 @@ struct DashboardView: View {
                             label: \.label, namespace: navigation, height: 33)
                 .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 10)
 
-            Group {
-                switch ui.page {
-                case .overview:
-                    ScrollView(.vertical) {
-                        VStack(spacing: 10) {
-                            ConcurrentUsageSummary()
-                            DevelopmentTimeSummary(model: workTime) { ui.page = .time }
-                            CompactSavingsSummary()
-                            Button {
-                                withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
-                            } label: {
-                                HStack {
-                                    Text("달력·프로젝트")
-                                    Spacer()
-                                    Image(systemName: "chevron.down").rotationEffect(.degrees(ui.historyExpanded ? 180 : 0))
-                                }.font(.system(size: 11, weight: .medium)).padding(.vertical, 9).contentShape(Rectangle())
-                            }.buttonStyle(PanelPressStyle()).accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
-                            if ui.historyExpanded {
-                                CalendarCard()
-                                PanelTabBar(selection: $ui.tab)
-                                switch ui.tab {
-                                case .files: ProjectsList()
-                                case .activity: ActivityList()
-                                case .ai: AgentsList()
-                                }
-                            }
-                        }.padding(.horizontal, 16).padding(.bottom, 16)
-                    }
-                case .usage:
-                    PopoverUsageDetail()
-                case .time:
-                    WorkTimePanel(model: workTime, compact: true)
-                }
+            ZStack(alignment: .top) {
+                pageContent
+                    .id(ui.page)
+                    .transition(PanelMotion.page(reduced: reduced, forward: ui.navigatingForward))
             }
-            .id(ui.page)
-            .transition(.opacity)
-            .frame(maxHeight: .infinity)
-            .animation(PanelMotion.feedback(reduced: reduced), value: ui.page)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .animation(PanelMotion.navigation(reduced: reduced), value: ui.page)
 
             FooterBar()
                 .fixedSize(horizontal: false, vertical: true)
@@ -199,21 +186,136 @@ struct DashboardView: View {
         // Pin the background to a single, constant vibrancy so its color doesn't
         // deepen when the popover becomes key (e.g. after a click).
         .background(Brand.canvas)
+        .disabled(ui.showSettings || ui.showConnections)
+        .accessibilityHidden(ui.showSettings || ui.showConnections)
         .overlay {
-            if ui.showSettings {
+            if ui.showConnections {
+                ConnectionSettingsOverlay()
+                    .transition(PanelMotion.page(reduced: reduced, forward: true))
+            } else if ui.showSettings {
                 SettingsOverlay()
-                    .transition(.opacity)
+                    .transition(PanelMotion.overlay(reduced: reduced))
             }
         }
         .animation(PanelMotion.response(reduced: reduced), value: ui.showSettings)
+        .animation(PanelMotion.navigation(reduced: reduced), value: ui.showConnections)
         .transaction { if reduced { $0.animation = nil; $0.disablesAnimations = true } }
         .onAppear { model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
         .onChange(of: ui.historyExpanded) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
-        .onChange(of: ui.page) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
+        .onChange(of: ui.page) { _, _ in
+            ui.showConnections = false
+            model.setHistoryVisible(ui.page == .overview && ui.historyExpanded)
+        }
         .sheet(item: $model.connectionPreview) { preview in
             ConnectionPreviewSheet(preview: preview)
                 .environmentObject(model)
         }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch ui.page {
+        case .overview:
+            ScrollView(.vertical) {
+                VStack(spacing: 10) {
+                    if !model.agentLogCollectionEnabled {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("AI 로컬 로그 집계 꺼짐", systemImage: "hand.raised")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("사용량과 AI 작업 상태를 보려면 로컬 세션 파일 읽기를 허용해 주세요. 파일에는 대화·도구 출력이 포함될 수 있어요. 기존 기록은 보존하며 설정에서 언제든 끌 수 있어요.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("내용 확인 · 집계 설정") { ui.showSettings = true }
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    if !model.agents.contains(where: { $0.connection.isConfigured }) {
+                        setupPrompt
+                    }
+                    CompactSavingsSummary()
+                    ConcurrentUsageSummary()
+                    DevelopmentTimeSummary(model: workTime) { ui.page = .time }
+                    overviewActions
+                    if ui.historyExpanded {
+                        VStack(spacing: 10) {
+                            CalendarCard()
+                            PanelTabBar(selection: $ui.tab)
+                            ZStack(alignment: .top) {
+                                historyContent.id(ui.tab).transition(.opacity)
+                            }
+                            .animation(PanelMotion.feedback(reduced: reduced), value: ui.tab)
+                        }
+                        .transition(PanelMotion.disclosure(reduced: reduced))
+                    }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 16)
+            }
+        case .usage:
+            PopoverUsageDetail()
+        case .time:
+            WorkTimePanel(model: workTime, compact: true)
+        }
+    }
+
+    private var overviewActions: some View {
+        HStack(spacing: 12) {
+            Button {
+                withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
+            } label: {
+                HStack {
+                    Text("달력·프로젝트")
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .rotationEffect(.degrees(ui.historyExpanded ? 180 : 0))
+                }
+                .font(.system(size: 11, weight: .medium))
+                .padding(.vertical, 9).contentShape(Rectangle())
+            }
+            .buttonStyle(PanelPressStyle())
+            .accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
+            Divider().frame(height: 14)
+            Button { ui.showConnections = true } label: {
+                Label("AI 연결", systemImage: "link")
+                    .font(.system(size: 11, weight: .medium))
+                    .padding(.vertical, 9).contentShape(Rectangle())
+            }
+            .buttonStyle(PanelPressStyle())
+            .help("AI 도구와 ContextOS 연결 설정")
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var historyContent: some View {
+        switch ui.tab {
+        case .files: ProjectsList()
+        case .activity: ActivityList()
+        case .ai: AgentsList()
+        }
+    }
+
+    private var setupPrompt: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("AI에 필요한 코드만, 더 가볍게")
+                .font(.system(size: 12, weight: .semibold))
+            Text("AI 도구를 연결하면 프로젝트에 맞는 문맥을 전달하고, 절감 기록을 여기서 확인할 수 있어요.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button { ui.showConnections = true } label: {
+                Label("AI 도구 연결하기", systemImage: "link")
+                    .font(.system(size: 11, weight: .semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .foregroundStyle(Brand.onAccent)
+                    .background(Brand.accent, in: RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PanelPressStyle())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dashboardCard(radius: 13)
     }
 }
 

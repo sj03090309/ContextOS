@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 @testable import ContextOSCore
 
@@ -54,6 +55,47 @@ struct GitAnalyzerTests {
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
         #expect(GitAnalyzer().signals(tmp).isEmpty)
+    }
+
+    @Test("metadata reads never execute a repository fsmonitor hook or refresh its index")
+    func metadataDoesNotRunRepositoryCommandsOrWriteIndex() throws {
+        let root = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("FS_MONITOR_EXECUTED")
+        let hook = root.appendingPathComponent("monitor.sh")
+        try "#!/bin/sh\n/usr/bin/touch '\(marker.path)'\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
+        #expect(GitRunner.run(["config", "core.fsmonitor", hook.path], in: root) != nil)
+
+        let index = root.appendingPathComponent(".git/index")
+        let before = try Data(contentsOf: index)
+        let attributes = try FileManager.default.attributesOfItem(atPath: index.path)
+        let git = GitAnalyzer()
+        #expect(git.changedFiles(root).contains("src/billing.py"))
+        #expect(!git.recentCommits(root).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+        #expect(try Data(contentsOf: index) == before)
+        let after = try FileManager.default.attributesOfItem(atPath: index.path)
+        #expect(after[.modificationDate] as? Date == attributes[.modificationDate] as? Date)
+        #expect(GitRunner.run(["config", "--get", "core.fsmonitor"], in: root)?.trimmingCharacters(in: .whitespacesAndNewlines) == "false")
+        // Command overrides apply to the child only; the user's config remains.
+        let config = try String(contentsOf: root.appendingPathComponent(".git/config"), encoding: .utf8)
+        #expect(config.contains(hook.path))
+    }
+
+    @Test("a blocked repository config read times out and reaps its child")
+    func blockedGitMetadataTimesOut() throws {
+        let root = try makeRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fifo = root.appendingPathComponent("blocked-config")
+        #expect(mkfifo(fifo.path, 0o600) == 0)
+        let config = root.appendingPathComponent(".git/config")
+        var text = try String(contentsOf: config, encoding: .utf8)
+        text += "\n[include]\n\tpath = \(fifo.path)\n"
+        try text.write(to: config, atomically: true, encoding: .utf8)
+        let started = Date()
+        #expect(GitRunner.run(["rev-parse", "--is-inside-work-tree"], in: root, timeout: 0.2) == nil)
+        #expect(Date().timeIntervalSince(started) < 3)
     }
 
     @Test("uncommitted file gets boosted into context even without a lexical match")

@@ -110,13 +110,14 @@ public enum AgentIntegration {
     /// else in the file. Creates the file (and parents) when absent.
     static func mergeMCPJSON(at url: URL, mcpBinaryPath: String) throws {
         let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        var snapshot = SettingsSnapshot(transaction: transaction)
         let name = url.lastPathComponent
-        var editor = try JSONSettingsEditor(transaction.read(name), file: name)
+        var editor = try JSONSettingsEditor(snapshot.read(name), file: name)
         let path = ["mcpServers", "contextos"]
         if try editor.value(path) == nil { try editor.set(path, to: JSONSettingsEditor.encode([String: String]())) }
         try editor.set(path + ["command"], to: JSONSettingsEditor.encode(mcpBinaryPath))
         try editor.set(path + ["args"], to: JSONSettingsEditor.encode([String]()))
-        try transaction.apply([transaction.change(name, after: editor.data)], agent: "MCP", action: "connect")
+        try transaction.apply([snapshot.change(name, after: editor.data)], agent: "MCP", action: "connect")
     }
 
     static let tomlBeginMarker = "# ContextOS:begin"
@@ -126,12 +127,13 @@ public enum AgentIntegration {
     /// bounded by comment markers so re-runs update in place.
     static func upsertTOMLBlock(at url: URL, mcpBinaryPath: String) throws {
         let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        var snapshot = SettingsSnapshot(transaction: transaction)
         let name = url.lastPathComponent
-        var editor = try CodexSettingsEditor(transaction.read(name))
+        var editor = try CodexSettingsEditor(snapshot.read(name))
         if try editor.hasSection {
             try editor.set("command", to: String(data: JSONSettingsEditor.encode(mcpBinaryPath), encoding: .utf8)!)
             try editor.set("args", to: "[]")
         } else { try editor.addSection(command: mcpBinaryPath) }
-        try transaction.apply([transaction.change(name, after: editor.data)], agent: "Codex", action: "connect")
+        try transaction.apply([snapshot.change(name, after: editor.data)], agent: "Codex", action: "connect")
     }
 }

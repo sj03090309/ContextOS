@@ -19,6 +19,8 @@ xcuserdata/
 
 # macOS
 .DS_Store
+__pycache__/
+*.pyc
 
 # Local tool output and per-machine agent config
 graphify-out/
@@ -32,3 +34,13 @@ artifacts/
 # Generated Windows desktop output and shared-version inputs
 Windows/**/bin/
 Windows/**/obj/
+
+# Per-machine audit evidence stays local; publish synthetic benchmark JSON only.
+/docs/benchmarks/*-2026102[234]/*.log
+/docs/benchmarks/*-2026102[234]/*.patch
+/docs/benchmarks/*-2026102[234]/before-status.txt
+/docs/benchmarks/usage-context-fix-20261023/local-usage-validation.json
+/docs/benchmarks/*-2026102[234]/installation.json
+/docs/benchmarks/*-2026102[234]/ui.json
+/docs/benchmarks/*-2026102[234]/cleanup.json
+/docs/benchmarks/context-audit-20261022/summary.json

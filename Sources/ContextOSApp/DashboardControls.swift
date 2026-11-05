@@ -87,6 +87,7 @@ struct SlidingSegments<Option: Hashable>: View {
 struct FooterBar: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject var ui: DashboardUIState
+    @State private var refreshTurn = 0.0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,13 +104,21 @@ struct FooterBar: View {
                     PanelIconButton(symbol: "macwindow", help: "창으로 열기 (⇧⌘O)", action: openWindow)
                         .keyboardShortcut("o", modifiers: [.command, .shift])
                 }
-                PanelIconButton(symbol: ui.hidePrivateDetails ? "eye.slash" : "eye", help: "개인 정보 숨기기", isOn: ui.hidePrivateDetails) {
+                PanelIconButton(symbol: ui.hidePrivateDetails ? "eye.slash" : "eye",
+                                help: ui.hidePrivateDetails ? "개인 정보 표시" : "개인 정보 숨기기",
+                                isOn: ui.hidePrivateDetails) {
                     ui.hidePrivateDetails.toggle()
                 }
-                .accessibilityValue(ui.hidePrivateDetails ? "켜짐" : "꺼짐")
-                PanelIconButton(symbol: model.isRefreshing ? "hourglass" : "arrow.clockwise", help: "새로고침 (⌘R)") { model.refresh() }
+                .accessibilityValue(ui.hidePrivateDetails ? "숨김" : "표시 중")
+                PanelIconButton(symbol: "arrow.clockwise", help: "새로고침 (⌘R)", rotation: .degrees(refreshTurn)) {
+                    // One turn acknowledges this action. Background collection
+                    // never starts an idle animation or a second timer.
+                    refreshTurn += 360
+                    model.refresh()
+                }
                     .keyboardShortcut("r", modifiers: .command)
                     .disabled(model.isRefreshing)
+                    .accessibilityValue(model.isRefreshing ? "로컬 기록 확인 중" : "새로고침 가능")
                 if !ui.hidePrivateDetails {
                     PanelIconButton(symbol: "list.bullet.rectangle", help: "빌드 로그 (⌘B)") { BuildLogWindow.show() }
                         .keyboardShortcut("b", modifiers: .command)
@@ -138,32 +147,68 @@ struct PanelIconButton: View {
     let symbol: String
     let help: String
     var isOn = false
+    var rotation: Angle = .zero
     let action: () -> Void
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.isEnabled) private var isEnabled
     @FocusState private var focused: Bool
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .medium))
+                .contentTransition(reduced ? .identity : .symbolEffect(.replace))
+                .rotationEffect(reduced ? .zero : rotation)
+                .animation(reduced ? nil : .easeInOut(duration: 0.45), value: rotation)
                 .frame(width: 30, height: 30)
-                .background(Color.primary.opacity(isOn ? 0.13 : hovering ? 0.09 : 0.035),
+                .background(Color.primary.opacity(isOn ? 0.13 : hovering && isEnabled ? 0.09 : 0.035),
                             in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .contentShape(Rectangle())
         }
         .buttonStyle(PanelPressStyle())
         .foregroundStyle(isOn ? Brand.accent : Color.secondary)
         .focused($focused)
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Brand.accent.opacity(focused ? 0.8 : 0), lineWidth: 2))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(Brand.accent.opacity(focused && isEnabled ? 0.8 : 0), lineWidth: 2)
+            .allowsHitTesting(false))
         .onHover { hovering = $0 }
         .animation(PanelMotion.feedback(reduced: reduced), value: hovering)
+        .animation(PanelMotion.feedback(reduced: reduced), value: symbol)
         .help(help)
         .accessibilityLabel(help)
     }
 }
 
 // MARK: - Settings
+
+struct ConnectionSettingsOverlay: View {
+    @EnvironmentObject private var ui: DashboardUIState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("AI 연결 설정").font(.system(size: 16, weight: .semibold))
+                Spacer()
+                PanelIconButton(symbol: "xmark", help: "AI 연결 설정 닫기") { ui.showConnections = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            Button(ui.hidePrivateDetails ? "개인 정보 표시" : "개인 정보 숨기기") {
+                ui.hidePrivateDetails.toggle()
+            }
+            .buttonStyle(PanelPressStyle())
+            .font(.system(size: 11.5))
+            .foregroundStyle(Brand.accent)
+            ScrollView { AgentsList() }
+        }
+        .padding(.top, PopoverContentController.mascotHeight)
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Brand.canvas)
+        .onExitCommand { ui.showConnections = false }
+        .accessibilityAddTraits(.isModal)
+    }
+}
 
 /// The gear's menu, drawn inside the panel over a dimmed backdrop.
 struct SettingsOverlay: View {
@@ -190,9 +235,20 @@ struct SettingsOverlay: View {
                     .padding(.bottom, 6)
                     Spacer()
                     PanelIconButton(symbol: "xmark", help: "설정 닫기") { ui.showSettings = false }
+                        .keyboardShortcut(.cancelAction)
                 }
                 LaunchAtLoginRow()
                 toggleRow("메뉴바에 오늘 아낀 토큰", isOn: $settings.showMenuBarSavings)
+                separator
+                toggleRow("AI 로컬 로그 집계", isOn: $settings.agentLogsEnabled)
+                Text("Claude Code·Codex의 로컬 세션 파일을 읽어 사용량과 작업 상태를 집계해요. 파일에는 대화·도구 출력이 포함될 수 있어요. 끄면 새 로그 읽기를 중지하며 기존 기록은 보존해요.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10).padding(.bottom, 8)
+                Text("선택한 프로젝트 코드는 연결한 AI 도구에 전달되며, 외부 전송은 그 도구의 설정을 따라요.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10).padding(.bottom, 8)
                 separator
                 VStack(alignment: .leading, spacing: 8) {
                     Text("뭉치 움직임").font(.system(size: 13))
@@ -218,8 +274,7 @@ struct SettingsOverlay: View {
                 }
                 menuRow("AI 연결 설정", symbol: "link") {
                     ui.showSettings = false
-                    ui.page = .overview
-                    ui.tab = .ai
+                    ui.showConnections = true
                 }
                 separator
                 menuRow("ContextOS 종료", symbol: "power", shortcut: "⌘Q") {
@@ -239,6 +294,7 @@ struct SettingsOverlay: View {
             .transition(.scale(scale: 0.96, anchor: .bottomTrailing).combined(with: .opacity))
         }
         .onExitCommand { ui.showSettings = false }
+        .accessibilityAddTraits(.isModal)
     }
 
     private var separator: some View {
@@ -262,6 +318,9 @@ private struct MenuRowButton: View {
     let shortcut: String?
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.isEnabled) private var isEnabled
+    @FocusState private var focused: Bool
 
     var body: some View {
         Button(action: action) {
@@ -279,12 +338,17 @@ private struct MenuRowButton: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 32)
-            .background(Color.primary.opacity(hovering ? 0.08 : 0),
+            .background(Color.primary.opacity(hovering && isEnabled ? 0.08 : 0),
                         in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PanelPressStyle())
+        .focused($focused)
+        .overlay(RoundedRectangle(cornerRadius: 9)
+            .strokeBorder(Brand.accent.opacity(focused && isEnabled ? 0.8 : 0), lineWidth: 2)
+            .allowsHitTesting(false))
         .onHover { hovering = $0 }
+        .animation(PanelMotion.feedback(reduced: reduced), value: hovering)
     }
 }
 

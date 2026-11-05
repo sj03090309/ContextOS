@@ -44,6 +44,33 @@ with tempfile.TemporaryDirectory(prefix='contextos-install-test-') as directory:
         plistlib.dump(info,stream)
     install(bad,success=False)
     assert digest(target)==first
+    # Invalid package metadata must still fail when Python assertions are
+    # disabled, and a widget cannot silently carry a different build.
+    verifier=pathlib.Path(__file__).with_name('verify_bundle.py').resolve()
+    bad_executable=root/'WrongExecutable.app'
+    shutil.copytree(source,bad_executable)
+    info_path=bad_executable/'Contents/Info.plist'
+    info=plistlib.loads(info_path.read_bytes())
+    info['CFBundleExecutable']='missing'
+    info_path.write_bytes(plistlib.dumps(info))
+    result=subprocess.run(['python3','-O',str(verifier),str(bad_executable)],capture_output=True,text=True,timeout=30)
+    assert result.returncode!=0 and 'Incorrect host executable' in result.stderr,(result.stdout,result.stderr)
+    no_execute=root/'NotExecutable.app'
+    shutil.copytree(source,no_execute)
+    host=no_execute/'Contents/MacOS/ContextOSApp'
+    host.chmod(host.stat().st_mode & ~0o111)
+    result=subprocess.run(['python3','-O',str(verifier),str(no_execute)],capture_output=True,text=True,timeout=30)
+    assert result.returncode!=0 and 'Executable permission missing' in result.stderr,(result.stdout,result.stderr)
+    extension=source/'Contents/PlugIns/ContextOSWidgets.appex'
+    if extension.exists():
+        bad_widget=root/'WrongWidget.app'
+        shutil.copytree(source,bad_widget)
+        info_path=bad_widget/'Contents/PlugIns/ContextOSWidgets.appex/Contents/Info.plist'
+        info=plistlib.loads(info_path.read_bytes())
+        info['CFBundleVersion']='999999'
+        info_path.write_bytes(plistlib.dumps(info))
+        result=subprocess.run(['python3','-O',str(verifier),str(bad_widget)],capture_output=True,text=True,timeout=30)
+        assert result.returncode!=0 and 'Host/widget version mismatch' in result.stderr,(result.stdout,result.stderr)
     (target.parent/'.contextos-install.lock').mkdir()
     install(source,success=False)
     assert digest(target)==first
