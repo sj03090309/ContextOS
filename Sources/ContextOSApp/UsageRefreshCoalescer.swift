@@ -8,7 +8,7 @@ final class UsageRefreshCoalescer {
     var isPending: Bool { timer != nil }
 
     static func delay(visible: Bool, conservingEnergy: Bool) -> TimeInterval {
-        visible ? (conservingEnergy ? 1 : 0.2) : (conservingEnergy ? 60 : 30)
+        visible ? (conservingEnergy ? 2 : 1) : (conservingEnergy ? 60 : 30)
     }
 
     func schedule(after delay: TimeInterval, _ action: @escaping @MainActor () -> Void) {

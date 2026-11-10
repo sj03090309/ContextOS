@@ -371,11 +371,23 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         // access before reusing a cached success; never fall back after denial.
         guard let access = LineReader.openRegularFile(file) else { return nil }
         try? access.close()
-        var row = rows[file.path] ?? Row()
+        let cached = rows[file.path]
+        let fileInode = inode.uint64Value
+        let fileSize = size.intValue
+        var row = cached ?? Row()
         let oldCount = row.metrics.count + row.runEvents.count
-        if row.inode != inode.uint64Value || size.intValue < row.size || (size.intValue == row.size && row.mtime != mtime) { row = Row() }
-        if row.inode == inode.uint64Value && row.size == size.intValue && row.mtime == mtime && !row.needsMoreRead { return row }
-        guard readBudget > 0 else { deferredRead = true; return nil }
+        let canReuse = cached != nil && row.inode == fileInode && fileSize >= row.size
+            && (fileSize > row.size || row.mtime == mtime)
+        if !canReuse { row = Row() }
+        if canReuse && fileSize == row.size && !row.needsMoreRead { return row }
+        guard readBudget > 0 else {
+            deferredRead = true
+            guard canReuse else { return nil }
+            // Keep the accounted prefix while deferring the unread tail. Mark
+            // only this snapshot partial and leave the cached cursor untouched.
+            row.needsMoreRead = true
+            return row
+        }
         let capacity = max(0, min(4096, maximumMetrics - rows.values.reduce(0) { $0 + $1.metrics.count + $1.runEvents.count } + oldCount))
         var skipping = row.skippingLongLine
         let result = LineReader.boundedLines(of: file, from: row.offset, maximumLineBytes: maximumLineBytes,
@@ -394,8 +406,8 @@ public final class ConcurrentUsageReader: @unchecked Sendable {
         let count = result.consumed
         readBudget = max(0, readBudget - result.bytesRead)
         row.skippingLongLine = skipping
-        row.needsMoreRead = !result.reachedEOF && row.offset + count < size.intValue
-        row.offset += count; row.size = size.intValue; row.inode = inode.uint64Value; row.mtime = mtime
+        row.needsMoreRead = !result.reachedEOF && row.offset + count < fileSize
+        row.offset += count; row.size = fileSize; row.inode = fileInode; row.mtime = mtime
         rows[file.path] = row
         revision &+= 1
         return row

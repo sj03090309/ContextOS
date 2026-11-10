@@ -87,6 +87,7 @@ struct SlidingSegments<Option: Hashable>: View {
 struct FooterBar: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject var ui: DashboardUIState
+    var surface: DashboardSurface = .popover
     @State private var refreshTurn = 0.0
 
     var body: some View {
@@ -100,7 +101,7 @@ struct FooterBar: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                if let openWindow = ui.openWindow {
+                if surface == .popover, let openWindow = ui.openWindow {
                     PanelIconButton(symbol: "macwindow", help: "창으로 열기 (⇧⌘O)", action: openWindow)
                         .keyboardShortcut("o", modifiers: [.command, .shift])
                 }
@@ -117,14 +118,12 @@ struct FooterBar: View {
                     model.refresh()
                 }
                     .keyboardShortcut("r", modifiers: .command)
-                    .disabled(model.isRefreshing)
-                    .accessibilityValue(model.isRefreshing ? "로컬 기록 확인 중" : "새로고침 가능")
                 if !ui.hidePrivateDetails {
                     PanelIconButton(symbol: "list.bullet.rectangle", help: "빌드 로그 (⌘B)") { BuildLogWindow.show() }
                         .keyboardShortcut("b", modifiers: .command)
                 }
                 PanelIconButton(symbol: "gearshape", help: "설정", isOn: ui.showSettings) {
-                    ui.showSettings.toggle()
+                    ui.openSettings()
                 }
                 .keyboardShortcut(",", modifiers: .command)
             }
@@ -135,7 +134,6 @@ struct FooterBar: View {
     }
 
     private func updated(now: Date) -> String {
-        if model.isRefreshing { return "로컬 기록 확인 중" }
         guard let last = model.lastUpdated else { return "불러오는 중…" }
         let ago = LiveHeader.ago(last, now: now)
         return "통계 확인 " + ago
@@ -210,10 +208,10 @@ struct ConnectionSettingsOverlay: View {
     }
 }
 
-/// The gear's menu, drawn inside the panel over a dimmed backdrop.
+/// Preferences in the dashboard, with a close button that stays in view.
 struct SettingsOverlay: View {
-    @EnvironmentObject var model: DashboardModel
-    @EnvironmentObject var ui: DashboardUIState
+    @EnvironmentObject private var model: DashboardModel
+    @EnvironmentObject private var ui: DashboardUIState
     @ObservedObject private var settings = AppSettings.shared
     @Namespace private var motionPill
 
@@ -224,70 +222,40 @@ struct SettingsOverlay: View {
                 .onTapGesture { ui.showSettings = false }
                 .accessibilityHidden(true)
 
-            ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(spacing: 0) {
                 HStack {
-                Text("설정")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
-                    .padding(.bottom, 6)
+                    Text("설정").font(.system(size: 14, weight: .semibold))
                     Spacer()
                     PanelIconButton(symbol: "xmark", help: "설정 닫기") { ui.showSettings = false }
                         .keyboardShortcut(.cancelAction)
                 }
-                LaunchAtLoginRow()
-                toggleRow("메뉴바에 오늘 아낀 토큰", isOn: $settings.showMenuBarSavings)
-                separator
-                toggleRow("AI 로컬 로그 집계", isOn: $settings.agentLogsEnabled)
-                Text("Claude Code·Codex의 로컬 세션 파일을 읽어 사용량과 작업 상태를 집계해요. 파일에는 대화·도구 출력이 포함될 수 있어요. 끄면 새 로그 읽기를 중지하며 기존 기록은 보존해요.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10).padding(.bottom, 8)
-                Text("선택한 프로젝트 코드는 연결한 AI 도구에 전달되며, 외부 전송은 그 도구의 설정을 따라요.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 10).padding(.bottom, 8)
-                separator
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("뭉치 움직임").font(.system(size: 13))
-                    SlidingSegments(options: AppSettings.MascotMotion.allCases,
-                                    selection: $settings.mascotMotion,
-                                    label: \.label, namespace: motionPill, height: 26)
-                    Text(settings.mascotMotion.hint)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                Divider()
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            mascotSettings
+                            separator
+                            privacySettings.id(DashboardUIState.SettingsDestination.privacy)
+                            separator
+                            appSettings
+                        }
+                        .padding(6)
+                    }
+                    .onAppear {
+                        if let destination = ui.settingsDestination {
+                            scroll.scrollTo(destination, anchor: .top)
+                        }
+                    }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                separator
-                menuRow("빌드 로그 열기", symbol: "list.bullet.rectangle", shortcut: "⌘B") {
-                    ui.showSettings = false
-                    BuildLogWindow.show()
-                }
-                .disabled(ui.hidePrivateDetails)
-                menuRow("지금 새로고침", symbol: "arrow.clockwise", shortcut: "⌘R") {
-                    ui.showSettings = false
-                    model.refresh()
-                }
-                menuRow("AI 연결 설정", symbol: "link") {
-                    ui.showSettings = false
-                    ui.showConnections = true
-                }
-                separator
-                menuRow("ContextOS 종료", symbol: "power", shortcut: "⌘Q") {
-                    NSApplication.shared.terminate(nil)
-                }
-            }
-            .padding(6)
             }
             .frame(width: 290)
             .frame(maxHeight: max(120, min(480, ui.panelHeight - 100)))
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1))
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                .allowsHitTesting(false))
             .shadow(color: .black.opacity(0.35), radius: 22, y: 10)
             .padding(.trailing, 12)
             .padding(.bottom, 52)
@@ -297,17 +265,161 @@ struct SettingsOverlay: View {
         .accessibilityAddTraits(.isModal)
     }
 
+    private var mascotSettings: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            MascotColorSettings(settings: settings)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("뭉치 움직임").font(.system(size: 13))
+                SlidingSegments(options: AppSettings.MascotMotion.allCases,
+                                selection: $settings.mascotMotion,
+                                label: \.label, namespace: motionPill, height: 26)
+                Text(settings.mascotMotion.hint)
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private var privacySettings: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle("개인 정보")
+            SettingsSwitchRow(title: "화면에서 개인 정보 숨기기", isOn: $ui.hidePrivateDetails)
+            SettingsSwitchRow(title: "AI 로컬 로그 집계", isOn: $settings.agentLogsEnabled)
+            Text("Claude Code·Codex의 로컬 세션 파일을 읽어 사용량과 작업 상태를 집계해요. 파일에는 대화·도구 출력이 포함될 수 있어요. 끄면 새 로그 읽기를 중지하며 기존 기록은 보존해요.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10).padding(.bottom, 8)
+            Text("선택한 프로젝트 코드는 연결한 AI 도구에 전달되며, 외부 전송은 그 도구의 설정을 따라요.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10).padding(.bottom, 8)
+        }
+    }
+
+    private var appSettings: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle("앱")
+            LaunchAtLoginRow()
+            SettingsSwitchRow(title: "메뉴 막대에 오늘 아낀 토큰", isOn: $settings.showMenuBarSavings)
+            separator
+            if !ui.hidePrivateDetails {
+                MenuRowButton(title: "빌드 로그 열기", symbol: "list.bullet.rectangle", shortcut: "⌘B") {
+                    ui.showSettings = false
+                    BuildLogWindow.show()
+                }
+            }
+            MenuRowButton(title: "지금 새로고침", symbol: "arrow.clockwise", shortcut: "⌘R") {
+                ui.showSettings = false
+                model.refresh()
+            }
+            MenuRowButton(title: "AI 연결 설정", symbol: "link", shortcut: nil) {
+                ui.showSettings = false
+                ui.showConnections = true
+            }
+            MenuRowButton(title: "ContextOS 종료", symbol: "power", shortcut: "⌘Q") {
+                NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.top, 3)
+            .accessibilityAddTraits(.isHeader)
+    }
+
     private var separator: some View {
         Divider().padding(.horizontal, 10).padding(.vertical, 6)
     }
+}
 
-    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
-        SettingsSwitchRow(title: title, isOn: isOn)
+private struct MascotColorSettings: View {
+    @ObservedObject var settings: AppSettings
+    @State private var showsCustomColor = false
+    @State private var draft = ""
+    @FocusState private var editingHex: Bool
+
+    private var selectedPreset: MascotColor? {
+        MascotColor.allCases.first { $0.hex == settings.mascotTint }
     }
 
-    private func menuRow(_ title: String, symbol: String, shortcut: String? = nil,
-                         action: @escaping () -> Void) -> some View {
-        MenuRowButton(title: title, symbol: symbol, shortcut: shortcut, action: action)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("뭉치 색상").font(.system(size: 13))
+                Spacer()
+                Text(selectedPreset?.label ?? "#\(settings.mascotTint)")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 4) {
+                ForEach(MascotColor.allCases) { preset in
+                    let selected = preset == selectedPreset
+                    Button {
+                        settings.setMascotTint(preset.hex)
+                        showsCustomColor = false
+                    } label: {
+                        ZStack {
+                            Circle().strokeBorder(selected ? Brand.accent : .clear, lineWidth: 1.5)
+                                .frame(width: 26, height: 26)
+                            Circle().fill(preset.swatch)
+                                .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                                .frame(width: 20, height: 20)
+                            if selected {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.black.opacity(0.75))
+                            }
+                        }
+                        .frame(width: 31, height: 31)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PanelPressStyle())
+                    .help(preset.label)
+                    .accessibilityLabel(preset.label)
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+                Spacer(minLength: 0)
+                Button {
+                    if !showsCustomColor { draft = "#\(settings.mascotTint)" }
+                    showsCustomColor.toggle()
+                    editingHex = showsCustomColor
+                } label: {
+                    Text(showsCustomColor ? "접기" : "직접 지정")
+                        .font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PanelPressStyle())
+                .accessibilityLabel(showsCustomColor ? "직접 지정 접기" : "뭉치 색상 직접 지정")
+            }
+            if showsCustomColor {
+                HStack(spacing: 8) {
+                    TextField("#RRGGBB", text: $draft)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityLabel("뭉치 색상 HEX 코드")
+                        .focused($editingHex)
+                        .onSubmit(applyCustomColor)
+                    Button("적용", action: applyCustomColor)
+                        .font(.system(size: 11))
+                        .disabled(AppSettings.normalizedMascotTint(draft) == nil)
+                }
+                Text("# 뒤에 6자리 색상 코드를 입력하세요.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func applyCustomColor() {
+        guard settings.setMascotTint(draft) else { return }
+        editingHex = false
+        showsCustomColor = false
     }
 }
 

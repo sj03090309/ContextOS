@@ -3,30 +3,15 @@ import SwiftUI
 import ContextOSUsage
 import ContextOSUsageUI
 
-extension Notification.Name { static let openUsageDashboard = Notification.Name("ContextOS.openUsageDashboard") }
-
-struct ConcurrentUsageSummary: View {
-    @EnvironmentObject var model: DashboardModel
-    @EnvironmentObject var ui: DashboardUIState
-    var body: some View {
-        UsageOverviewCard(snapshot: model.concurrentUsage, expanded: $ui.usageExpanded,
-                          compact: ui.page == .overview,
-                          showDetails: ui.page == .usage ? nil : { ui.page = .usage })
-    }
-}
-
 struct UsageOverviewCard: View {
-    @Environment(\.accessibilityReduceMotion) private var reduced
     let snapshot: ConcurrentUsageSnapshot
     @Binding var expanded: Bool
-    var compact = false
-    var showDetails: (() -> Void)? = nil
     private var data: WidgetUsageSnapshot { snapshot.widget }
     private var working: Int { snapshot.sessions.filter { $0.state == .working }.count }
     private var waiting: Int { snapshot.sessions.filter { $0.state == .waiting }.count }
     private var hasSource: Bool { data.providers.contains { $0.state == .ready || $0.state == .partial || $0.state == .noRecords } }
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 6 : 9) {
+        VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("오늘 관측 토큰").font(.system(size: 11, weight: .medium))
                 Spacer()
@@ -37,51 +22,25 @@ struct UsageOverviewCard: View {
             }
             HStack(alignment: .firstTextBaseline) {
                 Text(UsageNumbers.compact(data.today))
-                    .font(.system(size: compact ? 25 : 31, weight: .semibold, design: .rounded))
+                    .font(.system(size: 31, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
-                    .contentTransition(.numericText(value: Double(data.today ?? 0)))
-                    .animation(PanelMotion.feedback(reduced: reduced), value: data.today)
                     .accessibilityLabel("오늘 관측 토큰")
                     .accessibilityValue(data.today.map(String.init) ?? "확인 가능한 집계 없음")
                 Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 5) {
-                    Text(hasSource ? "작업 \(working) · 대기 \(waiting)" : "작업 — · 대기 —")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                        .monospacedDigit()
-                        .help("관측된 로컬 세션의 상태입니다. 전체 클라우드 작업 수가 아닙니다.")
-                    if compact, let showDetails {
-                        detailsButton(showDetails)
-                    }
-                }
+                Text(hasSource ? "작업 \(working) · 대기 \(waiting)" : "작업 — · 대기 —")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .help("관측된 로컬 세션의 상태입니다. 전체 클라우드 작업 수가 아닙니다.")
             }
-            if !compact {
-                Divider().opacity(0.5)
-                TodayModelsList(models: snapshot.todayModels, expanded: $expanded)
-            }
-            if !compact, let showDetails {
-                detailsButton(showDetails)
-            }
+            Divider().opacity(0.5)
+            TodayModelsList(models: snapshot.todayModels, expanded: $expanded)
             if data.isSample { Text("검증용 예시 · 실제 사용량이 아닙니다").font(.system(size: 9)).foregroundStyle(Brand.caution) }
         }
-        .padding(.horizontal, compact ? 3 : 13)
-        .padding(.vertical, compact ? 7 : 13)
-        .background(Brand.accent.opacity(compact ? 0 : 0.055), in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(Brand.accent.opacity(compact ? 0 : 0.09), lineWidth: 1))
-    }
-
-    private func detailsButton(_ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Text("모델·세션 보기")
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
-            }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Brand.accent)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PanelPressStyle())
+        .padding(13)
+        .background(Brand.accent.opacity(0.055), in: RoundedRectangle(cornerRadius: 17))
+        .overlay(RoundedRectangle(cornerRadius: 17).strokeBorder(Brand.accent.opacity(0.09), lineWidth: 1))
     }
 }
 
@@ -199,50 +158,39 @@ struct ModelSessionsDisclosure: View {
 
 struct PopoverUsageDetail: View {
     @EnvironmentObject var model: DashboardModel
+    @EnvironmentObject private var ui: DashboardUIState
     @State private var showScope = false
     private var data: WidgetUsageSnapshot { model.concurrentUsage.widget }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                ConcurrentUsageSummary()
-                ForEach(data.providers.filter { $0.state != .unsupported }) { provider in
-                    ProviderSessionsCard(provider: provider, groups: model.usageSessionGroups[provider.name] ?? [])
-                }
-                DisclosureGroup("집계 범위", isExpanded: $showScope) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("로컬 기록만 포함하며 dot·클라우드 전체 사용량은 아닙니다.")
-                        Text("모델별 토큰은 오늘의 실제 토큰 이벤트 기준입니다. 세션 상태의 모델명은 마지막 관측 모델이며, 모델 전환분은 세션 상세 합계에 포함돼요.")
-                        Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0.")
-                        ForEach(data.providers) { provider in
-                            ForEach(provider.issues ?? [], id: \.rawValue) { issue in
-                                Text(provider.name + " · " + issue.label)
+                if model.agentLogCollectionEnabled, !data.providers.isEmpty, !model.hasFreshConcurrentUsage() {
+                    Label("최신 사용량을 확인하고 있어요", systemImage: "clock")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .dashboardCard(radius: 13)
+                } else {
+                    UsageOverviewCard(snapshot: model.concurrentUsage, expanded: $ui.usageExpanded)
+                    ForEach(data.providers.filter { $0.state != .unsupported }) { provider in
+                        ProviderSessionsCard(provider: provider, groups: model.usageSessionGroups[provider.name] ?? [])
+                    }
+                    DisclosureGroup("집계 범위", isExpanded: $showScope) {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("로컬 기록만 포함하며 dot·클라우드 전체 사용량은 아닙니다.")
+                            Text("모델별 토큰은 오늘의 실제 토큰 이벤트 기준입니다. 세션 상태의 모델명은 마지막 관측 모델이며, 모델 전환분은 세션 상세 합계에 포함돼요.")
+                            Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0.")
+                            ForEach(data.providers) { provider in
+                                ForEach(provider.issues ?? [], id: \.rawValue) { issue in
+                                    Text(provider.name + " · " + issue.label)
+                                }
                             }
-                        }
-                        Text("마지막 집계 \(data.generatedAt.formatted(date: .omitted, time: .shortened)) · \(data.timeZoneID)")
-                    }.font(.system(size: 9.5)).foregroundStyle(.secondary).padding(.top, 5)
-                }.font(.system(size: 10)).foregroundStyle(.secondary)
-                Text("로컬 관측 범위 · dot 전체 사용량 아님").font(.system(size: 9)).foregroundStyle(.secondary)
+                            Text("사용량 반영 \(data.generatedAt.formatted(date: .omitted, time: .shortened)) · \(data.timeZoneID)")
+                        }.font(.system(size: 9.5)).foregroundStyle(.secondary).padding(.top, 5)
+                    }.font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text("로컬 관측 범위 · dot 전체 사용량 아님").font(.system(size: 9)).foregroundStyle(.secondary)
+                }
             }.padding(.horizontal, 16).padding(.bottom, 12)
         }
-    }
-}
-
-struct UsageDetailRoot: View {
-    @ObservedObject var model: DashboardModel
-    @StateObject private var workTime = WorkTimeController.shared
-    var body: some View {
-        TabView {
-        ConcurrentUsageView(snapshot: model.concurrentUsage, appPresence: model.usageAppPresence,
-            bridgeStatus: model.widgetBridgeStatus,
-            refresh: { model.refresh() })
-            .tabItem { Text("AI 사용량") }
-        WorkTimePanel(model: workTime).tabItem { Text("시간 측정") }
-        }
-            .onAppear { model.panelDidOpen() }
-            .onDisappear { model.panelDidClose() }
-            .onChange(of: workTime.snapshot) { _, _ in model.shareMeasuredTime() }
-            .onChange(of: workTime.showWidgetMascot) { _, _ in model.shareMeasuredTime(force: true) }
-            .onChange(of: workTime.smallMetric) { _, _ in model.shareMeasuredTime(force: true) }
     }
 }
 
@@ -293,7 +241,7 @@ struct ConcurrentUsageView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 5) {
-                Text("마지막 집계 \(data.generatedAt.formatted(date: .abbreviated, time: .standard)) · \(data.health)")
+                Text("사용량 반영 \(data.generatedAt.formatted(date: .abbreviated, time: .standard)) · \(data.health)")
                 Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0 · 앱 실행 여부는 작업·사용량의 증거가 아닙니다.")
                 Text("요청별 기록이 있는 하위 작업은 중복 없이 포함합니다. 구형 상속 기록은 사용량을 분리할 수 없어 제외될 수 있습니다.")
                 Text("위젯: \(bridgeStatus) · macOS가 갱신 시점을 결정합니다.")

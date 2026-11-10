@@ -64,7 +64,6 @@ struct CalendarHistoryTests {
         #expect(history.byAgentDay["Codex"] == [value.today: 300, value.earlier: 700])
         #expect(history.totalTokens == 2200)
         #expect(result.queryCount == 1 && result.totalSaved == 800 && result.todaySaved == 800)
-        #expect(result.savingsByDay[value.today] == 800)
         #expect(result.week?.tokens == 500)
         #expect(!FileManager.default.fileExists(atPath: value.originalLogs.path))
         #expect(!settings.agentLogsEnabled && !model.agentLogCollectionEnabled)
@@ -72,6 +71,7 @@ struct CalendarHistoryTests {
         let reopened = try UsageStore(path: value.database.path)
         #expect(reopened.sessionCache().count == 2)
         #expect(reopened.recentEvents().count == 1)
+        #expect(reopened.savingsByDay(since: 0)[value.today] == 800)
     }
 
     @Test("Fast savings refresh can skip historical cache materialization")

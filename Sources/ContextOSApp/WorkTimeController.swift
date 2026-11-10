@@ -156,7 +156,6 @@ final class WorkTimeController: ObservableObject {
             bridgeFocused = nil; bridgeStatus = "수신 꺼짐 · 관측 중지"; releaseUnusedBoundaries()
         }
     }
-    @Published private(set) var revision: UInt64 = 0
     private(set) var lastPublishTick: UInt64 = 0
     private var drawSamples: [Double] = []
     private var ledger = MeasuredTimeLedger()
@@ -247,7 +246,6 @@ final class WorkTimeController: ObservableObject {
             manualState: manual.partial ? .partial : manualRunning ? .running : interrupted ? .interrupted : manual.nanoseconds == nil ? .notObserved : .paused,
             foregroundState: foreground.partial ? .partial : foregroundActive ? .running : foregroundEnabled ? .waitingForEditor : interrupted ? .interrupted : foreground.nanoseconds == nil ? .notObserved : .paused,
             activity: estimatedActivity)
-        revision &+= 1
     }
     func recordDraw(from tick: UInt64) {
         let now = DispatchTime.now().uptimeNanoseconds

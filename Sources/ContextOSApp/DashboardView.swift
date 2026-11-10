@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ContextOSCore
+import ContextOSUsage
 
 /// The ContextOS brand palette — the ink + cream of the app icon (뭉치 in cream
 /// on a charcoal tile), used consistently across the dashboard.
@@ -32,24 +33,6 @@ enum Brand {
     /// Whatever sits on an `accent` fill: ink on cream, cream on ink.
     static let onAccent = adaptive(dark: inkNS, light: creamNS)
 
-    /// The mascot inverts with the appearance like the accent does — a static
-    /// cream blob would vanish on the light popover material. Dark: cream blob
-    /// with ink eyes (the icon). Light: ink blob with cream eyes (its negative).
-    static let blobTop = adaptive(
-        dark: NSColor(calibratedRed: 0.953, green: 0.925, blue: 0.867, alpha: 1),   // #F3ECDD
-        light: NSColor(calibratedRed: 0.180, green: 0.180, blue: 0.212, alpha: 1))  // #2E2E36
-    static let blobBottom = adaptive(
-        dark: NSColor(calibratedRed: 0.894, green: 0.851, blue: 0.765, alpha: 1),   // #E4D9C3
-        light: inkNS)                                                                // #17171B
-    static let mascotEye = adaptive(
-        dark: NSColor(calibratedWhite: 0.12, alpha: 1),
-        light: creamNS)
-    /// The warmth around 뭉치 while it eats: a cream aura on the dark panel, and
-    /// only a faint shade on the light one, where a dark glow reads as a smudge.
-    static let mascotGlow = adaptive(
-        dark: NSColor(calibratedRed: 0.953, green: 0.925, blue: 0.867, alpha: 1),
-        light: NSColor(calibratedWhite: 0.1, alpha: 0.35))
-
     /// Claude Code's share in every bar and dot — Anthropic's clay.
     static let claude = Color(red: 0.851, green: 0.467, blue: 0.341)    // #D97757
     /// Codex's share: a clear blue, a step deeper on the light panel.
@@ -75,16 +58,14 @@ enum Brand {
     }
 }
 
-/// Which "screen" the segmented control shows — keeps the panel short by
-/// showing one system at a time instead of stacking every section.
+/// The lists inside dashboard history.
 enum DashboardTab: Hashable, CaseIterable {
-    case files, activity, ai
+    case files, activity
 
     var label: String {
         switch self {
         case .files: return "프로젝트"
-        case .activity: return "활동"
-        case .ai: return "AI 연결"
+        case .activity: return "최적화 기록"
         }
     }
 }
@@ -97,6 +78,8 @@ enum DashboardTab: Hashable, CaseIterable {
 /// on the next open, which should come back exactly as it was left.
 @MainActor
 final class DashboardUIState: ObservableObject {
+    enum SettingsDestination: Hashable { case privacy }
+
     enum Page: String, CaseIterable {
         case overview = "대시보드", usage = "AI 사용량", time = "개발 시간"
         var label: String { rawValue }
@@ -119,6 +102,7 @@ final class DashboardUIState: ObservableObject {
     @Published var monthOffset = 0
     @Published var selectedDay: String?
     @Published var showSettings = false
+    private(set) var settingsDestination: SettingsDestination?
     @Published var showConnections = false
     // Display only: never mutates the project store, history or usage snapshot.
     // Safe by default when this release preview is shared or screen recorded.
@@ -126,18 +110,23 @@ final class DashboardUIState: ObservableObject {
     /// Wired by the app's public window command; no independent data source.
     var openWindow: (() -> Void)?
 
+    func openSettings(at destination: SettingsDestination? = nil) {
+        settingsDestination = destination
+        showConnections = false
+        showSettings = true
+    }
+
     /// Public menu and widget routes reveal their destination even when a
     /// settings overlay was left open, including routes to the current page.
     func navigate(to destination: Page) {
         showSettings = false
+        settingsDestination = nil
         showConnections = false
         page = destination
     }
 }
 
-/// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a
-/// live line saying who is working where, the savings hero, the month in AI
-/// tokens, and three tabs — projects, activity, AI connections.
+/// Live activity stays visible above the overview, usage, and development time pages.
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject private var ui: DashboardUIState
@@ -145,9 +134,13 @@ struct DashboardView: View {
     // The time cards observe their own controller so a ticking duration does
     // not invalidate the calendar and every other dashboard section.
     let workTime: WorkTimeController
+    private let surface: DashboardSurface
     @Namespace private var navigation
 
-    init(workTime: WorkTimeController = .shared) { self.workTime = workTime }
+    init(workTime: WorkTimeController = .shared, surface: DashboardSurface = .popover) {
+        self.workTime = workTime
+        self.surface = surface
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -160,8 +153,8 @@ struct DashboardView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             LiveHeader(live: model.live,
-                       configured: model.agents.filter { $0.connection.isConfigured }.count,
-                       todaySaved: model.todaySaved, hidePrivateDetails: ui.hidePrivateDetails)
+                       agentLogCollectionEnabled: model.agentLogCollectionEnabled,
+                       hidePrivateDetails: ui.hidePrivateDetails)
                 .padding(.horizontal, 18)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -178,7 +171,7 @@ struct DashboardView: View {
             .clipped()
             .animation(PanelMotion.navigation(reduced: reduced), value: ui.page)
 
-            FooterBar()
+            FooterBar(surface: surface)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: DashboardLayout.width, height: ui.panelHeight)
@@ -216,42 +209,7 @@ struct DashboardView: View {
     private var pageContent: some View {
         switch ui.page {
         case .overview:
-            ScrollView(.vertical) {
-                VStack(spacing: 10) {
-                    if !model.agentLogCollectionEnabled {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("AI 로컬 로그 집계 꺼짐", systemImage: "hand.raised")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("사용량과 AI 작업 상태를 보려면 로컬 세션 파일 읽기를 허용해 주세요. 파일에는 대화·도구 출력이 포함될 수 있어요. 기존 기록은 보존하며 설정에서 언제든 끌 수 있어요.")
-                                .font(.system(size: 11)).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Button("내용 확인 · 집계 설정") { ui.showSettings = true }
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    if !model.agents.contains(where: { $0.connection.isConfigured }) {
-                        setupPrompt
-                    }
-                    CompactSavingsSummary()
-                    ConcurrentUsageSummary()
-                    DevelopmentTimeSummary(model: workTime) { ui.page = .time }
-                    overviewActions
-                    if ui.historyExpanded {
-                        VStack(spacing: 10) {
-                            CalendarCard()
-                            PanelTabBar(selection: $ui.tab)
-                            ZStack(alignment: .top) {
-                                historyContent.id(ui.tab).transition(.opacity)
-                            }
-                            .animation(PanelMotion.feedback(reduced: reduced), value: ui.tab)
-                        }
-                        .transition(PanelMotion.disclosure(reduced: reduced))
-                    }
-                }
-                .padding(.horizontal, 16).padding(.bottom, 16)
-            }
+            overviewPage
         case .usage:
             PopoverUsageDetail()
         case .time:
@@ -259,63 +217,193 @@ struct DashboardView: View {
         }
     }
 
+    private var overviewPage: some View {
+        ScrollViewReader { scroll in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    todaySummary
+                    overviewActions.id(OverviewAnchor.actions)
+                    if ui.historyExpanded { history }
+                    if !model.agentLogCollectionEnabled { logConsent }
+                    if !hasConfiguredAgent {
+                        Text("AI 도구를 연결하면 필요한 프로젝트 문맥을 전달하고, 절감 기록을 여기서 확인할 수 있어요.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 3)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
+            .onChange(of: ui.historyExpanded) { _, expanded in
+                if expanded {
+                    withAnimation(PanelMotion.navigation(reduced: reduced)) {
+                        scroll.scrollTo(OverviewAnchor.actions, anchor: .top)
+                    }
+                }
+            }
+        }
+    }
+
+    private enum OverviewAnchor: Hashable { case actions }
+
+    private var hasConfiguredAgent: Bool {
+        model.agents.contains { $0.connection.isConfigured }
+    }
+
+    private var todaySummary: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            CompactSavingsSummary()
+            Divider().opacity(0.65)
+            HStack(alignment: .top, spacing: 12) {
+                usageMetric
+                Divider().frame(height: 48)
+                OverviewDevelopmentMetric(model: workTime)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .dashboardCard(radius: 16, padding: 13)
+    }
+
+    private var usageMetric: some View {
+        let data = model.concurrentUsage.widget
+        let fresh = model.hasFreshConcurrentUsage()
+        let value = model.agentLogCollectionEnabled && fresh ? data.today : nil
+        let detail: String
+        if !model.agentLogCollectionEnabled {
+            detail = "로그 집계 꺼짐"
+        } else if data.providers.isEmpty {
+            detail = "집계 준비 중"
+        } else if !fresh {
+            detail = "최신 집계 확인 중"
+        } else {
+            detail = data.health
+        }
+        return OverviewMetric(title: "AI 관측 토큰", value: UsageNumbers.compact(value), detail: detail,
+                              fullValue: value.map(String.init) ?? "확인 가능한 집계 없음")
+    }
+
     private var overviewActions: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             Button {
                 withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
             } label: {
-                HStack {
-                    Text("달력·프로젝트")
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .rotationEffect(.degrees(ui.historyExpanded ? 180 : 0))
-                }
-                .font(.system(size: 11, weight: .medium))
-                .padding(.vertical, 9).contentShape(Rectangle())
+                overviewAction("기록", symbol: "calendar",
+                               trailing: ui.historyExpanded ? "chevron.up" : "chevron.down")
             }
             .buttonStyle(PanelPressStyle())
+            .help("달력, 프로젝트, 최적화 기록")
+            .accessibilityHint("달력과 프로젝트 및 최적화 기록 보기")
             .accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
-            Divider().frame(height: 14)
             Button { ui.showConnections = true } label: {
-                Label("AI 연결", systemImage: "link")
-                    .font(.system(size: 11, weight: .medium))
-                    .padding(.vertical, 9).contentShape(Rectangle())
+                overviewAction(hasConfiguredAgent ? "AI 연결" : "AI 연결하기",
+                               symbol: "link", trailing: "chevron.right", emphasized: !hasConfiguredAgent)
             }
             .buttonStyle(PanelPressStyle())
             .help("AI 도구와 ContextOS 연결 설정")
-            .fixedSize()
         }
     }
 
-    @ViewBuilder
-    private var historyContent: some View {
-        switch ui.tab {
-        case .files: ProjectsList()
-        case .activity: ActivityList()
-        case .ai: AgentsList()
-        }
-    }
-
-    private var setupPrompt: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("AI에 필요한 코드만, 더 가볍게")
-                .font(.system(size: 12, weight: .semibold))
-            Text("AI 도구를 연결하면 프로젝트에 맞는 문맥을 전달하고, 절감 기록을 여기서 확인할 수 있어요.")
-                .font(.system(size: 11))
+    private func overviewAction(_ title: String, symbol: String, trailing: String,
+                                emphasized: Bool = false) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: symbol).accessibilityHidden(true)
+            Text(title).lineLimit(1)
+            Spacer(minLength: 4)
+            Image(systemName: trailing)
+                .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Button { ui.showConnections = true } label: {
-                Label("AI 도구 연결하기", systemImage: "link")
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 12).padding(.vertical, 7)
-                    .foregroundStyle(Brand.onAccent)
-                    .background(Brand.accent, in: RoundedRectangle(cornerRadius: 8))
-                    .contentShape(Rectangle())
+                .accessibilityHidden(true)
+        }
+        .font(.system(size: 11.5, weight: .semibold))
+        .foregroundStyle(emphasized ? Brand.accent : .primary)
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .background(Color.primary.opacity(emphasized ? 0.10 : 0.045), in: RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+    }
+
+    private var history: some View {
+        VStack(spacing: 10) {
+            CalendarCard()
+            PanelTabBar(selection: $ui.tab)
+            ZStack(alignment: .top) {
+                switch ui.tab {
+                case .files: ProjectsList()
+                case .activity: ActivityList()
+                }
             }
-            .buttonStyle(PanelPressStyle())
+            .animation(PanelMotion.feedback(reduced: reduced), value: ui.tab)
+        }
+        .transition(PanelMotion.disclosure(reduced: reduced))
+    }
+
+    private var logConsent: some View {
+        Button { ui.openSettings(at: .privacy) } label: {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "hand.raised")
+                    .font(.system(size: 12))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("AI 로그 집계 설정")
+                        .font(.system(size: 11.5, weight: .semibold))
+                    Text("사용량과 작업 상태를 보려면 로컬 로그 읽기를 허용해 주세요. 로그에는 대화와 도구 출력이 포함될 수 있어요.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PanelPressStyle())
+    }
+}
+
+/// Keeping the work clock in this small view avoids invalidating the whole overview.
+private struct OverviewDevelopmentMetric: View {
+    @ObservedObject var model: WorkTimeController
+
+    var body: some View {
+        let activity = model.estimatedActivity
+        OverviewMetric(title: "개발 활동 추정", value: activity.formatted, detail: activity.label,
+                       fullValue: activity.estimatedNanoseconds == nil ? "관측 없음" : activity.formatted)
+    }
+}
+
+private struct OverviewMetric: View {
+    let title: String
+    let value: String
+    let detail: String
+    let fullValue: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .medium))
+            Text(value)
+                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(detail)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dashboardCard(radius: 13)
+        .help(detail)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(fullValue) · \(detail)")
     }
 }
 
@@ -332,21 +420,5 @@ extension View {
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.055), lineWidth: 1))
-    }
-}
-
-/// A translucent panel background pinned to the `.active` state, so its color
-/// stays constant instead of deepening when the popover window gains/loses key
-/// focus (which is what made a click "darken" the dashboard).
-struct VisualEffectBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .popover
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.state = .active
     }
 }

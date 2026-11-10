@@ -9,9 +9,7 @@ import ContextOSUsage
 /// is working where — or when they last did.
 struct LiveHeader: View {
     @ObservedObject var live: LiveStatus
-    /// Agents whose own config registers ContextOS.
-    var configured: Int
-    var todaySaved: Int = 0
+    let agentLogCollectionEnabled: Bool
     var hidePrivateDetails = false
     @Environment(\.accessibilityReduceMotion) private var reduced
 
@@ -28,7 +26,7 @@ struct LiveHeader: View {
                     Spacer(minLength: 8)
                     pill
                 }
-                Text(live.snapshot.optimizing || live.snapshot.planning ? contextOSDetail : detail(now: context.date))
+                Text(detail(now: context.date))
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -38,24 +36,27 @@ struct LiveHeader: View {
     }
 
     private var pill: some View {
-        HStack(spacing: 6) {
+        let working = agentLogCollectionEnabled && live.working
+        return HStack(spacing: 6) {
             Circle()
-                .fill(live.working ? Brand.positiveDot : Color.secondary.opacity(0.6))
+                .fill(working ? Brand.positiveDot : Color.secondary.opacity(0.6))
                 .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
             Text(phaseTitle)
                 .font(.system(size: 10, weight: .medium))
                 .contentTransition(.opacity)
         }
-        .foregroundStyle(live.working ? Brand.positive : .secondary)
+        .foregroundStyle(working ? Brand.positive : .secondary)
         .padding(.horizontal, 10)
         .frame(height: 24)
-        .background((live.working ? Brand.positiveDot.opacity(0.13) : Color.primary.opacity(0.07)),
+        .background((working ? Brand.positiveDot.opacity(0.13) : Color.primary.opacity(0.07)),
                     in: Capsule())
         .animation(PanelMotion.feedback(reduced: reduced), value: live.phase)
         .animation(PanelMotion.feedback(reduced: reduced), value: phaseTitle)
     }
 
     private var phaseTitle: String {
+        guard agentLogCollectionEnabled else { return "로그 집계 꺼짐" }
         let agent = live.agent ?? "AI"
         switch live.phase {
         case .working: return agent + " 작업 중"
@@ -66,15 +67,11 @@ struct LiveHeader: View {
         }
     }
 
-    private var contextOSDetail: String {
+    private func detail(now: Date) -> String {
+        guard agentLogCollectionEnabled else { return "AI 사용량과 작업 상태는 설정에서 켤 수 있어요" }
         if live.snapshot.optimizing { return "ContextOS · 파일 최적화 호출 중" }
         if live.snapshot.planning { return "ContextOS · 도구 호출 중" }
-        return todaySaved > 0
-            ? "ContextOS · 오늘 추정 절감 \(TokenEstimator.korean(todaySaved)) 토큰"
-            : "ContextOS · 오늘 절감 기록 없음"
-    }
 
-    private func detail(now: Date) -> String {
         var parts: [String] = []
         if live.working {
             let elapsed = live.since.map { Self.elapsed(since: $0, now: now) } ?? "작업 신호 확인"
@@ -110,174 +107,42 @@ struct LiveHeader: View {
     }
 }
 
-// MARK: - Hero
+// MARK: - Savings
 
 struct CompactSavingsSummary: View {
     @EnvironmentObject var model: DashboardModel
-    @Environment(\.accessibilityReduceMotion) private var reduced
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Text("컨텍스트 최적화")
-                    .font(.system(size: 11, weight: .semibold))
-                Spacer(minLength: 8)
-                Text("추정 절감 토큰")
-                    .font(.system(size: 9.5))
+        HStack(alignment: .bottom, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("오늘 추정 절감")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-            }
-            HStack(alignment: .bottom, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(TokenEstimator.korean(model.totalSaved))
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(TokenEstimator.korean(model.todaySaved))
                         .font(.system(size: 30, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .tracking(-0.6)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.65)
-                        .contentTransition(.numericText(value: Double(model.totalSaved)))
-                        .animation(PanelMotion.feedback(reduced: reduced), value: model.totalSaved)
-                        .accessibilityLabel("누적 추정 절감 토큰")
-                        .accessibilityValue(String(model.totalSaved))
-                    Text("누적")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(.secondary)
+                        .monospacedDigit().tracking(-0.6)
+                        .lineLimit(1).minimumScaleFactor(0.65)
+                    Text("토큰").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 6) {
-                    Text("오늘 +\(TokenEstimator.korean(model.todaySaved))")
-                        .font(.system(size: 11, weight: .semibold))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .contentTransition(.numericText(value: Double(model.todaySaved)))
-                        .animation(PanelMotion.feedback(reduced: reduced), value: model.todaySaved)
-                    Text("누적 기록 \(model.queryCount)회")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                .padding(.bottom, 2)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("오늘 추정 절감 토큰")
+                .accessibilityValue(String(model.todaySaved))
             }
-        }
-        .dashboardCard(radius: 16, padding: 13)
-        .help("ContextOS가 선택한 컨텍스트와 전체 파일 크기를 비교한 추정치입니다. AI 제공자의 실제 청구 절감액이 아닙니다.")
-    }
-}
-
-/// The one number that matters at a glance, with its trend and today's share.
-struct HeroSection: View {
-    @EnvironmentObject var model: DashboardModel
-    @Environment(\.accessibilityReduceMotion) private var reduced
-
-    var body: some View {
-        let trend = Self.lastDays(14, from: model.savingsByDay)
-        let week = trend.suffix(7).reduce(0, +)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .bottom, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("ContextOS 추정 절감")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                    // Proportional figures: tabular digits space a lone big
-                    // number out as if it were a column.
-                    Text(TokenEstimator.korean(model.totalSaved))
-                        .font(.system(size: 28, weight: .semibold, design: .rounded))
-                        .tracking(-0.5)
-                        .contentTransition(.numericText())
-                        .animation(PanelMotion.feedback(reduced: reduced), value: model.totalSaved)
-                }
-                Spacer(minLength: 8)
-                TrendBars(values: trend)
-                    .frame(width: 90)
-                    .padding(.bottom, 4)
-            }
-            HStack(spacing: 8) {
-                Text("오늘 추정 +\(TokenEstimator.korean(model.todaySaved))")
-                    .font(.system(size: 11.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Brand.accent)
-                    .padding(.horizontal, 9)
-                    .frame(height: 22)
-                    .background(Brand.accent.opacity(0.14), in: Capsule())
-                Text("이번 주 +\(TokenEstimator.korean(week))")
-                    .font(.system(size: 11.5).monospacedDigit())
+            Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("누적 \(TokenEstimator.korean(model.totalSaved))")
+                    .font(.system(size: 11, weight: .medium)).monospacedDigit()
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                    .accessibilityLabel("누적 추정 절감 토큰")
+                    .accessibilityValue(String(model.totalSaved))
+                Text("절감 기록 \(model.queryCount)회")
+                    .font(.system(size: 9.5)).monospacedDigit()
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                HStack(spacing: 4) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 10))
-                    (Text("\(model.queryCount)").foregroundStyle(.primary).fontWeight(.semibold) + Text("회"))
-                        .font(.system(size: 11.5).monospacedDigit())
-                }
-                .foregroundStyle(.secondary)
-                .help("저장된 절감 기록 수입니다. 파일 추천이나 일반 Read 호출 횟수와는 다릅니다.")
             }
+            .padding(.bottom, 3)
         }
-    }
-
-    /// The last `count` local days, oldest first, zero where nothing was saved.
-    static func lastDays(_ count: Int, from byDay: [String: Int], now: Double = Date().timeIntervalSince1970) -> [Int] {
-        (0..<count).reversed().map { back in
-            byDay[TimeKeys.localDay(now - Double(back) * 86_400)] ?? 0
-        }
-    }
-}
-
-/// The last two weeks of savings as a row of small columns, today in the
-/// accent and the days before it quieter.
-///
-/// Columns rather than a line: savings arrive in bursts — a heavy day, then
-/// nothing for three — and a line drawn through that zigzags like a heart
-/// monitor, suggesting a flow between days that never happened. A column per
-/// day says what it is, a day's amount, and an empty day stays a quiet stub on
-/// the baseline instead of a cliff.
-struct TrendBars: View {
-    /// Oldest first; the last value is today.
-    var values: [Int]
-    var now = Date()
-
-    private static let chartHeight: CGFloat = 34
-    private static let gap: CGFloat = 2
-
-    var body: some View {
-        let top = max(values.max() ?? 0, 1)
-        VStack(alignment: .trailing, spacing: 5) {
-            HStack(alignment: .bottom, spacing: Self.gap) {
-                ForEach(values.indices, id: \.self) { index in
-                    column(values[index], index: index, top: top)
-                }
-            }
-            .frame(height: Self.chartHeight, alignment: .bottom)
-            Text("최근 14일")
-                .font(.system(size: 9.5))
-                .foregroundStyle(.tertiary)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("최근 14일 동안 아낀 토큰")
-        .accessibilityValue("오늘 \(TokenEstimator.korean(values.last ?? 0)), "
-                            + "14일 중 가장 많은 날 \(TokenEstimator.korean(values.max() ?? 0))")
-    }
-
-    private func column(_ value: Int, index: Int, top: Int) -> some View {
-        let isToday = index == values.count - 1
-        // Rounded at the top, square on the baseline; a day with anything at
-        // all is at least tall enough to tell apart from an empty one.
-        let height = value > 0
-            ? max(5, Self.chartHeight * CGFloat(value) / CGFloat(top))
-            : 2
-        return UnevenRoundedRectangle(topLeadingRadius: value > 0 ? 2 : 1,
-                                      topTrailingRadius: value > 0 ? 2 : 1,
-                                      style: .continuous)
-            .fill(isToday ? Brand.accent
-                  : value > 0 ? Color.primary.opacity(0.28) : Color.primary.opacity(0.12))
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-            .help(label(value, daysAgo: values.count - 1 - index))
-    }
-
-    private func label(_ value: Int, daysAgo: Int) -> String {
-        let day = TimeKeys.localDay(now.timeIntervalSince1970 - Double(daysAgo) * 86_400)
-        let title = daysAgo == 0 ? "오늘" : CalendarCard.dayTitle(day)
-        return value > 0 ? "\(title) · \(TokenEstimator.korean(value)) 아낌" : "\(title) · 아낀 토큰 없음"
+        .help("ContextOS가 선택한 컨텍스트와 전체 파일 크기를 비교한 추정치입니다. AI 제공자의 실제 청구 절감액이 아닙니다.")
     }
 }
 

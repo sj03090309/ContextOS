@@ -1,27 +1,6 @@
 import SwiftUI
 import ContextOSUsage
 
-struct DevelopmentTimeSummary: View {
-    @ObservedObject var model: WorkTimeController
-    var open: () -> Void
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 10) {
-                Image(systemName: "clock").font(.system(size: 14)).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("오늘 개발 활동").font(.system(size: 11, weight: .medium))
-                    Text(model.estimatedActivity.label).font(.system(size: 9.5)).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 6)
-                Text(model.estimatedActivity.formatted)
-                    .font(.system(size: 18, weight: .medium, design: .rounded)).monospacedDigit()
-                Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary)
-            }.dashboardCard(radius: 16, padding: 13).contentShape(Rectangle())
-        }.buttonStyle(PanelPressStyle())
-            .accessibilityHint("개발 활동 추정과 연결 상태 확인")
-    }
-}
-
 struct DevelopmentTimeCard: View {
     let snapshot: EstimatedActivitySnapshot
     var body: some View {

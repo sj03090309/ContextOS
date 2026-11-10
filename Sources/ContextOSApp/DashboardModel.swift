@@ -23,6 +23,7 @@ final class DashboardModel: ObservableObject {
 
     @Published var concurrentUsage = ConcurrentUsageSnapshot() {
         didSet {
+            guard concurrentUsage.sessions != oldValue.sessions else { return }
             // Build status groups once per snapshot, not during every render,
             // hover or disclosure. Token totals remain in the collector.
             let providers = Dictionary(grouping: concurrentUsage.sessions, by: \.agent)
@@ -32,14 +33,13 @@ final class DashboardModel: ObservableObject {
         }
     }
     private(set) var usageSessionGroups: [String: [ModelSessionGroup]] = [:]
-    @Published var usageAppPresence: [String: Bool] = [:]
-    @Published var widgetBridgeStatus = "공유 권한 설정 필요"
     @Published private(set) var agentLogCollectionEnabled = false
     private var collectionGeneration = 0
     private let servicesStarted: Bool
     private let settings: AppSettings
     private var logCollectionSuspended: Bool { backgroundSuspended || !agentLogCollectionEnabled }
     private let concurrentReader = ConcurrentUsageReader()
+    private var latestUsageReadAt: Date?
     private let widgetPublisher = WidgetSnapshotPublisher()
     private var pendingWidgetPreferenceChange = false
     private var timeSubscriptions = Set<AnyCancellable>()
@@ -60,6 +60,17 @@ final class DashboardModel: ObservableObject {
     }
     nonisolated(unsafe) private var runtimeObservers: [(NotificationCenter, NSObjectProtocol)] = []
 
+    private var latestWidgetUsage: WidgetUsageSnapshot {
+        var widget = concurrentUsage.widget
+        if let latestUsageReadAt { widget.generatedAt = latestUsageReadAt }
+        return widget
+    }
+
+    func hasFreshConcurrentUsage(at now: Date = Date()) -> Bool {
+        let widget = latestWidgetUsage
+        return widget.isSample || !widget.stale(at: now)
+    }
+
     func shareMeasuredTime(force: Bool = false, timing: WidgetTimeSnapshot? = nil,
                            metric: SmallWidgetMetric? = nil, mascot: Bool? = nil,
                            preferenceChange: Bool = false) {
@@ -68,25 +79,17 @@ final class DashboardModel: ObservableObject {
         if preferenceChange { pendingWidgetPreferenceChange = true }
         // Do not publish the empty startup placeholder before the first token
         // collection; it could otherwise throttle the first real snapshot.
-        guard !concurrentUsage.widget.providers.isEmpty else { return }
-        guard let container = WidgetSnapshotStore.container() else {
-            widgetBridgeStatus = "공유 권한 설정 필요"
-            return
-        }
-        var payload = concurrentUsage.widget
+        guard !concurrentUsage.widget.providers.isEmpty,
+              let container = WidgetSnapshotStore.container() else { return }
+        var payload = latestWidgetUsage
         payload.timing = timing ?? WorkTimeController.shared.snapshot
         payload.smallMetric = metric ?? WorkTimeController.shared.smallMetric
         payload.showMascot = mascot ?? WorkTimeController.shared.showWidgetMascot
-        do {
-            let published = try widgetPublisher.publish(payload, to: container, force: force,
-                                                        preferenceChange: pendingWidgetPreferenceChange) {
-                WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
-            }
-            if published {
-                pendingWidgetPreferenceChange = false
-                widgetBridgeStatus = "집계 공유됨"
-            }
-        } catch { widgetBridgeStatus = "공유 저장 실패 · 이전 집계 유지" }
+        let published = try? widgetPublisher.publish(payload, to: container, force: force,
+                                                     preferenceChange: pendingWidgetPreferenceChange) {
+            WidgetCenter.shared.reloadTimelines(ofKind: WidgetSnapshotStore.kind)
+        }
+        if published == true { pendingWidgetPreferenceChange = false }
     }
 
     @Published var connectionPreview: ConnectionPreview?
@@ -106,7 +109,6 @@ final class DashboardModel: ObservableObject {
     /// Most recent optimization events, newest first.
     @Published var recent: [UsageEvent] = []
     /// Tokens saved per local day over the last two weeks, for the trend line.
-    @Published var savingsByDay: [String: Int] = [:]
     /// agent → local day → tokens, for the calendar's per-agent split.
     @Published var agentDayTokens: [String: [String: Int]] = [:]
     /// Commits and lines for days picked on the calendar, loaded on demand.
@@ -119,24 +121,8 @@ final class DashboardModel: ObservableObject {
     /// What an agent is doing this minute, for the header. An object of its own
     /// so a turn starting or stopping redraws the header, not the whole panel.
     let live = LiveStatus()
-    /// Chew state, shared by the menu-bar glyph and the dashboard blob so the
-    /// two 뭉치 move as one. Both derive their motion from this plus the
-    /// absolute clock; neither keeps its own timeline.
+    /// Both renderers derive the work pose and completion cue from these timestamps.
     let mascot = MascotState()
-
-    /// Brief highlight when MCP just handled an optimization (energetic burst).
-    ///
-    /// Not `@Published`, and neither is `working`: only 뭉치 reads them, through
-    /// `syncMascot`. Publishing them re-ran the whole dashboard's body — calendar,
-    /// project cards and all — on every turn start and stop, with the panel shut.
-    private var flashing = false { didSet { syncMascot() } }
-    /// A supported agent has an unfinished turn, including a quiet reasoning
-    /// or tool wait. Session lifecycle evidence decides this, not a heartbeat.
-    private var working = false { didSet { syncMascot() } }
-
-    /// One place decides whether 뭉치 is eating, so the two renderers can never
-    /// disagree about it.
-    private func syncMascot() { mascot.set(eating: flashing || working) }
 
     private lazy var activityMonitor = AgentActivityMonitor()
     private let sessionTracker = SessionActivityTracker()
@@ -153,18 +139,18 @@ final class DashboardModel: ObservableObject {
     /// evaluation has started can't overwrite it.
     private var evaluation = 0
 
-    private var lastQueryCount = -1
     private var savingsTimer: Timer?
     private var usageTimer: Timer?
     private var dashboardVisibility = DashboardVisibility()
     private var panelOpen: Bool { dashboardVisibility.isVisible }
     private var historyVisible = false
-    @Published private(set) var isRefreshing = false
+    private var isRefreshingUsage = false
+    private var isRefreshingSavings = false
+    private var queuedSavingsRefresh: Bool?
     /// A refresh asked for while another was running, run as soon as it ends —
     /// so opening the panel mid-way through a background top-up still gets the
     /// week in code, which the background pass skips.
     private var queuedUsageRefresh: (force: Bool, includeWeek: Bool, priority: TaskPriority)?
-    private var flashTask: Task<Void, Never>?
     nonisolated(unsafe) private var optimizedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var activityObserver: NSObjectProtocol?
     nonisolated(unsafe) private var startObserver: NSObjectProtocol?
@@ -261,7 +247,8 @@ final class DashboardModel: ObservableObject {
             usageTimer = nil; pollTimer = nil; recheckTimer = nil
             queuedUsageRefresh = nil
             pendingWorkingEvaluation = false; pendingWorkingRescan = false
-            working = false; live.update(.empty)
+            mascot.setWorking(false)
+            live.update(.empty)
             aiTokens = 0; projectUsage = []
             // Stop observing new logs without hiding the already saved calendar.
             agents = agents.map { agent in
@@ -273,6 +260,7 @@ final class DashboardModel: ObservableObject {
                 return agent
             }
             week = BuildSummary(); dayDetails = [:]
+            latestUsageReadAt = nil
             concurrentUsage = Self.pausedUsage()
             if servicesStarted {
                 WorkTimeController.shared.clearAIExecution()
@@ -433,16 +421,16 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    // Instant reaction to a just-recorded optimization: light up now, refresh the
-    // numbers right away.
+    // The MCP server posts this after recording the savings from a delivery.
     private func onOptimized() {
-        flash()
+        mascot.completeOptimization()
         refreshFast()
     }
 
     /// Manual refresh (the ↻ button): rebuild everything from disk now, rather
     /// than serving whatever the memo last computed.
     func refresh() {
+        tokenRefresh.cancel()
         refreshAgentPresence()
         LogoStore.shared.reset()
         refreshFast(forceHistory: true)
@@ -552,7 +540,7 @@ final class DashboardModel: ObservableObject {
             return
         }
         guard ticket == evaluation else { return }
-        update(\.working, snapshot.activeSessions > 0)
+        mascot.setWorking(snapshot.activeSessions > 0)
         live.update(snapshot)
         if let at = snapshot.recheckAt {
             let timer = Timer(fire: at, interval: 0, repeats: false) { [weak self] _ in
@@ -579,28 +567,68 @@ final class DashboardModel: ObservableObject {
         self[keyPath: keyPath] = value
     }
 
+    private func markStatsChecked(force: Bool, now: Date = Date()) {
+        // The footer has minute-level granularity. Rapid log writes should not
+        // invalidate the dashboard just to replace one "방금" with another.
+        if !force, let lastUpdated, (0..<30).contains(now.timeIntervalSince(lastUpdated)) { return }
+        lastUpdated = now
+    }
+
     // Cheap: savings counters from the local usage DB.
     private func refreshFast(forceHistory: Bool = false) {
         guard !backgroundSuspended else { return }
+        // An older asynchronous read must not overwrite a newer count.
+        guard !isRefreshingSavings else {
+            queuedSavingsRefresh = forceHistory || queuedSavingsRefresh == true
+            return
+        }
+        isRefreshingSavings = true
         let generation = collectionGeneration
         let includeHistory = !agentLogCollectionEnabled && (forceHistory || tokensByDay.isEmpty)
         let includeWeek = includeHistory && panelOpen && historyVisible
         Task(priority: .utility) {
+            defer {
+                isRefreshingSavings = false
+                if let next = queuedSavingsRefresh {
+                    queuedSavingsRefresh = nil
+                    refreshFast(forceHistory: next)
+                }
+            }
             let s = await Self.loadSavings(includeHistory: includeHistory, includeWeek: includeWeek)
+            guard !backgroundSuspended else { return }
             update(\.todaySaved, s.todaySaved)
             update(\.totalSaved, s.totalSaved)
             update(\.recent, s.recent)
-            update(\.savingsByDay, s.savingsByDay)
             if !agentLogCollectionEnabled, generation == collectionGeneration, let history = s.history {
                 update(\.tokensByDay, history.byDay)
                 update(\.agentDayTokens, history.byAgentDay)
                 if let week = s.week { update(\.week, week) }
             }
-            lastUpdated = Date()
-            if lastQueryCount >= 0, s.queryCount > lastQueryCount { flash() }
-            lastQueryCount = s.queryCount
             update(\.queryCount, s.queryCount)
+            markStatsChecked(force: forceHistory)
         }
+    }
+
+    private func applyConcurrentUsage(_ usage: ConcurrentUsageSnapshot) {
+        // A new read timestamp keeps the widget fresh but does not change
+        // the dashboard's figures or session status. Publish a timestamp-only
+        // read when it clears the overview's stale state.
+        var comparable = usage
+        comparable.widget.generatedAt = concurrentUsage.widget.generatedAt
+        comparable.aiExecution.generatedAt = concurrentUsage.aiExecution.generatedAt
+        let changed = comparable != concurrentUsage
+        if !changed {
+            let now = Date()
+            let fresh = usage.widget.isSample || !usage.widget.stale(at: now)
+            if fresh != hasFreshConcurrentUsage(at: now) { objectWillChange.send() }
+        }
+        latestUsageReadAt = usage.widget.generatedAt
+        if changed { concurrentUsage = usage }
+
+        let workTime = WorkTimeController.shared
+        var execution = usage.aiExecution
+        if let current = workTime.aiExecution { execution.generatedAt = current.generatedAt }
+        if execution != workTime.aiExecution { workTime.updateAIExecution(usage.aiExecution) }
     }
 
     // Heavier: AI token usage (parses session logs) + agent detection, and — only
@@ -609,17 +637,17 @@ final class DashboardModel: ObservableObject {
         guard !logCollectionSuspended else { return }
         // One at a time: a refresh that lands while another is still parsing
         // would only wait on the same lock and redo its work. Remember it instead.
-        guard !isRefreshing else {
+        guard !isRefreshingUsage else {
             let queued = queuedUsageRefresh
             queuedUsageRefresh = (force || queued?.force == true, includeWeek || queued?.includeWeek == true,
                                   max(priority, queued?.priority ?? priority))
             return
         }
-        isRefreshing = true
+        isRefreshingUsage = true
         let generation = collectionGeneration
         Task(priority: priority) {
             defer {
-                isRefreshing = false
+                isRefreshingUsage = false
                 if let next = queuedUsageRefresh {
                     queuedUsageRefresh = nil
                     if !logCollectionSuspended {
@@ -632,10 +660,7 @@ final class DashboardModel: ObservableObject {
                 reader.snapshot()
             }.value
             guard !logCollectionSuspended, generation == collectionGeneration else { return }
-            concurrentUsage = usage
-            WorkTimeController.shared.updateAIExecution(usage.aiExecution)
-            let apps = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
-            usageAppPresence = ["Codex": apps.contains("com.openai.codex"), "Cursor": apps.contains("com.todesktop.230313mzl4w4u92")]
+            applyConcurrentUsage(usage)
             shareMeasuredTime(force: force)
             let a = await Self.loadAgentsAndUsage(force: force, includeWeek: includeWeek)
             guard !logCollectionSuspended, generation == collectionGeneration else { return }
@@ -646,7 +671,7 @@ final class DashboardModel: ObservableObject {
             update(\.tokensByDay, a.tokensByDay)
             update(\.agentDayTokens, a.agentDayTokens)
             if let week = a.week { update(\.week, week) }
-            lastUpdated = Date()
+            markStatsChecked(force: force)
             if usage.widget.providers.contains(where: { $0.isCollecting == true }) {
                 // Continue a bounded cold read even when no new log write arrives.
                 // The existing visible/background/low-power delays still apply.
@@ -740,18 +765,6 @@ final class DashboardModel: ObservableObject {
         }
     }
 
-    // Show the bolt while ContextOS is actively working. Each new optimization
-    // keeps it lit; it reverts to sparkles ~6s after the last activity, so during
-    // a busy Claude Code session the bolt stays on.
-    private func flash() {
-        flashing = true
-        flashTask?.cancel()
-        flashTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 6_000_000_000)
-            if !Task.isCancelled { self?.flashing = false }
-        }
-    }
-
     /// A repeating main-run-loop timer with enough tolerance for macOS to fold
     /// its wakeups in with everyone else's.
     private static func repeating(every interval: TimeInterval,
@@ -767,7 +780,6 @@ final class DashboardModel: ObservableObject {
     struct Savings: Sendable {
         var todaySaved = 0, totalSaved = 0, queryCount = 0
         var recent: [UsageEvent] = []
-        var savingsByDay: [String: Int] = [:]
         var history: AgentUsageSnapshot?
         var week: BuildSummary?
     }
@@ -793,14 +805,13 @@ final class DashboardModel: ObservableObject {
         guard let store = try? UsageStore(path: storePath) else { return Savings() }
         let totals = store.savingsTotals(
             since: Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
-        let twoWeeks = TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 13 * 86_400)
         let history = includeHistory ? AgentSessionReader.savedSnapshot(from: store) : nil
         let week = includeWeek ? history.map {
             BuildLogReader.log(since: TimeKeys.localStartOfDay(Date().timeIntervalSince1970 - 6 * 86_400), snapshot: $0).summary
         } : nil
         return Savings(todaySaved: totals.todaySaved, totalSaved: totals.totalSaved,
                        queryCount: totals.queryCount, recent: store.recentEvents(limit: 30),
-                       savingsByDay: store.savingsByDay(since: twoWeeks), history: history, week: week)
+                       history: history, week: week)
     }
 
     private nonisolated static func loadAgentsAndUsage(force: Bool, includeWeek: Bool) async -> AgentsUsage {

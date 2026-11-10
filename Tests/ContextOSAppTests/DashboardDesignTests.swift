@@ -107,6 +107,69 @@ struct DashboardDesignTests {
         #expect(PanelMotion.navigation(reduced: true) == nil)
     }
 
+    @Test("Mascot presets and custom RGB colors persist across settings instances")
+    func mascotColorPreference() throws {
+        let suite = "ContextOS.MascotColorTests." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = AppSettings(defaults: defaults)
+        #expect(settings.mascotTint == MascotColor.mint.hex)
+        #expect(settings.setMascotTint(MascotColor.lavender.hex))
+        #expect(AppSettings(defaults: defaults).mascotTint == MascotColor.lavender.hex)
+        #expect(settings.setMascotTint(" #426bde "))
+        #expect(!settings.setMascotTint("#426bdeff"))
+        #expect(!settings.setMascotTint("+426bd"))
+        #expect(AppSettings(defaults: defaults).mascotTint == "426BDE")
+        defaults.set("broken", forKey: "contextos.mascot.tint")
+        #expect(AppSettings(defaults: defaults).mascotTint == MascotColor.mint.hex)
+    }
+
+    @Test("The mascot holds its work pose and settles from its current position")
+    func mascotWorkPose() {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        let state = MascotState()
+        state.setWorking(true, now: start)
+        let halfway = start.addingTimeInterval(MascotState.workTransitionDuration / 2)
+        let pose = state.workProgress(at: halfway)
+        #expect(pose > 0 && pose < 1)
+        #expect(state.isWorkTransitioning(at: halfway))
+
+        state.setWorking(true, now: halfway)
+        #expect(state.workChangedAt == start)
+        #expect(state.workProgress(at: start.addingTimeInterval(1)) == 1)
+        #expect(!state.isWorkTransitioning(at: start.addingTimeInterval(1)))
+        #expect(!state.showsOptimizationCompletion(at: halfway))
+
+        state.setWorking(false, now: halfway)
+        #expect(state.workProgress(at: halfway) == pose)
+        #expect(state.workProgress(at: halfway.addingTimeInterval(1)) == 0)
+    }
+
+    @Test("Only an optimization completion produces one nod and a temporary caption")
+    func mascotOptimizationCue() {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        let state = MascotState()
+        state.completeOptimization(at: start)
+        let peak = start.addingTimeInterval(MascotState.nodDuration / 2)
+        let afterNod = start.addingTimeInterval(1)
+        let afterCaption = start.addingTimeInterval(3)
+
+        #expect(!state.isWorking)
+        #expect(state.nodProgress(at: start) == 0)
+        #expect(state.nodProgress(at: peak) > 0.99)
+        #expect(!state.isNodding(at: afterNod))
+        #expect(state.nodProgress(at: afterNod) == 0)
+        #expect(state.showsOptimizationCompletion(at: afterNod))
+        #expect(!state.showsOptimizationCompletion(at: afterCaption))
+
+        state.setWorking(true, now: afterNod)
+        state.completeOptimization(at: afterCaption)
+        #expect(state.isWorking)
+        #expect(state.workProgress(at: afterCaption) == 1)
+        #expect(state.isNodding(at: afterCaption))
+        #expect(state.showsOptimizationCompletion(at: afterCaption))
+    }
+
     @Test("privacy rendering preserves projects, questions and numeric history")
     func privacyPreservesData() throws {
         let model = DashboardModel(startServices: false)
@@ -186,7 +249,6 @@ struct DashboardDesignTests {
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         _ = NSApplication.shared
-        let model = DashboardModel(startServices: false)
         let time = WorkTimeController(restoreConnections: false)
         let ui = DashboardUIState()
         let suite = "ContextOS.Design.Render." + UUID().uuidString
@@ -194,6 +256,8 @@ struct DashboardDesignTests {
         defaults.set("off", forKey: "contextos.mascot.motion")
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: defaults)
+        settings.agentLogsEnabled = true
+        let model = DashboardModel(startServices: false, settings: settings)
         model.concurrentUsage = UsagePreviewData.snapshot()
         model.agents = [.init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml"))]
         model.totalSaved = 12000
@@ -239,6 +303,8 @@ struct DashboardDesignTests {
         }
         ui.page = .overview; ui.panelHeight = 440
         for state in ["setup", "settings", "connections"] {
+            model.setAgentLogCollectionEnabled(state != "setup")
+            if state != "setup" { model.concurrentUsage = UsagePreviewData.snapshot() }
             model.agents = state == "setup" ? [] : [
                 .init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml")),
                 .init(name: "Claude Code", present: true, connection: .notConfigured(path: "/fixture/settings.json"))

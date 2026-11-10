@@ -8,11 +8,14 @@ struct DashboardRoutingTests {
     func samePageRevealsDestination() {
         let ui = DashboardUIState()
         ui.page = .usage
-        ui.showSettings = true
         ui.showConnections = true
+        ui.openSettings(at: .privacy)
+        #expect(ui.showSettings && !ui.showConnections)
+        #expect(ui.settingsDestination == .privacy)
         ui.navigate(to: .usage)
         #expect(ui.page == .usage)
         #expect(!ui.showSettings && !ui.showConnections)
+        #expect(ui.settingsDestination == nil)
     }
 
     @Test("Public routes preserve history selections, disclosures and privacy choices")
