@@ -19,15 +19,14 @@ struct LiveHeader: View {
         let completedAt = hidden ? nil : mascot.optimizationCompletedAt
         let showsCompletion = !hidden && completedAt != expiredCompletion
             && mascot.showsOptimizationCompletion(at: Date())
-        TimelineView(.periodic(from: .now, by: 30)) { context in
+        TimelineView(PanelClockSchedule(paused: hidden)) { context in
             HStack(spacing: 10) {
                 Color.clear.frame(width: DashboardLayout.mascotWidth, height: DashboardLayout.mascotHeight)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 7) {
                         Circle()
-                            .fill(agentLogCollectionEnabled && live.working ? Brand.positiveDot
-                                  : Color.secondary.opacity(0.55))
+                            .fill(statusColor)
                             .frame(width: 6, height: 6)
                             .accessibilityHidden(true)
                         Text(phaseTitle)
@@ -41,25 +40,36 @@ struct LiveHeader: View {
                             .accessibilityHidden(true)
                     }
                     if showsCompletion {
-                        Label("컨텍스트 최적화 완료", systemImage: "checkmark.circle")
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
+                        Label {
+                            Text("컨텍스트 최적화 완료")
+                        } icon: {
+                            Image(systemName: "checkmark.circle").foregroundStyle(Brand.positive)
+                        }
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
                     } else {
-                        Text(detail(now: context.date))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                        let detail = detail(now: context.date)
+                        HStack(spacing: 4) {
+                            Text(detail.status).layoutPriority(1)
+                            if let project = detail.project {
+                                Text("·").accessibilityHidden(true)
+                                Text(project).truncationMode(.middle)
+                            }
+                        }
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityElement(children: .combine)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.leading, 6)
+            .padding(.leading, 2)
             .padding(.trailing, 12)
             .padding(.vertical, 6)
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 13))
         }
-        .padding(.horizontal, DashboardLayout.mascotLeading - 6)
+        .padding(.horizontal, DashboardLayout.mascotLeading - 2)
         .padding(.top, DashboardLayout.mascotTop - 6)
         .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
             if notification.object as? DashboardSurface == surface { hidden = false }
@@ -75,6 +85,16 @@ struct LiveHeader: View {
         }
     }
 
+    private var statusColor: Color {
+        guard agentLogCollectionEnabled else { return Color.secondary.opacity(0.55) }
+        switch live.phase {
+        case .working: return Brand.positiveDot
+        case .waiting: return Brand.caution
+        case .interrupted: return Brand.negative
+        case .completed, .unknown: return Color.secondary.opacity(0.55)
+        }
+    }
+
     private var phaseTitle: String {
         guard agentLogCollectionEnabled else { return "로그 집계 꺼짐" }
         let agent = live.agent ?? "AI"
@@ -83,30 +103,26 @@ struct LiveHeader: View {
         case .waiting: return agent + (live.pendingTools > 0 ? " 도구 대기" : " 응답 대기")
         case .completed: return "응답 종료"
         case .interrupted: return "작업 중단"
-        case .unknown: return "상태 미확인"
+        case .unknown: return "AI 상태 미확인"
         }
     }
 
-    private func detail(now: Date) -> String {
-        guard agentLogCollectionEnabled else { return "AI 사용량과 작업 상태는 설정에서 켤 수 있어요" }
-        if live.snapshot.optimizing { return "ContextOS · 파일 최적화 호출 중" }
-        if live.snapshot.planning { return "ContextOS · 도구 호출 중" }
+    private func detail(now: Date) -> (status: String, project: String?) {
+        guard agentLogCollectionEnabled else { return ("설정에서 AI 로그 집계를 켤 수 있어요", nil) }
+        if live.snapshot.optimizing { return ("파일 최적화 호출 중", nil) }
+        if live.snapshot.planning { return ("ContextOS 도구 호출 중", nil) }
 
-        var parts: [String] = []
+        let project = hidePrivateDetails ? nil : live.project
         if live.working {
             let elapsed = live.since.map { Self.elapsed(since: $0, now: now) } ?? "작업 신호 확인"
-            parts.append(!hidePrivateDetails ? (live.project.map { "\($0)에서 \(elapsed)" } ?? elapsed) : elapsed)
-            if live.snapshot.activeSessions > 1 { parts.append("진행 세션 \(live.snapshot.activeSessions)개") }
+            let active = live.snapshot.activeSessions
+            return (active > 1 ? "\(elapsed) · 진행 세션 \(active)개" : elapsed, project)
         } else if (live.phase == .completed || live.phase == .interrupted), let ended = live.endedAt {
-            parts.append((live.phase == .completed ? "확인된 응답 종료 " : "확인된 중단 ") + Self.ago(ended, now: now))
-            if let project = live.project, !hidePrivateDetails { parts.append(project) }
+            return (Self.ago(ended, now: now), project)
         } else if let last = live.lastEventAt {
-            parts.append("최근 로그 변경 " + Self.ago(last, now: now))
-            if let project = live.project, !hidePrivateDetails { parts.append(project) }
-        } else {
-            parts.append("확인 가능한 작업 로그가 없어요")
+            return ("최근 로그 변경 " + Self.ago(last, now: now), project)
         }
-        return parts.joined(separator: " · ")
+        return ("확인 가능한 작업 로그가 없어요", nil)
     }
 
     /// "방금 시작", "4분째", "2시간째".
@@ -185,7 +201,8 @@ struct CalendarCard: View {
         let today = TimeKeys.localDay(Date().timeIntervalSince1970)
 
         VStack(alignment: .leading, spacing: 7) {
-            header(month, total: CalendarGrid.total(month, model.tokensByDay))
+            header(month, total: keys.contains { model.tokensByDay[$0] != nil }
+                   ? CalendarGrid.total(month, model.tokensByDay) : nil)
             if !model.agentLogCollectionEnabled {
                 Text("저장된 기록 · 새 로그 집계 꺼짐")
                     .font(.system(size: 10.5))
@@ -217,7 +234,7 @@ struct CalendarCard: View {
 
     // MARK: Header and split
 
-    private func header(_ month: Date, total: Int) -> some View {
+    private func header(_ month: Date, total: Int?) -> some View {
         let parts = Calendar.current.dateComponents([.year, .month], from: month)
         return HStack(spacing: 6) {
             Text("\(parts.month ?? 0)월")
@@ -226,14 +243,15 @@ struct CalendarCard: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 6)
-            Text(TokenEstimator.korean(total) + " 토큰")
+            Text(total.map { TokenEstimator.korean($0) + " 토큰" } ?? "기록 없음")
                 .font(.system(size: 11.5).monospacedDigit())
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
                 .help("Claude Code·Codex가 이 Mac에 남긴 기록 기준 — 칸이 진할수록 많이 쓴 날이에요")
             monthButton("chevron.left", label: "이전 달") { ui.monthOffset += 1 }
             monthButton("chevron.right", label: "다음 달") { ui.monthOffset -= 1 }
-                .opacity(ui.monthOffset == 0 ? 0.3 : 1)
-                .allowsHitTesting(ui.monthOffset > 0)
+                .disabled(ui.monthOffset <= 0)
         }
     }
 
@@ -363,19 +381,21 @@ struct CalendarCard: View {
                 .lineLimit(1)
             }
             Spacer(minLength: 6)
-            Button(action: perform) {
-                HStack(spacing: 3) {
-                    Text(action)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
+            if !ui.hidePrivateDetails {
+                Button(action: perform) {
+                    HStack(spacing: 3) {
+                        Text(action)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .frame(height: 26)
+                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .contentShape(Rectangle())
                 }
-                .font(.system(size: 11.5, weight: .medium))
-                .padding(.horizontal, 10)
-                .frame(height: 26)
-                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .contentShape(Rectangle())
+                .buttonStyle(PanelPressStyle())
             }
-            .buttonStyle(.plain)
         }
         .padding(.leading, 11)
         .padding(.trailing, 8)

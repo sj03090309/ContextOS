@@ -9,7 +9,7 @@ final class MascotState: ObservableObject {
     static let completionDuration: TimeInterval = 2.6
     static let focusBreathPeriod: TimeInterval = 3.6
     static let restBreathPeriod: TimeInterval = 4.8
-    static let breathActiveFraction = 0.60
+    nonisolated static let breathActiveFraction = 0.60
     static let breathPeakFraction = 0.39
 
     @Published private(set) var isWorking = false
@@ -73,5 +73,58 @@ final class MascotState: ObservableObject {
     private static func ease(_ progress: Double) -> Double {
         let t = min(1, max(0, progress))
         return t * t * (3 - 2 * t)
+    }
+}
+
+/// Schedules frames for visible motion and jumps between pulses at rest.
+struct MascotTimelineSchedule: TimelineSchedule {
+    let gestureEnd: Date
+    let breathPeriod: TimeInterval?
+
+    private static let gestureInterval = 1.0 / 20
+    private static let ambientInterval = 1.0 / 10
+    private static let blinkPeriod: TimeInterval = 15
+    private static let blinkStarts: [TimeInterval] = [1.2, 5.9, 11.8]
+    private static let blinkDuration: TimeInterval = 0.24
+
+    func entries(from startDate: Date, mode: Mode) -> some Sequence<Date> {
+        sequence(first: startDate) { date in
+            if date < gestureEnd {
+                return mode == .lowFrequency ? gestureEnd
+                    : min(gestureEnd, date.addingTimeInterval(Self.gestureInterval))
+            }
+            guard mode == .normal, let breathPeriod else { return nil }
+            let breath = Self.nextPulseFrame(after: date, period: breathPeriod, starts: [0],
+                                            duration: breathPeriod * MascotState.breathActiveFraction)
+            let blink = Self.nextPulseFrame(after: date, period: Self.blinkPeriod,
+                                            starts: Self.blinkStarts, duration: Self.blinkDuration)
+            return min(breath, blink)
+        }
+    }
+
+    static func blinkProgress(at date: Date) -> Double {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: blinkPeriod)
+        for start in blinkStarts {
+            let elapsed = phase - start
+            if (0..<blinkDuration).contains(elapsed) {
+                let closedAt = 0.08
+                return elapsed < closedAt ? elapsed / closedAt : (blinkDuration - elapsed) / (blinkDuration - closedAt)
+            }
+        }
+        return 0
+    }
+
+    private static func nextPulseFrame(after date: Date, period: TimeInterval, starts: [TimeInterval],
+                                       duration: TimeInterval) -> Date {
+        let cycle = floor(date.timeIntervalSinceReferenceDate / period) * period
+        for start in starts {
+            let begin = Date(timeIntervalSinceReferenceDate: cycle + start)
+            if date < begin { return begin }
+            let end = begin.addingTimeInterval(duration)
+            if date < end { return min(end, date.addingTimeInterval(ambientInterval)) }
+        }
+        let nextCycle = Date(timeIntervalSinceReferenceDate: cycle + period + starts[0])
+        // Fractional periods can round the next cycle start to the current date.
+        return date < nextCycle ? nextCycle : date.addingTimeInterval(ambientInterval)
     }
 }

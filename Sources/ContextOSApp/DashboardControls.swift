@@ -89,40 +89,43 @@ struct FooterBar: View {
     @EnvironmentObject var ui: DashboardUIState
     var surface: DashboardSurface = .popover
     @State private var refreshTurn = 0.0
+    @State private var hidden = false
 
     var body: some View {
         VStack(spacing: 0) {
             Divider().opacity(0.6)
-            HStack(spacing: 6) {
-                TimelineView(.periodic(from: .now, by: 30)) { context in
-                    Text(updated(now: context.date))
-                        .font(.system(size: 10))
+            HStack(spacing: 8) {
+                TimelineView(PanelClockSchedule(paused: hidden || model.lastUpdated == nil)) { context in
+                    Label(updated(now: context.date), systemImage: "clock")
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .help(model.lastUpdated?.formatted(date: .abbreviated, time: .shortened)
+                              ?? "통계를 확인하고 있어요")
                 }
-                Spacer()
-                if surface == .popover, let openWindow = ui.openWindow {
-                    PanelIconButton(symbol: "macwindow", help: "창으로 열기 (⇧⌘O)", action: openWindow)
-                        .keyboardShortcut("o", modifiers: [.command, .shift])
-                }
-                PanelIconButton(symbol: ui.hidePrivateDetails ? "eye.slash" : "eye",
-                                help: ui.hidePrivateDetails ? "개인 정보 표시" : "개인 정보 숨기기",
-                                isOn: ui.hidePrivateDetails) {
-                    ui.hidePrivateDetails.toggle()
-                }
-                .accessibilityValue(ui.hidePrivateDetails ? "숨김" : "표시 중")
-                PanelIconButton(symbol: "arrow.clockwise", help: "새로고침 (⌘R)", rotation: .degrees(refreshTurn)) {
-                    // One turn acknowledges this action. Background collection
-                    // never starts an idle animation or a second timer.
-                    refreshTurn += 360
-                    model.refresh()
-                }
+                Spacer(minLength: 2)
+                HStack(spacing: 3) {
+                    if surface == .popover, let openWindow = ui.openWindow {
+                        PanelIconButton(symbol: "macwindow", help: "창으로 열기 (⇧⌘O)", action: openWindow)
+                            .keyboardShortcut("o", modifiers: [.command, .shift])
+                    }
+                    PanelIconButton(symbol: ui.hidePrivateDetails ? "eye.slash" : "eye",
+                                    help: ui.hidePrivateDetails ? "개인 정보 표시" : "개인 정보 숨기기",
+                                    isOn: ui.hidePrivateDetails) {
+                        ui.hidePrivateDetails.toggle()
+                    }
+                    .accessibilityValue(ui.hidePrivateDetails ? "숨김" : "표시 중")
+                    PanelIconButton(symbol: "arrow.clockwise", help: "새로고침 (⌘R)", rotation: .degrees(refreshTurn)) {
+                        refreshTurn += 360
+                        model.refresh()
+                    }
                     .keyboardShortcut("r", modifiers: .command)
-                if !ui.hidePrivateDetails {
-                    PanelIconButton(symbol: "list.bullet.rectangle", help: "빌드 로그 (⌘B)") { BuildLogWindow.show() }
-                        .keyboardShortcut("b", modifiers: .command)
+                    if !ui.hidePrivateDetails {
+                        PanelIconButton(symbol: "list.bullet.rectangle", help: "빌드 로그 (⌘B)") { BuildLogWindow.show() }
+                            .keyboardShortcut("b", modifiers: .command)
+                    }
                 }
-                PanelIconButton(symbol: "gearshape", help: "설정", isOn: ui.showSettings) {
+                PanelIconButton(symbol: "gearshape", help: "설정", title: "설정", isOn: ui.showSettings) {
                     ui.openSettings()
                 }
                 .keyboardShortcut(",", modifiers: .command)
@@ -130,6 +133,12 @@ struct FooterBar: View {
             .padding(.horizontal, 16)
             .padding(.top, 9)
             .padding(.bottom, 11)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
+            if notification.object as? DashboardSurface == surface { hidden = false }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { notification in
+            if notification.object as? DashboardSurface == surface { hidden = true }
         }
     }
 
@@ -144,6 +153,7 @@ struct FooterBar: View {
 struct PanelIconButton: View {
     let symbol: String
     let help: String
+    var title: String? = nil
     var isOn = false
     var rotation: Angle = .zero
     let action: () -> Void
@@ -154,20 +164,26 @@ struct PanelIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .contentTransition(reduced ? .identity : .symbolEffect(.replace))
-                .rotationEffect(reduced ? .zero : rotation)
-                .animation(reduced ? nil : .easeInOut(duration: 0.45), value: rotation)
-                .frame(width: 30, height: 30)
-                .background(Color.primary.opacity(isOn ? 0.13 : hovering && isEnabled ? 0.09 : 0.035),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .contentShape(Rectangle())
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .medium))
+                    .contentTransition(reduced ? .identity : .symbolEffect(.replace))
+                    .rotationEffect(reduced ? .zero : rotation)
+                    .animation(reduced ? nil : .easeOut(duration: 0.32), value: rotation)
+                if let title {
+                    Text(title).font(.system(size: 11, weight: .medium)).fixedSize()
+                }
+            }
+            .padding(.horizontal, title == nil ? 0 : 8)
+            .frame(minWidth: 30, minHeight: 30)
+            .background(Color.primary.opacity(isOn ? 0.13 : hovering && isEnabled ? 0.09 : title == nil ? 0 : 0.045),
+                        in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(PanelPressStyle())
         .foregroundStyle(isOn ? Brand.accent : Color.secondary)
         .focused($focused)
-        .overlay(RoundedRectangle(cornerRadius: 10)
+        .overlay(RoundedRectangle(cornerRadius: 9)
             .strokeBorder(Brand.accent.opacity(focused && isEnabled ? 0.8 : 0), lineWidth: 2)
             .allowsHitTesting(false))
         .onHover { hovering = $0 }
@@ -258,7 +274,6 @@ struct SettingsOverlay: View {
             .shadow(color: .black.opacity(0.35), radius: 22, y: 10)
             .padding(.trailing, 12)
             .padding(.bottom, 52)
-            .transition(.scale(scale: 0.96, anchor: .bottomTrailing).combined(with: .opacity))
         }
         .onExitCommand { ui.showSettings = false }
         .accessibilityAddTraits(.isModal)

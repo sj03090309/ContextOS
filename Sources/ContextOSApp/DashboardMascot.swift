@@ -13,25 +13,31 @@ struct MeltingMascot: View {
 
     // NSPopover keeps its hosted view alive after dismissal.
     @State private var hidden = false
-    @State private var stillCheck = 0
     @State private var attentive = false
-    private static let blinkStarts = [1.2, 5.9, 11.8]
 
     private var staticMotion: Bool { reduced || settings.mascotMotion == .off }
     private var breathesAtRest: Bool { !staticMotion && settings.mascotMotion.breathes }
     private var inactive: Bool { hidden || ui.showSettings || ui.showConnections }
 
+    private var schedule: MascotTimelineSchedule {
+        let nodEnd = state.optimizationCompletedAt?.addingTimeInterval(MascotState.nodDuration)
+        let gestureEnd = max(state.workTransitionEnd ?? .distantPast, nodEnd ?? .distantPast)
+        let breathPeriod: TimeInterval? = state.isWorking ? MascotState.focusBreathPeriod
+            : (breathesAtRest ? MascotState.restBreathPeriod : nil)
+        return MascotTimelineSchedule(gestureEnd: gestureEnd, breathPeriod: breathPeriod)
+    }
+
     var body: some View {
-        let _ = stillCheck // Stop the timeline after a short gesture.
-        let now = Date()
-        let transitioning = state.isWorkTransitioning(at: now) || state.isNodding(at: now)
-        let paused = inactive || staticMotion || (!transitioning && !breathesAtRest && !state.isWorking)
-        // The slow breath can use fewer redraws than a nod or pose change.
-        let frameInterval = 1.0 / (transitioning ? 20 : 10)
         let palette = MungchiPalette(hex: settings.mascotTint, dark: colorScheme == .dark)
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: frameInterval, paused: paused)) { timeline in
-                frame(at: paused ? now : timeline.date, size: geo.size, palette: palette)
+            if hidden {
+                Color.clear
+            } else if inactive || staticMotion {
+                frame(at: Date(), size: geo.size, palette: palette)
+            } else {
+                TimelineView(schedule) { timeline in
+                    frame(at: timeline.date, size: geo.size, palette: palette)
+                }
             }
         }
         .contentShape(Rectangle())
@@ -40,8 +46,8 @@ struct MeltingMascot: View {
             withAnimation(.easeInOut(duration: 0.22)) { attentive = inside }
         }
         .accessibilityHidden(true)
-        .onChange(of: inactive) { _, inactive in
-            if inactive { attentive = false }
+        .onChange(of: inactive || staticMotion) { _, disabled in
+            if disabled { attentive = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
             guard notification.object as? DashboardSurface == surface else { return }
@@ -51,22 +57,6 @@ struct MeltingMascot: View {
             guard notification.object as? DashboardSurface == surface else { return }
             hidden = true
         }
-        .task(id: inactive ? nil : state.workChangedAt) {
-            guard !inactive, let workTransitionEnd = state.workTransitionEnd else { return }
-            await checkStillness(after: workTransitionEnd)
-        }
-        .task(id: inactive ? nil : state.optimizationCompletedAt) {
-            guard !inactive, let completedAt = state.optimizationCompletedAt else { return }
-            await checkStillness(after: completedAt.addingTimeInterval(MascotState.nodDuration))
-        }
-    }
-
-    private func checkStillness(after deadline: Date) async {
-        let delay = deadline.timeIntervalSinceNow
-        if delay > 0 {
-            try? await Task.sleep(for: .seconds(delay))
-        }
-        if !Task.isCancelled { stillCheck += 1 }
     }
 
     private func frame(at now: Date, size: CGSize, palette: MungchiPalette) -> some View {
@@ -79,7 +69,7 @@ struct MeltingMascot: View {
             : CGFloat(MascotState.breath(at: now, period: MascotState.focusBreathPeriod)) * pose
         let scaleX = 1.04 - 0.10 * pose - 0.020 * idleBreath - 0.032 * focusBreath + 0.03 * nod
         let scaleY = 0.88 + 0.16 * pose + 0.042 * idleBreath + 0.08 * focusBreath - 0.07 * nod + 0.025 * glance
-        let blink = staticMotion ? 0 : Self.blink(now) * (breathesAtRest ? 1 : pose)
+        let blink = staticMotion ? 0 : CGFloat(MascotTimelineSchedule.blinkProgress(at: now)) * (breathesAtRest ? 1 : pose)
         let eyesOpen = 1 - max(0.88 * blink, 0.3 * nod)
         let groundY = size.height - 7
         return ZStack(alignment: .topLeading) {
@@ -97,16 +87,6 @@ struct MeltingMascot: View {
         .frame(width: size.width, height: size.height)
     }
 
-    private static func blink(_ now: Date) -> CGFloat {
-        let phase = now.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 15)
-        for start in blinkStarts {
-            let elapsed = phase - start
-            if (0..<0.24).contains(elapsed) {
-                return CGFloat(elapsed < 0.08 ? elapsed / 0.08 : (0.24 - elapsed) / 0.16)
-            }
-        }
-        return 0
-    }
 }
 
 /// Hosts the popover's two SwiftUI trees side by side: the dashboard, and 뭉치

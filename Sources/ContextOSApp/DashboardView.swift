@@ -227,7 +227,7 @@ struct DashboardView: View {
                 Button { ui.navigate(to: .overview) } label: {
                     Label("대시보드", systemImage: "chevron.left")
                         .font(.system(size: 11.5, weight: .medium))
-                        .padding(.horizontal, 8)
+                        .padding(.trailing, 8)
                         .frame(height: 30)
                         .contentShape(Rectangle())
                 }
@@ -299,23 +299,12 @@ struct DashboardView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 todaySummary
-                overviewActions
+                overviewDetails
                 if !model.agentLogCollectionEnabled { logConsent }
-                if !hasConfiguredAgent {
-                    Text("AI 도구를 연결하면 필요한 프로젝트 문맥을 전달하고, 절감 기록을 여기서 확인할 수 있어요.")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 3)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
         }
-    }
-
-    private var hasConfiguredAgent: Bool {
-        model.agents.contains { $0.connection.isConfigured }
     }
 
     private var todaySummary: some View {
@@ -346,42 +335,104 @@ struct DashboardView: View {
         } else {
             detail = data.health
         }
-        return OverviewMetric(title: "오늘 AI 관측 토큰", value: UsageNumbers.compact(value), detail: detail,
+        return OverviewMetric(title: "오늘 AI 관측 토큰", value: value.map { UsageNumbers.compact($0) }, detail: detail,
                               fullValue: value.map(String.init) ?? "확인 가능한 집계 없음")
     }
 
-    private var overviewActions: some View {
-        HStack(spacing: 8) {
+    private var overviewDetails: some View {
+        let roomy = ui.panelHeight >= 480
+        let layout = roomy ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+        let recent = model.recent.prefix(roomy ? 3 : 1)
+        let connected = model.agents.filter { $0.connection.isConfigured }
+        let pending = model.agents.filter { !$0.connection.isConfigured && $0.connection.configPath != nil }
+        return layout {
             Button { ui.navigate(to: .history) } label: {
-                overviewAction("기록", symbol: "calendar")
+                overviewCard("최근 최적화", symbol: "calendar", roomy: roomy) {
+                    if recent.isEmpty {
+                        Text("기록 없음").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(recent.enumerated()), id: \.offset) { _, event in
+                            let date = Date(timeIntervalSince1970: event.timestamp)
+                            HStack(spacing: 4) {
+                                Text(TokenEstimator.korean(event.savedTokens) + " 토큰 절감")
+                                    .fontWeight(.medium)
+                                    .minimumScaleFactor(0.65)
+                                Spacer(minLength: 0)
+                                Text(Calendar.current.isDateInToday(date)
+                                     ? date.formatted(date: .omitted, time: .shortened)
+                                     : date.formatted(.dateTime.month().day()))
+                                    .foregroundStyle(.secondary)
+                                    .minimumScaleFactor(0.8)
+                            }
+                            .monospacedDigit()
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
             }
             .buttonStyle(PanelPressStyle())
-            .help("달력, 프로젝트, 최적화 기록")
-            .accessibilityHint("달력과 프로젝트 및 최적화 기록 보기")
+            .help("전체 기록 보기")
+            .accessibilityHint("달력, 프로젝트 및 전체 최적화 기록 보기")
             Button { ui.showConnections = true } label: {
-                overviewAction(hasConfiguredAgent ? "AI 연결" : "AI 연결하기",
-                               symbol: "link", emphasized: !hasConfiguredAgent)
+                overviewCard(connected.isEmpty ? "AI 연결하기" : "AI 연결", symbol: "link",
+                             roomy: roomy, emphasized: connected.isEmpty) {
+                    if roomy, !connected.isEmpty || !pending.isEmpty {
+                        ForEach((connected + pending).prefix(2)) { agent in
+                            HStack {
+                                Text(agent.name).fontWeight(.medium)
+                                Spacer(minLength: 4)
+                                if agent.connection.isConfigured {
+                                    Label("설정됨", systemImage: "checkmark.circle").foregroundStyle(Brand.positive)
+                                } else {
+                                    Text("설정 필요").foregroundStyle(connected.isEmpty ? Brand.onAccent.opacity(0.82) : .secondary)
+                                }
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
+                    } else if connected.isEmpty {
+                        Text("연결된 도구 없음").foregroundStyle(Brand.onAccent.opacity(0.82))
+                    } else {
+                        Label {
+                            Text(connected.map(\.name).joined(separator: " · ")).minimumScaleFactor(0.8)
+                        } icon: {
+                            Image(systemName: "checkmark.circle").foregroundStyle(Brand.positive)
+                        }
+                        .accessibilityValue("설정됨")
+                    }
+                }
             }
             .buttonStyle(PanelPressStyle())
-            .help("AI 도구와 ContextOS 연결 설정")
+            .help("AI 도구를 연결해 필요한 프로젝트 문맥을 전달하고 절감 기록을 확인할 수 있어요.")
         }
     }
 
-    private func overviewAction(_ title: String, symbol: String, emphasized: Bool = false) -> some View {
-        HStack(spacing: 7) {
-            Image(systemName: symbol).accessibilityHidden(true)
-            Text(title).lineLimit(1)
-            Spacer(minLength: 4)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
+    private func overviewCard<Content: View>(_ title: String, symbol: String, roomy: Bool,
+                                             emphasized: Bool = false,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        let tint: Color = emphasized ? Brand.onAccent : .primary
+        let muted: Color = emphasized ? Brand.onAccent.opacity(0.78) : .secondary
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .accessibilityHidden(true)
+                Text(title).font(.system(size: 11, weight: .semibold))
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(muted)
+                    .accessibilityHidden(true)
+            }
+            content().font(.system(size: 10))
         }
-        .font(.system(size: 11.5, weight: .semibold))
-        .foregroundStyle(emphasized ? Brand.accent : .primary)
+        .lineLimit(1)
+        .foregroundStyle(tint)
+        .frame(maxWidth: .infinity, minHeight: roomy ? nil : 30, alignment: .topLeading)
         .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background(Color.primary.opacity(emphasized ? 0.10 : 0.045), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 7)
+        .background(emphasized ? Brand.accent : Color.primary.opacity(0.045),
+                    in: RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
     }
 
@@ -412,7 +463,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("AI 로그 집계 설정")
                         .font(.system(size: 11.5, weight: .semibold))
-                    Text("AI 사용량과 작업 상태를 보려면 로컬 로그 읽기를 허용해 주세요. 대화와 도구 출력이 포함될 수 있어요.")
+                    Text("로그에는 대화와 도구 출력이 포함될 수 있어요.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -424,11 +475,13 @@ struct DashboardView: View {
                     .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
             .contentShape(Rectangle())
         }
         .buttonStyle(PanelPressStyle())
+        .accessibilityHint("AI 사용량과 작업 상태를 표시하는 로컬 로그 집계 설정 열기")
     }
 }
 
@@ -438,14 +491,15 @@ private struct OverviewDevelopmentMetric: View {
 
     var body: some View {
         let activity = model.estimatedActivity
-        OverviewMetric(title: "오늘 개발 활동 추정", value: activity.formatted, detail: activity.label,
-                       fullValue: activity.estimatedNanoseconds == nil ? "관측 없음" : activity.formatted)
+        let value = activity.estimatedNanoseconds.map { _ in activity.formatted }
+        OverviewMetric(title: "오늘 개발 활동 추정", value: value, detail: activity.label,
+                       fullValue: value ?? "관측 없음")
     }
 }
 
 private struct OverviewMetric: View {
     let title: String
-    let value: String
+    let value: String?
     let detail: String
     let fullValue: String
 
@@ -453,8 +507,9 @@ private struct OverviewMetric: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 10.5, weight: .medium))
-            Text(value)
+            Text(value ?? "—")
                 .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .foregroundStyle(value == nil ? Color.secondary : .primary)
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)

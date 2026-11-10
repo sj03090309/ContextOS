@@ -175,6 +175,28 @@ struct DashboardDesignTests {
         #expect(state.showsOptimizationCompletion(at: afterCaption))
     }
 
+    @Test("The mascot skips quiet frames and always lands on the final gesture frame")
+    func mascotFrameSchedule() {
+        let start = Date(timeIntervalSinceReferenceDate: 0)
+        let end = start.addingTimeInterval(MascotState.nodDuration)
+        let nod = MascotTimelineSchedule(gestureEnd: end, breathPeriod: nil)
+        let frames = Array(nod.entries(from: start, mode: .normal))
+        #expect(frames.first == start && frames.last == end)
+        #expect(frames.count > 2)
+        #expect(Array(nod.entries(from: start, mode: .lowFrequency)) == [start, end])
+        #expect(Array(nod.entries(from: end, mode: .normal)) == [end])
+
+        let working = MascotTimelineSchedule(gestureEnd: .distantPast, breathPeriod: MascotState.focusBreathPeriod)
+        let quiet = start.addingTimeInterval(3)
+        #expect(Array(working.entries(from: quiet, mode: .normal).prefix(2)) ==
+                [quiet, start.addingTimeInterval(MascotState.focusBreathPeriod)])
+        let sampleEnd = start.addingTimeInterval(72)
+        let workingFrames = Array(working.entries(from: start, mode: .normal).prefix(while: { $0 < sampleEnd }))
+        #expect(workingFrames.count < 550)
+        #expect(zip(workingFrames, workingFrames.dropFirst()).allSatisfy { $0.0 < $0.1 })
+        #expect(Array(PanelClockSchedule(paused: true).entries(from: start, mode: .normal)) == [start])
+    }
+
     @Test("privacy rendering preserves projects, questions and numeric history")
     func privacyPreservesData() throws {
         let model = DashboardModel(startServices: false)
@@ -264,9 +286,23 @@ struct DashboardDesignTests {
         settings.agentLogsEnabled = true
         let model = DashboardModel(startServices: false, settings: settings)
         model.concurrentUsage = UsagePreviewData.snapshot()
-        model.agents = [.init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml"))]
-        model.totalSaved = 12000
-        model.todaySaved = 200
+        model.agents = [
+            .init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml")),
+            .init(name: "Claude Code", present: true, connection: .notConfigured(path: "/fixture/settings.json"))
+        ]
+        let fixtureTime = Date().timeIntervalSince1970
+        model.recent = [
+            .init(timestamp: fixtureTime - 600, project: "/fixture", query: "First fixture",
+                  selectedTokens: 200, fullTokens: 7400, contextScore: 90, fileCount: 4),
+            .init(timestamp: fixtureTime - 3600, project: "/fixture", query: "Second fixture",
+                  selectedTokens: 300, fullTokens: 5100, contextScore: 86, fileCount: 3),
+            .init(timestamp: fixtureTime - 86_400, project: "/fixture", query: "Third fixture",
+                  selectedTokens: 400, fullTokens: 3100, contextScore: 81, fileCount: 3)
+        ]
+        model.totalSaved = 43_200
+        model.todaySaved = 12_000
+        model.queryCount = 2
+        model.lastUpdated = Date(timeIntervalSince1970: fixtureTime)
         ui.usageExpanded = true
         for scheme in [ColorScheme.dark, .light] {
             for page in DashboardUIState.Page.allCases {
@@ -317,6 +353,7 @@ struct DashboardDesignTests {
         ui.page = .overview; ui.panelHeight = 440
         for state in ["setup", "settings", "connections"] {
             model.setAgentLogCollectionEnabled(state != "setup")
+            if state == "setup" { model.recent = [] }
             if state != "setup" { model.concurrentUsage = UsagePreviewData.snapshot() }
             model.agents = state == "setup" ? [] : [
                 .init(name: "Codex", present: true, connection: .configured(path: "/fixture/config.toml")),

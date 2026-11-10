@@ -20,26 +20,37 @@ struct DashboardVisibility {
     }
 }
 
+/// Relative-time labels need a slow clock only while their panel is visible.
+struct PanelClockSchedule: TimelineSchedule {
+    let paused: Bool
+
+    func entries(from startDate: Date, mode: Mode) -> AnySequence<Date> {
+        if paused { return AnySequence(CollectionOfOne(startDate)) }
+        let schedule = PeriodicTimelineSchedule(from: startDate, by: 30)
+        return AnySequence(schedule.entries(from: startDate, mode: mode))
+    }
+}
+
 /// One short response to an action, with no decorative animation loop.
 enum PanelMotion {
     static func response(reduced: Bool) -> Animation? {
-        reduced ? nil : .spring(duration: 0.28, bounce: 0.08)
+        reduced ? nil : .spring(duration: 0.23, bounce: 0.04)
     }
     static func feedback(reduced: Bool) -> Animation? {
         reduced ? nil : .easeOut(duration: 0.14)
     }
     static func navigation(reduced: Bool) -> Animation? {
-        reduced ? nil : .easeInOut(duration: 0.20)
+        reduced ? nil : .easeInOut(duration: 0.18)
     }
     static func page(reduced: Bool, forward: Bool) -> AnyTransition {
         guard !reduced else { return .identity }
-        let offset: CGFloat = forward ? 10 : -10
+        let offset: CGFloat = forward ? 7 : -7
         return .asymmetric(
             insertion: .opacity.combined(with: .offset(x: offset)),
             removal: .opacity.combined(with: .offset(x: -offset)))
     }
     static func overlay(reduced: Bool) -> AnyTransition {
-        reduced ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing))
+        reduced ? .identity : .opacity.combined(with: .offset(y: 4))
     }
 }
 
