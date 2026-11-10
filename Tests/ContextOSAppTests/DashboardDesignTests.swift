@@ -276,9 +276,11 @@ struct DashboardDesignTests {
                         .environmentObject(model).environmentObject(ui)
                         .environment(\.colorScheme, scheme)
                         .transaction { $0.animation = nil; $0.disablesAnimations = true }
-                        .overlay(alignment: .top) {
-                            MeltingMascot(state: model.mascot, settings: settings)
-                                .frame(height: PopoverContentController.mascotHeight)
+                        .overlay(alignment: .topLeading) {
+                            MeltingMascot(state: model.mascot, settings: settings, ui: ui)
+                                .frame(width: DashboardLayout.mascotWidth, height: DashboardLayout.mascotHeight)
+                                .padding(.leading, DashboardLayout.mascotLeading)
+                                .padding(.top, DashboardLayout.mascotTop)
                         }
                         .overlay(alignment: .bottomLeading) {
                             Text("디자인 검증 · 예시 데이터")
@@ -288,6 +290,12 @@ struct DashboardDesignTests {
                     let png = try renderNative(view, height: height, scheme: scheme)
                     let theme = scheme == .dark ? "dark" : "light"
                     try png.write(to: directory.appendingPathComponent("page-\(page)-\(theme)-\(Int(height)).png"))
+                    if page == .overview, height == 400, scheme == .dark {
+                        model.mascot.completeOptimization()
+                        defer { model.mascot.completeOptimization(at: .distantPast) }
+                        try renderNative(view, height: height, scheme: scheme)
+                            .write(to: directory.appendingPathComponent("completion-banner-dark.png"))
+                    }
                 }
             }
         }

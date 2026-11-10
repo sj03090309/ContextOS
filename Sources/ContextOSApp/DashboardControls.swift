@@ -199,7 +199,6 @@ struct ConnectionSettingsOverlay: View {
             .foregroundStyle(Brand.accent)
             ScrollView { AgentsList() }
         }
-        .padding(.top, PopoverContentController.mascotHeight)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Brand.canvas)
@@ -345,12 +344,9 @@ private struct MascotColorSettings: View {
     @State private var draft = MascotColorDraft(hex: MascotColor.mint.hex)
     @FocusState private var focusedPreset: MascotColor?
 
-    private var selectedPreset: MascotColor? {
-        MascotColor.allCases.first { $0.hex == settings.mascotTint }
-    }
-
     var body: some View {
         let selectedTint = showsCustomColor ? draft.hex : settings.mascotTint
+        let selectedPreset = MascotColor.allCases.first { $0.hex == selectedTint }
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("뭉치 색상").font(.system(size: 13))

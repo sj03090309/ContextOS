@@ -86,6 +86,14 @@ final class DashboardUIState: ObservableObject {
         static let primary: [Self] = [.overview, .usage, .time]
         var label: String { rawValue }
         var position: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+        var symbol: String {
+            switch self {
+            case .overview: "rectangle.grid.1x2"
+            case .usage: "chart.bar"
+            case .time: "clock"
+            case .history: "calendar"
+            }
+        }
     }
     @Published var page: Page = .overview {
         willSet {
@@ -137,6 +145,7 @@ struct DashboardView: View {
     let workTime: WorkTimeController
     private let surface: DashboardSurface
     @Namespace private var navigation
+    @FocusState private var focusedPage: DashboardUIState.Page?
 
     init(workTime: WorkTimeController = .shared, surface: DashboardSurface = .popover) {
         self.workTime = workTime
@@ -145,22 +154,15 @@ struct DashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 뭉치 is *not* in this tree — it is a sibling hosting view laid over
-            // this space by `PopoverContentController`. Sharing one SwiftUI tree
-            // with a 20fps animation made every mascot frame re-run the whole
-            // panel's view graph (calendar cells, project cards and all), which
-            // cost 16% of a core; split apart, each redraws on its own.
-            Color.clear.frame(height: PopoverContentController.mascotHeight)
-                .fixedSize(horizontal: false, vertical: true)
-
-            LiveHeader(live: model.live,
+            LiveHeader(live: model.live, mascot: model.mascot,
                        agentLogCollectionEnabled: model.agentLogCollectionEnabled,
-                       hidePrivateDetails: ui.hidePrivateDetails)
-                .padding(.horizontal, 18)
+                       hidePrivateDetails: ui.hidePrivateDetails, surface: surface)
                 .fixedSize(horizontal: false, vertical: true)
 
             navigationBar
-                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 10)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 8)
 
             ZStack(alignment: .top) {
                 pageContent
@@ -226,18 +228,56 @@ struct DashboardView: View {
                     Label("대시보드", systemImage: "chevron.left")
                         .font(.system(size: 11.5, weight: .medium))
                         .padding(.horizontal, 8)
-                        .frame(height: 32)
-                        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                        .frame(height: 30)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PanelPressStyle())
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel("대시보드로 돌아가기")
             }
-            .frame(height: 41)
+            .frame(height: 33)
         } else {
-            SlidingSegments(options: DashboardUIState.Page.primary, selection: $ui.page,
-                            label: \.label, namespace: navigation, height: 33)
+            VStack(spacing: 0) {
+                HStack(spacing: 2) {
+                    ForEach(DashboardUIState.Page.primary, id: \.self) { page in
+                        let selected = ui.page == page
+                        Button { ui.navigate(to: page) } label: {
+                            Label(page.label, systemImage: page.symbol)
+                                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                                .foregroundStyle(selected ? Brand.accent : .secondary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, minHeight: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PanelPressStyle())
+                        .focused($focusedPage, equals: page)
+                        .overlay(alignment: .bottom) {
+                            if selected {
+                                Capsule().fill(Brand.accent).frame(width: 30, height: 2)
+                                    .matchedGeometryEffect(id: "selected-page", in: navigation)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7)
+                                .strokeBorder(Brand.accent.opacity(focusedPage == page ? 0.75 : 0), lineWidth: 1.5)
+                                .allowsHitTesting(false)
+                        }
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                    }
+                }
+                Divider().opacity(0.65)
+            }
+            .animation(PanelMotion.navigation(reduced: reduced), value: ui.page)
+            .onMoveCommand { direction in
+                let pages = DashboardUIState.Page.primary
+                guard let current = pages.firstIndex(of: ui.page) else { return }
+                let delta = direction == .right ? 1 : direction == .left ? -1 : 0
+                guard delta != 0 else { return }
+                let next = pages[min(pages.count - 1, max(0, current + delta))]
+                ui.navigate(to: next)
+                focusedPage = next
+            }
         }
     }
 
@@ -289,7 +329,7 @@ struct DashboardView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dashboardCard(radius: 16, padding: 13)
+        .dashboardCard(radius: 15, padding: 12)
     }
 
     private var usageMetric: some View {
@@ -306,7 +346,7 @@ struct DashboardView: View {
         } else {
             detail = data.health
         }
-        return OverviewMetric(title: "AI 관측 토큰", value: UsageNumbers.compact(value), detail: detail,
+        return OverviewMetric(title: "오늘 AI 관측 토큰", value: UsageNumbers.compact(value), detail: detail,
                               fullValue: value.map(String.init) ?? "확인 가능한 집계 없음")
     }
 
@@ -372,7 +412,7 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("AI 로그 집계 설정")
                         .font(.system(size: 11.5, weight: .semibold))
-                    Text("사용량과 작업 상태를 보려면 로컬 로그 읽기를 허용해 주세요. 로그에는 대화와 도구 출력이 포함될 수 있어요.")
+                    Text("AI 사용량과 작업 상태를 보려면 로컬 로그 읽기를 허용해 주세요. 대화와 도구 출력이 포함될 수 있어요.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -398,7 +438,7 @@ private struct OverviewDevelopmentMetric: View {
 
     var body: some View {
         let activity = model.estimatedActivity
-        OverviewMetric(title: "개발 활동 추정", value: activity.formatted, detail: activity.label,
+        OverviewMetric(title: "오늘 개발 활동 추정", value: activity.formatted, detail: activity.label,
                        fullValue: activity.estimatedNanoseconds == nil ? "관측 없음" : activity.formatted)
     }
 }

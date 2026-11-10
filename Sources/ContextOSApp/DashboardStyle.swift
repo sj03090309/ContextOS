@@ -57,6 +57,11 @@ struct PanelPressStyle: ButtonStyle {
 /// Does not depend on SwiftUI's fitting-size feedback or on content length.
 enum DashboardLayout {
     static let width: CGFloat = 340
+    static let mascotLeading: CGFloat = 18
+    static let mascotTop: CGFloat = 12
+    static let mascotWidth: CGFloat = 46
+    static let mascotHeight: CGFloat = 46
+
     static func height(visibleHeight: CGFloat) -> CGFloat {
         min(520, max(180, visibleHeight - 56))
     }

@@ -5,54 +5,74 @@ import ContextOSUsage
 
 // MARK: - Live header
 
-/// "ContextOS", a pill saying whether an agent is working, and one line of who
-/// is working where — or when they last did.
+/// A glanceable activity banner, with space for the separately hosted mascot.
 struct LiveHeader: View {
     @ObservedObject var live: LiveStatus
+    @ObservedObject var mascot: MascotState
     let agentLogCollectionEnabled: Bool
     var hidePrivateDetails = false
-    @Environment(\.accessibilityReduceMotion) private var reduced
+    var surface: DashboardSurface = .popover
+    @State private var expiredCompletion: Date?
+    @State private var hidden = false
 
     var body: some View {
-        // A clock only for the "4분째" / "3시간 전" wording. Half a minute is as
-        // fine as those words get, and the panel is released soon after it
-        // closes, so this never ticks for long unseen.
+        let completedAt = hidden ? nil : mascot.optimizationCompletedAt
+        let showsCompletion = !hidden && completedAt != expiredCompletion
+            && mascot.showsOptimizationCompletion(at: Date())
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text("ContextOS")
-                        .font(.system(size: 18, weight: .semibold, design: .rounded))
-                        .tracking(-0.35)
-                    Spacer(minLength: 8)
-                    pill
+            HStack(spacing: 10) {
+                Color.clear.frame(width: DashboardLayout.mascotWidth, height: DashboardLayout.mascotHeight)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(agentLogCollectionEnabled && live.working ? Brand.positiveDot
+                                  : Color.secondary.opacity(0.55))
+                            .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
+                        Text(phaseTitle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                        Spacer(minLength: 4)
+                        Text("ContextOS")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    if showsCompletion {
+                        Label("컨텍스트 최적화 완료", systemImage: "checkmark.circle")
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                    } else {
+                        Text(detail(now: context.date))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
-                Text(detail(now: context.date))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .padding(.leading, 6)
+            .padding(.trailing, 12)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 13))
         }
-    }
-
-    private var pill: some View {
-        let working = agentLogCollectionEnabled && live.working
-        return HStack(spacing: 6) {
-            Circle()
-                .fill(working ? Brand.positiveDot : Color.secondary.opacity(0.6))
-                .frame(width: 6, height: 6)
-                .accessibilityHidden(true)
-            Text(phaseTitle)
-                .font(.system(size: 10, weight: .medium))
-                .contentTransition(.opacity)
+        .padding(.horizontal, DashboardLayout.mascotLeading - 6)
+        .padding(.top, DashboardLayout.mascotTop - 6)
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
+            if notification.object as? DashboardSurface == surface { hidden = false }
         }
-        .foregroundStyle(working ? Brand.positive : .secondary)
-        .padding(.horizontal, 10)
-        .frame(height: 24)
-        .background((working ? Brand.positiveDot.opacity(0.13) : Color.primary.opacity(0.07)),
-                    in: Capsule())
-        .animation(PanelMotion.feedback(reduced: reduced), value: live.phase)
-        .animation(PanelMotion.feedback(reduced: reduced), value: phaseTitle)
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { notification in
+            if notification.object as? DashboardSurface == surface { hidden = true }
+        }
+        .task(id: completedAt) {
+            guard let completedAt else { return }
+            let delay = completedAt.addingTimeInterval(MascotState.completionDuration).timeIntervalSinceNow
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            if !Task.isCancelled { expiredCompletion = completedAt }
+        }
     }
 
     private var phaseTitle: String {
@@ -84,7 +104,7 @@ struct LiveHeader: View {
             parts.append("최근 로그 변경 " + Self.ago(last, now: now))
             if let project = live.project, !hidePrivateDetails { parts.append(project) }
         } else {
-            parts.append("작업 로그가 없거나 상태를 확인할 수 없어요")
+            parts.append("확인 가능한 작업 로그가 없어요")
         }
         return parts.joined(separator: " · ")
     }
