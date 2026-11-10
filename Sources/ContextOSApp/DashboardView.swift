@@ -81,7 +81,9 @@ final class DashboardUIState: ObservableObject {
     enum SettingsDestination: Hashable { case privacy }
 
     enum Page: String, CaseIterable {
-        case overview = "대시보드", usage = "AI 사용량", time = "개발 시간"
+        case overview = "대시보드", usage = "AI 사용량", time = "개발 시간", history = "기록"
+
+        static let primary: [Self] = [.overview, .usage, .time]
         var label: String { rawValue }
         var position: Int { Self.allCases.firstIndex(of: self) ?? 0 }
     }
@@ -95,7 +97,6 @@ final class DashboardUIState: ObservableObject {
     private(set) var navigatingForward = true
     @Published var usageExpanded = false
     @Published var panelHeight: CGFloat = 520
-    @Published var historyExpanded = false
     @Published var tab: DashboardTab = .files
     @Published var expanded: Set<String> = []   // expanded project cards
     /// Months back from the current one.
@@ -158,8 +159,7 @@ struct DashboardView: View {
                 .padding(.horizontal, 18)
                 .fixedSize(horizontal: false, vertical: true)
 
-            SlidingSegments(options: DashboardUIState.Page.allCases, selection: $ui.page,
-                            label: \.label, namespace: navigation, height: 33)
+            navigationBar
                 .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 10)
 
             ZStack(alignment: .top) {
@@ -193,15 +193,51 @@ struct DashboardView: View {
         .animation(PanelMotion.response(reduced: reduced), value: ui.showSettings)
         .animation(PanelMotion.navigation(reduced: reduced), value: ui.showConnections)
         .transaction { if reduced { $0.animation = nil; $0.disablesAnimations = true } }
-        .onAppear { model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
-        .onChange(of: ui.historyExpanded) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
-        .onChange(of: ui.page) { _, _ in
+        .onAppear { model.setHistoryVisible(ui.page == .history) }
+        .onChange(of: ui.page) { _, page in
             ui.showConnections = false
-            model.setHistoryVisible(ui.page == .overview && ui.historyExpanded)
+            model.setHistoryVisible(page == .history)
+            loadSelectedHistoryDay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
+            guard notification.object as? DashboardSurface == surface else { return }
+            loadSelectedHistoryDay()
         }
         .sheet(item: $model.connectionPreview) { preview in
             ConnectionPreviewSheet(preview: preview)
                 .environmentObject(model)
+        }
+    }
+
+    private func loadSelectedHistoryDay() {
+        guard ui.page == .history, let selectedDay = ui.selectedDay else { return }
+        model.loadDetail(for: selectedDay)
+    }
+
+    @ViewBuilder
+    private var navigationBar: some View {
+        if ui.page == .history {
+            ZStack(alignment: .leading) {
+                Text(ui.page.label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityAddTraits(.isHeader)
+                Button { ui.navigate(to: .overview) } label: {
+                    Label("대시보드", systemImage: "chevron.left")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .padding(.horizontal, 8)
+                        .frame(height: 32)
+                        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PanelPressStyle())
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("대시보드로 돌아가기")
+            }
+            .frame(height: 41)
+        } else {
+            SlidingSegments(options: DashboardUIState.Page.primary, selection: $ui.page,
+                            label: \.label, namespace: navigation, height: 33)
         }
     }
 
@@ -214,39 +250,29 @@ struct DashboardView: View {
             PopoverUsageDetail()
         case .time:
             WorkTimePanel(model: workTime, compact: true)
+        case .history:
+            historyPage
         }
     }
 
     private var overviewPage: some View {
-        ScrollViewReader { scroll in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    todaySummary
-                    overviewActions.id(OverviewAnchor.actions)
-                    if ui.historyExpanded { history }
-                    if !model.agentLogCollectionEnabled { logConsent }
-                    if !hasConfiguredAgent {
-                        Text("AI 도구를 연결하면 필요한 프로젝트 문맥을 전달하고, 절감 기록을 여기서 확인할 수 있어요.")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 3)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
-            }
-            .onChange(of: ui.historyExpanded) { _, expanded in
-                if expanded {
-                    withAnimation(PanelMotion.navigation(reduced: reduced)) {
-                        scroll.scrollTo(OverviewAnchor.actions, anchor: .top)
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                todaySummary
+                overviewActions
+                if !model.agentLogCollectionEnabled { logConsent }
+                if !hasConfiguredAgent {
+                    Text("AI 도구를 연결하면 필요한 프로젝트 문맥을 전달하고, 절감 기록을 여기서 확인할 수 있어요.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 3)
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
     }
-
-    private enum OverviewAnchor: Hashable { case actions }
 
     private var hasConfiguredAgent: Bool {
         model.agents.contains { $0.connection.isConfigured }
@@ -286,32 +312,27 @@ struct DashboardView: View {
 
     private var overviewActions: some View {
         HStack(spacing: 8) {
-            Button {
-                withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
-            } label: {
-                overviewAction("기록", symbol: "calendar",
-                               trailing: ui.historyExpanded ? "chevron.up" : "chevron.down")
+            Button { ui.navigate(to: .history) } label: {
+                overviewAction("기록", symbol: "calendar")
             }
             .buttonStyle(PanelPressStyle())
             .help("달력, 프로젝트, 최적화 기록")
             .accessibilityHint("달력과 프로젝트 및 최적화 기록 보기")
-            .accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
             Button { ui.showConnections = true } label: {
                 overviewAction(hasConfiguredAgent ? "AI 연결" : "AI 연결하기",
-                               symbol: "link", trailing: "chevron.right", emphasized: !hasConfiguredAgent)
+                               symbol: "link", emphasized: !hasConfiguredAgent)
             }
             .buttonStyle(PanelPressStyle())
             .help("AI 도구와 ContextOS 연결 설정")
         }
     }
 
-    private func overviewAction(_ title: String, symbol: String, trailing: String,
-                                emphasized: Bool = false) -> some View {
+    private func overviewAction(_ title: String, symbol: String, emphasized: Bool = false) -> some View {
         HStack(spacing: 7) {
             Image(systemName: symbol).accessibilityHidden(true)
             Text(title).lineLimit(1)
             Spacer(minLength: 4)
-            Image(systemName: trailing)
+            Image(systemName: "chevron.right")
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
@@ -324,19 +345,22 @@ struct DashboardView: View {
         .contentShape(Rectangle())
     }
 
-    private var history: some View {
-        VStack(spacing: 10) {
-            CalendarCard()
-            PanelTabBar(selection: $ui.tab)
-            ZStack(alignment: .top) {
-                switch ui.tab {
-                case .files: ProjectsList()
-                case .activity: ActivityList()
+    private var historyPage: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                CalendarCard()
+                PanelTabBar(selection: $ui.tab)
+                ZStack(alignment: .top) {
+                    switch ui.tab {
+                    case .files: ProjectsList()
+                    case .activity: ActivityList()
+                    }
                 }
+                .animation(PanelMotion.feedback(reduced: reduced), value: ui.tab)
             }
-            .animation(PanelMotion.feedback(reduced: reduced), value: ui.tab)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
-        .transition(PanelMotion.disclosure(reduced: reduced))
     }
 
     private var logConsent: some View {

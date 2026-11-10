@@ -1,8 +1,7 @@
 import SwiftUI
 import AppKit
-import ContextOSCore
 
-/// 뭉치 settles onto its shadow, then breathes in a taller pose while an agent works.
+/// 뭉치 breathes in a taller pose while an agent works.
 struct MeltingMascot: View {
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.colorScheme) private var colorScheme
@@ -10,12 +9,10 @@ struct MeltingMascot: View {
     @ObservedObject var settings: AppSettings
     var surface: DashboardSurface = .popover
 
-    @State private var start = Date()
     // NSPopover keeps its hosted view alive after dismissal.
     @State private var hidden = false
     @State private var stillCheck = 0
-
-    private let settleTime: TimeInterval = 0.7
+    private static let blinkStarts = [1.2, 5.9, 11.8]
 
     private var staticMotion: Bool { reduced || settings.mascotMotion == .off }
     private var breathesAtRest: Bool { !staticMotion && settings.mascotMotion.breathes }
@@ -23,8 +20,7 @@ struct MeltingMascot: View {
     var body: some View {
         let _ = stillCheck // Re-evaluate expiry even with the timeline paused.
         let now = Date()
-        let transitioning = now.timeIntervalSince(start) < settleTime
-            || state.isWorkTransitioning(at: now) || state.isNodding(at: now)
+        let transitioning = state.isWorkTransitioning(at: now) || state.isNodding(at: now)
         let paused = hidden || staticMotion || (!transitioning && !breathesAtRest && !state.isWorking)
         // The slow breath can use fewer redraws than a nod or pose change.
         let frameInterval = 1.0 / (transitioning ? 20 : 10)
@@ -47,23 +43,17 @@ struct MeltingMascot: View {
                 }
             }
         }
-        .onAppear { start = Date() }
         .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
             guard notification.object as? DashboardSurface == surface else { return }
-            start = Date()
             hidden = false
         }
         .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverClosed)) { notification in
             guard notification.object as? DashboardSurface == surface else { return }
             hidden = true
         }
-        .task(id: hidden ? nil : start) {
-            guard !hidden else { return }
-            await checkStillness(after: start.addingTimeInterval(settleTime))
-        }
         .task(id: hidden ? nil : state.workChangedAt) {
-            guard !hidden, let workChangedAt = state.workChangedAt else { return }
-            await checkStillness(after: workChangedAt.addingTimeInterval(MascotState.workTransitionDuration))
+            guard !hidden, let workTransitionEnd = state.workTransitionEnd else { return }
+            await checkStillness(after: workTransitionEnd)
         }
         .task(id: hidden ? nil : state.optimizationCompletedAt) {
             guard !hidden, let completedAt = state.optimizationCompletedAt else { return }
@@ -81,37 +71,40 @@ struct MeltingMascot: View {
     }
 
     private func frame(at now: Date, size: CGSize, palette: MungchiPalette) -> some View {
-        let elapsed = max(0, now.timeIntervalSince(start))
-        let landing = staticMotion || elapsed >= settleTime ? 0 : CGFloat(exp(-8 * elapsed) * cos(11 * elapsed))
         let pose = staticMotion ? (state.isWorking ? CGFloat(1) : 0) : CGFloat(state.workProgress(at: now))
         let nod = staticMotion ? 0 : CGFloat(state.nodProgress(at: now))
-        let idleBreath = breathesAtRest ? CGFloat(MascotBeat.breath(now)) * (1 - pose) : 0
-        let focusBreath = staticMotion ? 0 : CGFloat(MascotState.focusBreath(at: now)) * pose
-        let scaleX = 1.04 - 0.10 * pose - 0.025 * idleBreath - 0.036 * focusBreath + 0.03 * nod
-        let scaleY = 0.88 + 0.16 * pose + 0.026 * idleBreath + 0.10 * focusBreath - 0.07 * nod
-        let blink = breathesAtRest ? Self.blink(now) * (1 - pose) : 0
+        let idleBreath = breathesAtRest
+            ? CGFloat(MascotState.breath(at: now, period: MascotState.restBreathPeriod)) * (1 - pose) : 0
+        let focusBreath = staticMotion ? 0
+            : CGFloat(MascotState.breath(at: now, period: MascotState.focusBreathPeriod)) * pose
+        let scaleX = 1.04 - 0.10 * pose - 0.020 * idleBreath - 0.032 * focusBreath + 0.03 * nod
+        let scaleY = 0.88 + 0.16 * pose + 0.042 * idleBreath + 0.08 * focusBreath - 0.07 * nod
+        let blink = staticMotion ? 0 : Self.blink(now) * (breathesAtRest ? 1 : pose)
         let eyesOpen = 1 - max(0.88 * blink, 0.3 * nod)
         let groundY = size.height - 7
         return ZStack(alignment: .topLeading) {
             Ellipse()
                 .fill(palette.ground)
-                .frame(width: 42, height: 5)
+                .frame(width: 42 - 2 * pose - focusBreath + 2 * nod, height: 5)
                 .position(x: size.width / 2, y: groundY + 2)
-            MungchiFace(palette: palette, gaze: pose, eyesOpen: eyesOpen)
+            MungchiFace(palette: palette, gaze: pose + 0.08 * focusBreath - 0.12 * nod, eyesOpen: eyesOpen)
                 .frame(width: 36, height: 32)
                 .scaleEffect(x: scaleX, y: scaleY, anchor: .bottom)
-                .rotationEffect(.degrees(4 * pose), anchor: .bottom)
-                .position(x: size.width / 2, y: groundY - 16 - 4.5 * landing + 1.5 * nod)
+                .rotationEffect(.degrees(3 * pose + focusBreath - 4 * nod), anchor: .bottom)
+                .position(x: size.width / 2, y: groundY - 16 + 1.5 * nod)
         }
         .frame(width: size.width, height: size.height)
     }
 
     private static func blink(_ now: Date) -> CGFloat {
-        let period = 4.6
-        let length = 0.16
-        let into = now.timeIntervalSince1970.truncatingRemainder(dividingBy: period)
-        guard into < length else { return 0 }
-        return CGFloat(sin(into / length * .pi))
+        let phase = now.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 15)
+        for start in blinkStarts {
+            let elapsed = phase - start
+            if (0..<0.24).contains(elapsed) {
+                return CGFloat(elapsed < 0.08 ? elapsed / 0.08 : (0.24 - elapsed) / 0.16)
+            }
+        }
+        return 0
     }
 }
 

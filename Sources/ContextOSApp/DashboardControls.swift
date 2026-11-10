@@ -340,31 +340,37 @@ struct SettingsOverlay: View {
 
 private struct MascotColorSettings: View {
     @ObservedObject var settings: AppSettings
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showsCustomColor = false
-    @State private var draft = ""
-    @FocusState private var editingHex: Bool
+    @State private var draft = MascotColorDraft(hex: MascotColor.mint.hex)
+    @FocusState private var focusedPreset: MascotColor?
 
     private var selectedPreset: MascotColor? {
         MascotColor.allCases.first { $0.hex == settings.mascotTint }
     }
 
     var body: some View {
+        let selectedTint = showsCustomColor ? draft.hex : settings.mascotTint
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("뭉치 색상").font(.system(size: 13))
                 Spacer()
-                Text(selectedPreset?.label ?? "#\(settings.mascotTint)")
+                Text(selectedPreset?.label ?? "직접 선택한 색")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             HStack(spacing: 4) {
                 ForEach(MascotColor.allCases) { preset in
-                    let selected = preset == selectedPreset
+                    let selected = preset.hex == selectedTint
                     Button {
-                        settings.setMascotTint(preset.hex)
-                        showsCustomColor = false
+                        if showsCustomColor {
+                            draft = MascotColorDraft(hex: preset.hex)
+                        } else {
+                            settings.setMascotTint(preset.hex)
+                        }
                     } label: {
                         ZStack {
-                            Circle().strokeBorder(selected ? Brand.accent : .clear, lineWidth: 1.5)
+                            Circle().strokeBorder(selected || focusedPreset == preset ? Brand.accent : .clear,
+                                                  lineWidth: 1.5)
                                 .frame(width: 26, height: 26)
                             Circle().fill(preset.swatch)
                                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
@@ -373,53 +379,135 @@ private struct MascotColorSettings: View {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(.black.opacity(0.75))
+                                    .accessibilityHidden(true)
                             }
                         }
-                        .frame(width: 31, height: 31)
+                        .frame(maxWidth: .infinity, minHeight: 31)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(PanelPressStyle())
+                    .focused($focusedPreset, equals: preset)
                     .help(preset.label)
                     .accessibilityLabel(preset.label)
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
-                Spacer(minLength: 0)
+            }
+            if showsCustomColor {
+                customEditor
+            } else {
                 Button {
-                    if !showsCustomColor { draft = "#\(settings.mascotTint)" }
-                    showsCustomColor.toggle()
-                    editingHex = showsCustomColor
+                    draft = MascotColorDraft(hex: settings.mascotTint)
+                    showsCustomColor = true
                 } label: {
-                    Text(showsCustomColor ? "접기" : "직접 지정")
+                    Label("색상 직접 선택", systemImage: "slider.horizontal.3")
                         .font(.system(size: 11, weight: .medium))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 4)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(PanelPressStyle())
-                .accessibilityLabel(showsCustomColor ? "직접 지정 접기" : "뭉치 색상 직접 지정")
-            }
-            if showsCustomColor {
-                HStack(spacing: 8) {
-                    TextField("#RRGGBB", text: $draft)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textFieldStyle(.roundedBorder)
-                        .accessibilityLabel("뭉치 색상 HEX 코드")
-                        .focused($editingHex)
-                        .onSubmit(applyCustomColor)
-                    Button("적용", action: applyCustomColor)
-                        .font(.system(size: 11))
-                        .disabled(AppSettings.normalizedMascotTint(draft) == nil)
-                }
-                Text("# 뒤에 6자리 색상 코드를 입력하세요.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                .accessibilityLabel("뭉치 색상 직접 선택")
             }
         }
     }
 
-    private func applyCustomColor() {
-        guard settings.setMascotTint(draft) else { return }
-        editingHex = false
-        showsCustomColor = false
+    private var customEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 9) {
+                MungchiFace(palette: MungchiPalette(hex: draft.hex, dark: colorScheme == .dark), gaze: 0)
+                    .frame(width: 30, height: 26)
+                    .accessibilityHidden(true)
+                Text("색상 미리보기")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            colorSlider("색상", value: hueSelection,
+                        colors: (0...6).map { Color(hue: Double($0) / 6, saturation: 1, brightness: 1) },
+                        spokenValue: "\(Int((draft.hue * 360).rounded()))도")
+            colorSlider("채도", value: $draft.saturation,
+                        colors: [Color(hue: draft.hue, saturation: 0, brightness: draft.brightness),
+                                 Color(hue: draft.hue, saturation: 1, brightness: draft.brightness)],
+                        spokenValue: "\(Int((draft.saturation * 100).rounded()))%")
+            colorSlider("밝기", value: $draft.brightness,
+                        colors: [.black, Color(hue: draft.hue, saturation: draft.saturation, brightness: 1)],
+                        spokenValue: "\(Int((draft.brightness * 100).rounded()))%")
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Button("취소") { showsCustomColor = false }
+                Button("적용") {
+                    if settings.setMascotTint(draft.hex) { showsCustomColor = false }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.small)
+        }
+        .padding(8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var hueSelection: Binding<Double> {
+        Binding(get: { draft.hue }, set: { hue in
+            guard hue != draft.hue else { return }
+            draft.hue = hue
+            // Make a newly chosen hue visible even when the starting tint is gray or black.
+            if draft.saturation < 0.01 { draft.saturation = 0.65 }
+            if draft.brightness < 0.01 { draft.brightness = 0.85 }
+        })
+    }
+
+    private func colorSlider(_ title: String, value: Binding<Double>,
+                             colors: [Color], spokenValue: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10.5))
+                .frame(width: 24, alignment: .leading)
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+            VStack(spacing: 1) {
+                Slider(value: value, in: 0...1) { Text(title) }
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .accessibilityValue(spokenValue)
+                GeometryReader { geometry in
+                    Capsule()
+                        .fill(LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing))
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+                        .frame(height: 4)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .gesture(SpatialTapGesture().onEnded { tap in
+                            let width = geometry.size.width
+                            guard width > 0 else { return }
+                            value.wrappedValue = min(1, max(0, tap.location.x / width))
+                        })
+                }
+                .frame(height: 7)
+                .padding(.horizontal, 6)
+                .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+private struct MascotColorDraft {
+    var hue: Double
+    var saturation: Double
+    var brightness: Double
+
+    init(hex: String) {
+        let rgb = MascotRGB(hex: hex)
+        let color = NSColor(srgbRed: rgb.red, green: rgb.green, blue: rgb.blue, alpha: 1)
+        var hue: CGFloat = 0
+        var saturation: CGFloat = 0
+        var brightness: CGFloat = 0
+        color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+        self.hue = hue
+        self.saturation = saturation
+        self.brightness = brightness
+    }
+
+    var hex: String {
+        let color = NSColor(calibratedHue: hue, saturation: saturation, brightness: brightness, alpha: 1)
+        return String(format: "%02X%02X%02X", Int((color.redComponent * 255).rounded()),
+                      Int((color.greenComponent * 255).rounded()), Int((color.blueComponent * 255).rounded()))
     }
 }
 

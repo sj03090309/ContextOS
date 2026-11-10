@@ -1,12 +1,13 @@
 import SwiftUI
 
 enum MascotColor: String, CaseIterable, Identifiable {
-    case mint, sky, lavender, peach, cream
+    case white, mint, sky, lavender, peach, cream
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
+        case .white: "흰색"
         case .mint: "민트"
         case .sky: "하늘"
         case .lavender: "라벤더"
@@ -17,6 +18,7 @@ enum MascotColor: String, CaseIterable, Identifiable {
 
     var hex: String {
         switch self {
+        case .white: "FFFFFF"
         case .mint: "40C977"
         case .sky: "76B9EC"
         case .lavender: "AD9BEC"

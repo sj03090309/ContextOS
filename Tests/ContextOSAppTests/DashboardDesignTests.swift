@@ -67,7 +67,8 @@ struct DashboardDesignTests {
         #expect(!ui.navigatingForward)
         ui.page = .overview
         #expect(!ui.navigatingForward)
-        for index in 0..<90 { ui.page = DashboardUIState.Page.allCases[index % 3] }
+        let primary = DashboardUIState.Page.primary
+        for index in 0..<90 { ui.page = primary[index % primary.count] }
         #expect(ui.expanded == ["one-project"])
         #expect(ui.usageExpanded)
         #expect(ui.tab == .activity)
@@ -114,6 +115,8 @@ struct DashboardDesignTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = AppSettings(defaults: defaults)
         #expect(settings.mascotTint == MascotColor.mint.hex)
+        #expect(settings.setMascotTint(MascotColor.white.hex))
+        #expect(AppSettings(defaults: defaults).mascotTint == "FFFFFF")
         #expect(settings.setMascotTint(MascotColor.lavender.hex))
         #expect(AppSettings(defaults: defaults).mascotTint == MascotColor.lavender.hex)
         #expect(settings.setMascotTint(" #426bde "))
@@ -150,13 +153,15 @@ struct DashboardDesignTests {
         let start = Date(timeIntervalSinceReferenceDate: 0)
         let state = MascotState()
         state.completeOptimization(at: start)
-        let peak = start.addingTimeInterval(MascotState.nodDuration / 2)
+        let dipped = start.addingTimeInterval(0.17)
+        let recovering = start.addingTimeInterval(0.30)
         let afterNod = start.addingTimeInterval(1)
         let afterCaption = start.addingTimeInterval(3)
 
         #expect(!state.isWorking)
         #expect(state.nodProgress(at: start) == 0)
-        #expect(state.nodProgress(at: peak) > 0.99)
+        #expect(state.nodProgress(at: dipped) > 0.98)
+        #expect(state.nodProgress(at: recovering) < state.nodProgress(at: dipped))
         #expect(!state.isNodding(at: afterNod))
         #expect(state.nodProgress(at: afterNod) == 0)
         #expect(state.showsOptimizationCompletion(at: afterNod))

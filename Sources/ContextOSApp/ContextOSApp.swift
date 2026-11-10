@@ -83,7 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
         openWindow.target = self
         appMenu.addItem(openWindow)
         appMenu.addItem(.separator())
-        for (index, page) in DashboardUIState.Page.allCases.enumerated() {
+        for (index, page) in DashboardUIState.Page.primary.enumerated() {
             let pageItem = NSMenuItem(title: page.label, action: #selector(openPageFromMenu(_:)), keyEquivalent: String(index + 1))
             pageItem.target = self
             pageItem.tag = index
@@ -172,8 +172,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Obs
     }
 
     @objc private func openPageFromMenu(_ sender: NSMenuItem) {
-        guard DashboardUIState.Page.allCases.indices.contains(sender.tag) else { return }
-        dashboardUI.navigate(to: DashboardUIState.Page.allCases[sender.tag])
+        guard DashboardUIState.Page.primary.indices.contains(sender.tag) else { return }
+        dashboardUI.navigate(to: DashboardUIState.Page.primary[sender.tag])
         showPopover()
     }
 
@@ -297,7 +297,9 @@ final class MascotRenderer {
     private enum Breath {
         case resting, working
 
-        @MainActor var period: TimeInterval { self == .working ? MascotState.focusBreathPeriod : .pi }
+        @MainActor var period: TimeInterval {
+            self == .working ? MascotState.focusBreathPeriod : MascotState.restBreathPeriod
+        }
     }
 
     weak var host: MascotHostView?
@@ -411,11 +413,11 @@ final class MascotRenderer {
         let peak = CATransform3DMakeScale(working ? 0.96 : 0.98, working ? 1.09 : 1.045, 1)
         let pulse = CAKeyframeAnimation(keyPath: "transform")
         pulse.values = [current, peak, CATransform3DIdentity].map { NSValue(caTransform3D: $0) }
-        pulse.keyTimes = [0, 0.48, 1]
+        pulse.keyTimes = [0, NSNumber(value: MascotState.breathPeakFraction), 1]
         let easing = CAMediaTimingFunction(name: .easeInEaseOut)
         pulse.timingFunctions = [easing, easing]
         // Each breath has a quiet pause, with no animation registered between pulses.
-        pulse.duration = breath.period * 0.56
+        pulse.duration = breath.period * MascotState.breathActiveFraction
         pulse.preferredFrameRateRange = CAFrameRateRange(minimum: 10, maximum: 24, preferred: 18)
         layer.add(pulse, forKey: "breath")
     }
@@ -432,8 +434,7 @@ final class MascotRenderer {
             return
         }
 
-        let workEnd = state.isWorkTransitioning(at: now)
-            ? state.workChangedAt?.addingTimeInterval(MascotState.workTransitionDuration) ?? now : now
+        let workEnd = state.isWorkTransitioning(at: now) ? state.workTransitionEnd ?? now : now
         let nodEnd = state.isNodding(at: now)
             ? state.optimizationCompletedAt?.addingTimeInterval(MascotState.nodDuration) ?? now : now
         let duration = max(workEnd, nodEnd).timeIntervalSince(now)
@@ -461,7 +462,7 @@ final class MascotRenderer {
     private func poseTransform(work: Double, nod: Double) -> CATransform3D {
         CATransform3DMakeAffineTransform(
             CGAffineTransform(translationX: 0, y: 0.55 * work - 0.8 * nod)
-                .rotated(by: -0.055 * work)
+                .rotated(by: -0.055 * work + 0.035 * nod)
                 .scaledBy(x: 1.03 - 0.08 * work + 0.035 * nod, y: 0.96 + 0.12 * work - 0.07 * nod))
     }
 

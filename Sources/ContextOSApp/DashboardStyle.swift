@@ -38,9 +38,6 @@ enum PanelMotion {
             insertion: .opacity.combined(with: .offset(x: offset)),
             removal: .opacity.combined(with: .offset(x: -offset)))
     }
-    static func disclosure(reduced: Bool) -> AnyTransition {
-        reduced ? .identity : .opacity.combined(with: .offset(y: -5))
-    }
     static func overlay(reduced: Bool) -> AnyTransition {
         reduced ? .identity : .opacity.combined(with: .scale(scale: 0.98, anchor: .bottomTrailing))
     }
