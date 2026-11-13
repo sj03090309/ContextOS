@@ -1,4 +1,5 @@
 import Foundation
+import ContextOSUsage
 
 /// One AI agent's exact token total for a project.
 public struct AgentTokens: Sendable, Identifiable, Equatable {
@@ -47,7 +48,8 @@ public enum ProjectAITokenReader {
             // Prefer a real on-disk path for display; keep the first one seen.
             if path[id.key] == nil || path[id.key] == id.key { path[id.key] = id.path }
             for (agent, tokens) in agents where tokens > 0 {
-                agentsByKey[id.key, default: [:]][agent, default: 0] += tokens
+                agentsByKey[id.key, default: [:]][agent] = Int(UsageNumbers.add(
+                    Int64(agentsByKey[id.key]?[agent] ?? 0), Int64(tokens)))
             }
         }
 
@@ -55,7 +57,7 @@ public enum ProjectAITokenReader {
             let list = agents
                 .map { AgentTokens(agent: $0.key, tokens: $0.value) }
                 .sorted { $0.tokens > $1.tokens }
-            let total = list.reduce(0) { $0 + $1.tokens }
+            let total = list.reduce(0) { Int(UsageNumbers.add(Int64($0), Int64($1.tokens))) }
             guard total > 0 else { return nil }
             return ProjectAIUsage(name: name[key] ?? lastComponent(key), path: path[key] ?? key,
                                   total: total, byAgent: list)

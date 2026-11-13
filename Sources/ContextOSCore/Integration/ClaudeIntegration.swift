@@ -26,15 +26,16 @@ public enum ClaudeIntegration {
     @discardableResult
     public static func installPromptHook(at url: URL, contextosBinaryPath: String) throws -> Bool {
         let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        var snapshot = SettingsSnapshot(transaction: transaction)
         let name = url.lastPathComponent
-        var editor = try JSONSettingsEditor(transaction.read(name), file: name)
+        var editor = try JSONSettingsEditor(snapshot.read(name), file: name)
         let hook = try JSONSettingsEditor.encode(["type": "command", "command": contextosBinaryPath,
                                                 "args": ["hook"], "timeout": 20])
         let hadPrior = editor.data.range(of: Data("contextos".utf8)) != nil
         for event in ["UserPromptSubmit", "Stop"] {
             try ConnectionManager.updateHooks(&editor, event: event, insert: hook, expected: nil)
         }
-        try transaction.apply([transaction.change(name, after: editor.data)], agent: "Claude Code", action: "connect")
+        try transaction.apply([snapshot.change(name, after: editor.data)], agent: "Claude Code", action: "connect")
         return hadPrior
     }
 
@@ -82,22 +83,24 @@ public enum ClaudeIntegration {
     @discardableResult
     public static func installInstruction(at url: URL) throws -> Bool {
         let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        var snapshot = SettingsSnapshot(transaction: transaction)
         let name = url.lastPathComponent
-        let original = try SettingsTransaction.text(transaction.read(name), file: name)
+        let original = try SettingsTransaction.text(snapshot.read(name), file: name)
         let updated = try ConnectionManager.instructionRange(original) != nil
         let changed = try ConnectionManager.settingInstruction(original, to: markedBlock())
-        try transaction.apply([transaction.change(name, after: Data(changed.utf8))], agent: "Instructions", action: "connect")
+        try transaction.apply([snapshot.change(name, after: Data(changed.utf8))], agent: "Instructions", action: "connect")
         return updated
     }
 
     /// Remove the ContextOS block from `url` (leaving other content intact).
     public static func removeInstruction(at url: URL) throws {
         let transaction = SettingsTransaction(home: url.deletingLastPathComponent())
+        var snapshot = SettingsSnapshot(transaction: transaction)
         let name = url.lastPathComponent
-        guard let original = try transaction.read(name) else { return }
+        guard let original = try snapshot.read(name) else { return }
         let content = try SettingsTransaction.text(original, file: name)
         let changed = try ConnectionManager.settingInstruction(content, to: nil)
-        try transaction.apply([transaction.change(name, after: Data(changed.utf8))], agent: "Instructions", action: "disconnect")
+        try transaction.apply([snapshot.change(name, after: Data(changed.utf8))], agent: "Instructions", action: "disconnect")
     }
 
     /// The command to register the MCP server for **all** projects (user scope).

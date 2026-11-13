@@ -1,6 +1,6 @@
 import SwiftUI
 import AppKit
-import ContextOSCore
+import ContextOSUsage
 
 /// The ContextOS brand palette — the ink + cream of the app icon (뭉치 in cream
 /// on a charcoal tile), used consistently across the dashboard.
@@ -32,24 +32,6 @@ enum Brand {
     /// Whatever sits on an `accent` fill: ink on cream, cream on ink.
     static let onAccent = adaptive(dark: inkNS, light: creamNS)
 
-    /// The mascot inverts with the appearance like the accent does — a static
-    /// cream blob would vanish on the light popover material. Dark: cream blob
-    /// with ink eyes (the icon). Light: ink blob with cream eyes (its negative).
-    static let blobTop = adaptive(
-        dark: NSColor(calibratedRed: 0.953, green: 0.925, blue: 0.867, alpha: 1),   // #F3ECDD
-        light: NSColor(calibratedRed: 0.180, green: 0.180, blue: 0.212, alpha: 1))  // #2E2E36
-    static let blobBottom = adaptive(
-        dark: NSColor(calibratedRed: 0.894, green: 0.851, blue: 0.765, alpha: 1),   // #E4D9C3
-        light: inkNS)                                                                // #17171B
-    static let mascotEye = adaptive(
-        dark: NSColor(calibratedWhite: 0.12, alpha: 1),
-        light: creamNS)
-    /// The warmth around 뭉치 while it eats: a cream aura on the dark panel, and
-    /// only a faint shade on the light one, where a dark glow reads as a smudge.
-    static let mascotGlow = adaptive(
-        dark: NSColor(calibratedRed: 0.953, green: 0.925, blue: 0.867, alpha: 1),
-        light: NSColor(calibratedWhite: 0.1, alpha: 0.35))
-
     /// Claude Code's share in every bar and dot — Anthropic's clay.
     static let claude = Color(red: 0.851, green: 0.467, blue: 0.341)    // #D97757
     /// Codex's share: a clear blue, a step deeper on the light panel.
@@ -75,16 +57,14 @@ enum Brand {
     }
 }
 
-/// Which "screen" the segmented control shows — keeps the panel short by
-/// showing one system at a time instead of stacking every section.
+/// The lists inside dashboard history.
 enum DashboardTab: Hashable, CaseIterable {
-    case files, activity, ai
+    case files, activity
 
     var label: String {
         switch self {
         case .files: return "프로젝트"
-        case .activity: return "활동"
-        case .ai: return "AI 연결"
+        case .activity: return "최적화 기록"
         }
     }
 }
@@ -97,30 +77,65 @@ enum DashboardTab: Hashable, CaseIterable {
 /// on the next open, which should come back exactly as it was left.
 @MainActor
 final class DashboardUIState: ObservableObject {
+    enum SettingsDestination: Hashable { case privacy, time }
+
     enum Page: String, CaseIterable {
-        case overview = "대시보드", usage = "AI 사용량", time = "개발 시간"
+        case overview = "대시보드", usage = "AI 사용량", time = "개발 시간", history = "기록"
+
+        static let primary: [Self] = [.overview, .usage, .time]
         var label: String { rawValue }
+        var position: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+        var symbol: String {
+            switch self {
+            case .overview: "rectangle.grid.1x2"
+            case .usage: "chart.bar"
+            case .time: "clock"
+            case .history: "calendar"
+            }
+        }
     }
-    @Published var page: Page = .overview
+    @Published var page: Page = .overview {
+        willSet {
+            if newValue != page { navigatingForward = newValue.position > page.position }
+        }
+    }
+    // Updated with the selection, so every navigation entry (tabs, cards and
+    // public menu commands) uses the same spatial relationship.
+    private(set) var navigatingForward = true
+    @Published var overviewExpanded = false
     @Published var usageExpanded = false
     @Published var panelHeight: CGFloat = 520
-    @Published var historyExpanded = false
     @Published var tab: DashboardTab = .files
     @Published var expanded: Set<String> = []   // expanded project cards
     /// Months back from the current one.
     @Published var monthOffset = 0
     @Published var selectedDay: String?
     @Published var showSettings = false
+    private(set) var settingsDestination: SettingsDestination?
+    @Published var showConnections = false
     // Display only: never mutates the project store, history or usage snapshot.
     // Safe by default when this release preview is shared or screen recorded.
     @Published var hidePrivateDetails = true
     /// Wired by the app's public window command; no independent data source.
     var openWindow: (() -> Void)?
+
+    func openSettings(at destination: SettingsDestination? = nil) {
+        settingsDestination = destination
+        showConnections = false
+        showSettings = true
+    }
+
+    /// Public menu and widget routes reveal their destination even when a
+    /// settings overlay was left open, including routes to the current page.
+    func navigate(to destination: Page) {
+        showSettings = false
+        settingsDestination = nil
+        showConnections = false
+        page = destination
+    }
 }
 
-/// The menu-bar monitor: 뭉치 melting into the top of a translucent panel, a
-/// live line saying who is working where, the savings hero, the month in AI
-/// tokens, and three tabs — projects, activity, AI connections.
+/// Live activity stays visible above the overview, usage, and development time pages.
 struct DashboardView: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject private var ui: DashboardUIState
@@ -128,70 +143,37 @@ struct DashboardView: View {
     // The time cards observe their own controller so a ticking duration does
     // not invalidate the calendar and every other dashboard section.
     let workTime: WorkTimeController
+    private let surface: DashboardSurface
     @Namespace private var navigation
+    @FocusState private var focusedPage: DashboardUIState.Page?
 
-    init(workTime: WorkTimeController = .shared) { self.workTime = workTime }
+    init(workTime: WorkTimeController = .shared, surface: DashboardSurface = .popover) {
+        self.workTime = workTime
+        self.surface = surface
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 뭉치 is *not* in this tree — it is a sibling hosting view laid over
-            // this space by `PopoverContentController`. Sharing one SwiftUI tree
-            // with a 20fps animation made every mascot frame re-run the whole
-            // panel's view graph (calendar cells, project cards and all), which
-            // cost 16% of a core; split apart, each redraws on its own.
-            Color.clear.frame(height: PopoverContentController.mascotHeight)
+            LiveHeader(live: model.live, mascot: model.mascot,
+                       agentLogCollectionEnabled: model.agentLogCollectionEnabled,
+                       hidePrivateDetails: ui.hidePrivateDetails, surface: surface)
                 .fixedSize(horizontal: false, vertical: true)
 
-            LiveHeader(live: model.live,
-                       configured: model.agents.filter { $0.connection.isConfigured }.count,
-                       todaySaved: model.todaySaved, hidePrivateDetails: ui.hidePrivateDetails)
-                .padding(.horizontal, 18)
-                .fixedSize(horizontal: false, vertical: true)
+            navigationBar
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 8)
 
-            SlidingSegments(options: DashboardUIState.Page.allCases, selection: $ui.page,
-                            label: \.label, namespace: navigation, height: 33)
-                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 10)
-
-            Group {
-                switch ui.page {
-                case .overview:
-                    ScrollView(.vertical) {
-                        VStack(spacing: 10) {
-                            ConcurrentUsageSummary()
-                            DevelopmentTimeSummary(model: workTime) { ui.page = .time }
-                            CompactSavingsSummary()
-                            Button {
-                                withAnimation(PanelMotion.response(reduced: reduced)) { ui.historyExpanded.toggle() }
-                            } label: {
-                                HStack {
-                                    Text("달력·프로젝트")
-                                    Spacer()
-                                    Image(systemName: "chevron.down").rotationEffect(.degrees(ui.historyExpanded ? 180 : 0))
-                                }.font(.system(size: 11, weight: .medium)).padding(.vertical, 9).contentShape(Rectangle())
-                            }.buttonStyle(PanelPressStyle()).accessibilityValue(ui.historyExpanded ? "펼쳐짐" : "접힘")
-                            if ui.historyExpanded {
-                                CalendarCard()
-                                PanelTabBar(selection: $ui.tab)
-                                switch ui.tab {
-                                case .files: ProjectsList()
-                                case .activity: ActivityList()
-                                case .ai: AgentsList()
-                                }
-                            }
-                        }.padding(.horizontal, 16).padding(.bottom, 16)
-                    }
-                case .usage:
-                    PopoverUsageDetail()
-                case .time:
-                    WorkTimePanel(model: workTime, compact: true)
-                }
+            ZStack(alignment: .top) {
+                pageContent
+                    .id(ui.page)
+                    .transition(PanelMotion.page(reduced: reduced, forward: ui.navigatingForward))
             }
-            .id(ui.page)
-            .transition(.opacity)
-            .frame(maxHeight: .infinity)
-            .animation(PanelMotion.feedback(reduced: reduced), value: ui.page)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .animation(PanelMotion.navigation(reduced: reduced), value: ui.page)
 
-            FooterBar()
+            FooterBar(surface: surface)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: DashboardLayout.width, height: ui.panelHeight)
@@ -199,21 +181,296 @@ struct DashboardView: View {
         // Pin the background to a single, constant vibrancy so its color doesn't
         // deepen when the popover becomes key (e.g. after a click).
         .background(Brand.canvas)
+        .disabled(ui.showSettings || ui.showConnections)
+        .accessibilityHidden(ui.showSettings || ui.showConnections)
         .overlay {
-            if ui.showSettings {
-                SettingsOverlay()
-                    .transition(.opacity)
+            if ui.showConnections {
+                ConnectionSettingsOverlay()
+                    .transition(PanelMotion.page(reduced: reduced, forward: true))
+            } else if ui.showSettings {
+                SettingsOverlay(workTime: workTime)
+                    .transition(PanelMotion.overlay(reduced: reduced))
             }
         }
         .animation(PanelMotion.response(reduced: reduced), value: ui.showSettings)
+        .animation(PanelMotion.navigation(reduced: reduced), value: ui.showConnections)
         .transaction { if reduced { $0.animation = nil; $0.disablesAnimations = true } }
-        .onAppear { model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
-        .onChange(of: ui.historyExpanded) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
-        .onChange(of: ui.page) { _, _ in model.setHistoryVisible(ui.page == .overview && ui.historyExpanded) }
+        .onAppear { model.setHistoryVisible(ui.page == .history) }
+        .onChange(of: ui.page) { _, page in
+            ui.showConnections = false
+            model.setHistoryVisible(page == .history)
+            loadSelectedHistoryDay()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .contextOSPopoverOpened)) { notification in
+            guard notification.object as? DashboardSurface == surface else { return }
+            loadSelectedHistoryDay()
+        }
         .sheet(item: $model.connectionPreview) { preview in
             ConnectionPreviewSheet(preview: preview)
                 .environmentObject(model)
         }
+    }
+
+    private func loadSelectedHistoryDay() {
+        guard ui.page == .history, let selectedDay = ui.selectedDay else { return }
+        model.loadDetail(for: selectedDay)
+    }
+
+    @ViewBuilder
+    private var navigationBar: some View {
+        if ui.page == .history {
+            ZStack(alignment: .leading) {
+                Text(ui.page.label)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityAddTraits(.isHeader)
+                Button { ui.navigate(to: .overview) } label: {
+                    Label("대시보드", systemImage: "chevron.left")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .padding(.trailing, 8)
+                        .frame(height: 30)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PanelPressStyle())
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("대시보드로 돌아가기")
+            }
+            .frame(height: 33)
+        } else {
+            VStack(spacing: 0) {
+                HStack(spacing: 2) {
+                    ForEach(DashboardUIState.Page.primary, id: \.self) { page in
+                        let selected = ui.page == page
+                        Button { ui.navigate(to: page) } label: {
+                            Label(page.label, systemImage: page.symbol)
+                                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                                .foregroundStyle(selected ? Brand.accent : .secondary)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, minHeight: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(PanelPressStyle())
+                        .focused($focusedPage, equals: page)
+                        .overlay(alignment: .bottom) {
+                            if selected {
+                                Capsule().fill(Brand.accent).frame(width: 30, height: 2)
+                                    .matchedGeometryEffect(id: "selected-page", in: navigation)
+                                    .allowsHitTesting(false)
+                            }
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7)
+                                .strokeBorder(Brand.accent.opacity(focusedPage == page ? 0.75 : 0), lineWidth: 1.5)
+                                .allowsHitTesting(false)
+                        }
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                    }
+                }
+                Divider().opacity(0.65)
+            }
+            .animation(PanelMotion.navigation(reduced: reduced), value: ui.page)
+            .onMoveCommand { direction in
+                let pages = DashboardUIState.Page.primary
+                guard let current = pages.firstIndex(of: ui.page) else { return }
+                let delta = direction == .right ? 1 : direction == .left ? -1 : 0
+                guard delta != 0 else { return }
+                let next = pages[min(pages.count - 1, max(0, current + delta))]
+                ui.navigate(to: next)
+                focusedPage = next
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch ui.page {
+        case .overview:
+            overviewPage
+        case .usage:
+            PopoverUsageDetail()
+        case .time:
+            WorkTimePanel(model: workTime, compact: true)
+        case .history:
+            historyPage
+        }
+    }
+
+    private var overviewPage: some View {
+        let compact = ui.panelHeight < 480
+        return ScrollView {
+            VStack(alignment: .leading, spacing: compact ? 6 : 12) {
+                if !ui.overviewExpanded { todaySummary(compact: compact) }
+                OverviewActivityCard(compact: compact)
+                if !ui.overviewExpanded, !model.agentLogCollectionEnabled {
+                    logConsent
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, compact ? 8 : 16)
+        }
+    }
+
+    private func todaySummary(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CompactSavingsSummary(compact: compact)
+                .padding(.horizontal, 14)
+                .padding(.vertical, compact ? 5 : 14)
+                .background { Rectangle().fill(Brand.accent.opacity(0.07)) }
+            Divider().opacity(0.5)
+            HStack(spacing: 0) {
+                OverviewMetricLink(page: .usage, compact: compact) { usageMetric(compact: compact) }
+                Divider().frame(height: compact ? 40 : 50)
+                OverviewMetricLink(page: .time, compact: compact) {
+                    OverviewDevelopmentMetric(model: workTime, compact: compact)
+                }
+            }
+        }
+        .dashboardCard(radius: 15, padding: 0)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+    }
+
+    private func usageMetric(compact: Bool) -> some View {
+        let data = model.concurrentUsage.widget
+        let fresh = model.hasFreshConcurrentUsage()
+        let value = model.agentLogCollectionEnabled && fresh ? data.today : nil
+        let detail: String
+        if !model.agentLogCollectionEnabled {
+            detail = "로그 집계 꺼짐"
+        } else if data.providers.isEmpty {
+            detail = "집계 준비 중"
+        } else if !fresh {
+            detail = "최신 집계 확인 중"
+        } else {
+            detail = data.health == "로컬 기록 집계" ? "토큰" : data.health
+        }
+        return OverviewMetric(title: "오늘 AI 사용량", value: value.map { UsageNumbers.compact($0) },
+                              detail: detail == "토큰" ? "" : detail,
+                              fullValue: value.map { "\($0) 토큰" } ?? "확인 가능한 집계 없음", compact: compact, unit: "토큰")
+            .help("Codex·Claude Code의 로컬 기록에 제공된 토큰 사용량이에요. 전체 계정 사용량이나 남은 한도가 아니에요.")
+    }
+
+    private var historyPage: some View {
+        ScrollView {
+            VStack(spacing: 10) {
+                CalendarCard()
+                PanelTabBar(selection: $ui.tab)
+                ZStack(alignment: .top) {
+                    switch ui.tab {
+                    case .files: ProjectsList()
+                    case .activity: ActivityList()
+                    }
+                }
+                .animation(PanelMotion.feedback(reduced: reduced), value: ui.tab)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+        }
+    }
+
+    private var logConsent: some View {
+        Button { ui.openSettings(at: .privacy) } label: {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "hand.raised")
+                    .font(.system(size: 12))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("AI 로그 집계 설정")
+                        .font(.system(size: 11.5, weight: .semibold))
+                    Text("로그에는 대화와 도구 출력이 포함될 수 있어요.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PanelPressStyle())
+        .accessibilityHint("AI 사용량과 작업 상태를 표시하는 로컬 로그 집계 설정 열기")
+    }
+}
+
+/// Keeping the work clock in this small view avoids invalidating the whole overview.
+private struct OverviewDevelopmentMetric: View {
+    @ObservedObject var model: WorkTimeController
+    let compact: Bool
+
+    var body: some View {
+        let activity = model.estimatedActivity
+        let value = activity.estimatedNanoseconds.map { DashboardDuration.text($0) }
+        let status = model.developmentTimeStatus + (activity.partial ? " · 일부 기록" : "")
+        OverviewMetric(title: "오늘 개발 시간", value: value, detail: status,
+                       fullValue: value ?? "기록 없음", compact: compact)
+            .help("지원 IDE에서 활동한 시간의 추정치예요. 5분간 입력이 없거나 잠금·절전 중이면 기록을 쉬어요.")
+    }
+}
+
+private struct OverviewMetricLink<Content: View>: View {
+    @EnvironmentObject private var ui: DashboardUIState
+    let page: DashboardUIState.Page
+    let compact: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Button { ui.navigate(to: page) } label: {
+            content()
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, compact ? 3 : 12)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PanelPressStyle())
+        .accessibilityHint("\(page.label) 열기")
+    }
+}
+
+private struct OverviewMetric: View {
+    let title: String
+    let value: String?
+    let detail: String
+    let fullValue: String
+    let compact: Bool
+    var unit: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: compact ? 2 : 4) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.trailing, 10)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value ?? "—")
+                    .font(.system(size: compact ? 19 : 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(value == nil ? Color.secondary : .primary)
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                if let unit {
+                    Text(unit).font(.system(size: 9)).foregroundStyle(.secondary).fixedSize()
+                }
+            }
+            if !detail.isEmpty {
+                Text(detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(detail)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(fullValue) · \(detail)")
     }
 }
 
@@ -230,21 +487,5 @@ extension View {
             .overlay(
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.055), lineWidth: 1))
-    }
-}
-
-/// A translucent panel background pinned to the `.active` state, so its color
-/// stays constant instead of deepening when the popover window gains/loses key
-/// focus (which is what made a click "darken" the dashboard).
-struct VisualEffectBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .popover
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
-        nsView.state = .active
     }
 }

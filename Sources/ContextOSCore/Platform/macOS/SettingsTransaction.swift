@@ -32,6 +32,30 @@ struct SettingsBackup: Codable, Sendable {
     var changes: [SettingsChange]
 }
 
+/// One immutable baseline per file while a preview is assembled. Re-reading
+/// when constructing its changes could adopt a concurrent edit as the expected
+/// state even though the proposed bytes were produced from the older contents.
+struct SettingsSnapshot {
+    let transaction: SettingsTransaction
+    private var originals: [String: SettingsChange] = [:]
+
+    init(transaction: SettingsTransaction) { self.transaction = transaction }
+
+    mutating func read(_ relative: String) throws -> Data? {
+        if originals[relative] == nil {
+            originals[relative] = try transaction.change(relative, after: nil)
+        }
+        return originals[relative]!.before
+    }
+
+    mutating func change(_ relative: String, after: Data?) throws -> SettingsChange {
+        _ = try read(relative)
+        var change = originals[relative]!
+        change.after = after
+        return change
+    }
+}
+
 /// Byte snapshots, a local advisory lock, private backups and optimistic conflict
 /// checks. Rollback only replaces bytes still equal to what this operation wrote.
 struct SettingsTransaction {
@@ -128,17 +152,29 @@ struct SettingsTransaction {
         }
     }
 
-    func latestBackup(agent: String) throws -> SettingsBackup {
+    func latestBackup(agent: String, allowedPaths: Set<String>) throws -> SettingsBackup {
         let history = try url(".contextos-backups/history")
         let files = (try? FileManager.default.contentsOfDirectory(at: history, includingPropertiesForKeys: nil)) ?? []
         let records = try files.filter { $0.pathExtension == "json" }.compactMap { file -> SettingsBackup? in
             let relative = ".contextos-backups/history/" + file.lastPathComponent
             guard let data = try read(relative), let backup = try? JSONDecoder().decode(SettingsBackup.self, from: data),
-                  backup.agent == agent, backup.committed, backup.action != "restore" else { return nil }
+                  backup.agent == agent, backup.action != "restore" else { return nil }
             return backup
         }
-        guard let latest = records.max(by: { $0.date < $1.date }) else { throw SettingsSafetyError.noBackup }
-        return latest
+        for backup in records.sorted(by: { $0.date > $1.date }) {
+            let paths = backup.changes.map(\.relativePath)
+            guard Set(paths).isSubset(of: allowedPaths), Set(paths).count == paths.count else {
+                throw SettingsSafetyError.invalid("백업")
+            }
+            if backup.committed { return backup }
+            // The process may have stopped after its saved backup and only
+            // some writes. Offer that snapshot through explicit restore. A
+            // fully rolled-back operation must not hide the preceding backup.
+            for change in backup.changes where change.before != change.after {
+                if try read(change.relativePath) != change.before { return backup }
+            }
+        }
+        throw SettingsSafetyError.noBackup
     }
 
     private func check(_ change: SettingsChange, expected: Data?) throws {

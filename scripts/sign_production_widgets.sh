@@ -34,3 +34,4 @@ for p in [app,app/'Contents/PlugIns/ContextOSWidgets.appex']:
  if p!=app:assert d['com.apple.security.app-sandbox'] is True
 print('Existing team, exact approved production group and sandbox boundary verified; not installed.')
 PY
+python3 scripts/verify_bundle.py "$APP"

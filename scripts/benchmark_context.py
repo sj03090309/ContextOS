@@ -18,7 +18,7 @@ import time
 
 
 class MCP:
-    def __init__(self, binary):
+    def __init__(self, binary, cwd=None, environment=None):
         sandbox = shutil.which("sandbox-exec")
         if sandbox is None:
             raise RuntimeError("sandbox-exec is required to isolate usage analytics")
@@ -28,10 +28,13 @@ class MCP:
         profile = '(version 1)(allow default)(deny network*)'
         for path in blocked:
             profile += '(deny file-read* file-write* (subpath ' + json.dumps(str(path)) + '))'
+        child_environment = dict(os.environ)
+        child_environment.update(environment or {})
+        child_environment["CFFIXED_USER_HOME"] = self.home.name
         self.process = subprocess.Popen(
             [sandbox, "-p", profile, str(pathlib.Path(binary).resolve())],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, bufsize=1, env=dict(os.environ, CFFIXED_USER_HOME=self.home.name))
+            text=True, bufsize=1, cwd=cwd, env=child_environment)
         self.counter = 0
 
     def request(self, method, params):
@@ -149,9 +152,14 @@ def main():
                          "nested/.gitignore": "private.py\n", "nested/private.py": "def login():\n    return 'DUMMY_PRIVATE_VALUE'\n"})
             text, _ = server.call("read_optimized", root, query="login .env credentials.json", token_budget=8000, fresh=True)
             assert all(value not in text for value in ["DUMMY_PRIVATE_VALUE", "credentials.json", ".env", "nested/private.py"]), text
-            # A malformed JSON request is dropped; its bytes must not reach stderr.
+            # A malformed JSON request returns a bounded protocol error; its
+            # bytes must not reach stderr or poison the next valid response.
             server.process.stdin.write('{"DUMMY_PRIVATE_VALUE":\n')
             server.process.stdin.flush()
+            import select
+            assert select.select([server.process.stdout], [], [], 5)[0], "Missing parse error"
+            malformed = json.loads(server.process.stdout.readline())
+            assert malformed.get("id") is None and malformed.get("error", {}).get("code") == -32700
             server.request("ping", {})
             report["privacy"] = {"sensitive_fixtures_excluded": True, "malformed_request_recovery": True}
 
@@ -175,6 +183,27 @@ def main():
             assert not (private_root / ".contextos").exists()
             report["project_boundary"] = {"rule_links_excluded": True, "linked_index_rejected": True,
                                           "protected_root_not_read_or_indexed": True}
+
+            # A launcher may itself be inside a Git operation. Its GIT_DIR and
+            # GIT_WORK_TREE must not redirect a request for another project or
+            # disclose the wrong repository's history in restore_session.
+            requested = project("git-requested", {"public.py": "def public():\n    pass\n"})
+            foreign = project("git-foreign", {"other.py": "def other():\n    pass\n"})
+            for repository, subject in [(requested, "REQUESTED_PROJECT_COMMIT"), (foreign, "FOREIGN_PROJECT_COMMIT")]:
+                for command in [["init", "-q"], ["add", "."],
+                                ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                                 "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", subject]]:
+                    subprocess.run(["/usr/bin/git", "-C", str(repository), *command], check=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            inherited_git = MCP(args.binary, environment={"GIT_DIR": str(foreign / ".git"),
+                                                         "GIT_WORK_TREE": str(foreign)})
+            try:
+                text, _ = inherited_git.call("restore_session", requested)
+                assert "REQUESTED_PROJECT_COMMIT" in text and "FOREIGN_PROJECT_COMMIT" not in text, text
+            finally:
+                inherited_git.close()
+            report["git_repository_isolation"] = {"inherited_git_dir_ignored": True,
+                                                   "requested_project_history_only": True}
     finally:
         server.close()
     rendered = json.dumps(report, ensure_ascii=False, indent=2)

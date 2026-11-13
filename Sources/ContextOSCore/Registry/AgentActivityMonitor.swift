@@ -25,10 +25,6 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     private let claudePrefixes: [String]
     private let codexPrefixes: [String]
 
-    /// How long a directory can be untouched before we stop descending into it.
-    /// A live session's file was created recently, so its parent dir is fresh.
-    private let staleDirWindow: TimeInterval = 7 * 86_400
-
     /// A log whose last event is an *unanswered* tool call keeps the session
     /// "active" for up to this long even with no writes — one long-running tool
     /// (a build, a test suite, a big install) produces no log lines until it
@@ -76,6 +72,7 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     ///      right now* (a long build/test), which writes nothing until it ends.
     public func isActive(within window: TimeInterval = 20, now: Date = Date()) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else { clearLocked(); return false }
 
         // Refresh which file is hottest at most every 4s; between scans we reuse
         // the last hottest file and just re-stat it (cheap, catches new writes).
@@ -99,7 +96,8 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     /// The two directory trees whose writes mean an agent is working — what a
     /// file-event stream should watch instead of polling `isActive`.
     public var watchRoots: [URL] {
-        [home.appendingPathComponent(".claude/projects"),
+        guard AgentLogCollectionPolicy.isEnabled else { return [] }
+        return [home.appendingPathComponent(".claude/projects"),
          home.appendingPathComponent(".codex/sessions")]
     }
 
@@ -107,12 +105,14 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     /// written. Reads no files.
     public var newestLog: (url: URL, mtime: Date)? {
         lock.lock(); defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else { clearLocked(); return nil }
         return hottest
     }
 
     /// All main-session logs, so a finished session cannot hide another active turn.
     public var sessionLogs: [(url: URL, mtime: Date)] {
         lock.lock(); defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else { clearLocked(); return [] }
         return knownLogs.map { (URL(fileURLWithPath: $0.key), $0.value) }
     }
 
@@ -120,6 +120,7 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     /// event stream admits it lost track (dropped events, a replaced root).
     public func rescan(now: Date = Date()) {
         lock.lock(); defer { lock.unlock() }
+        guard AgentLogCollectionPolicy.isEnabled else { clearLocked(); return }
         scanLocked(now: now)
     }
 
@@ -129,6 +130,7 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     ///   whether the caller has anything new to evaluate.
     @discardableResult
     public func noteWrite(atPath path: String) -> Bool {
+        guard AgentLogCollectionPolicy.isEnabled else { return false }
         guard isSessionLog(path), let written = Self.modificationDate(path) else { return false }
         lock.lock(); defer { lock.unlock() }
         knownLogs[path] = written
@@ -168,7 +170,8 @@ public final class AgentActivityMonitor: @unchecked Sendable {
     ///     (call_id), inside `payload`.
     /// An unmatched call id means that tool is still in flight.
     public static func hasPendingToolCall(_ url: URL, tailBytes: Int = 128 * 1024) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        guard AgentLogCollectionPolicy.isEnabled else { return false }
+        guard let handle = LineReader.openRegularFile(url) else { return false }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
         let start = size > UInt64(tailBytes) ? size - UInt64(tailBytes) : 0
@@ -242,7 +245,15 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         hottest = newest
     }
 
-    /// Session log files from every supported agent, pruned to fresh directories.
+    private func clearLocked() {
+        hottest = nil
+        knownLogs.removeAll()
+        lastScan = .distantPast
+    }
+
+    /// Session logs from supported layouts. A directory's mtime only changes
+    /// when its immediate entries change; it says nothing about appended logs
+    /// below an old year/month or a resumed Claude project directory.
     private func candidateLogs(now: Date) -> [URL] {
         var files: [URL] = []
         // Claude Code: projects/<encoded-project>/<session>.jsonl
@@ -254,44 +265,55 @@ public final class AgentActivityMonitor: @unchecked Sendable {
         return files
     }
 
-    /// Files one level below `root` (Claude Code layout), skipping stale dirs.
+    /// Files one level below `root` (Claude Code layout).
     private func logs(underDirsOf root: URL, suffix: String, now: Date) -> [URL] {
         let fm = FileManager.default
+        guard Self.realDirectory(root), Self.realDirectory(root.deletingLastPathComponent()) else { return [] }
         guard let dirs = try? fm.contentsOfDirectory(
-            at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+            at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return [] }
         var out: [URL] = []
         for dir in dirs {
-            guard let dirDate = mtime(dir), now.timeIntervalSince(dirDate) <= staleDirWindow,
+            guard AgentLogCollectionPolicy.isEnabled else { break }
+            guard let values = try? dir.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory == true, values.isSymbolicLink != true,
                   let entries = try? fm.contentsOfDirectory(
-                    at: dir, includingPropertiesForKeys: [.contentModificationDateKey])
+                    at: dir, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey])
             else { continue }
-            out += entries.filter { $0.lastPathComponent.hasSuffix(suffix) }
+            out += entries.filter {
+                let values = try? $0.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                return $0.lastPathComponent.hasSuffix(suffix) && values?.isRegularFile == true && values?.isSymbolicLink != true
+            }
         }
         return out
     }
 
-    /// Recursive variant (Codex's dated tree), pruning stale directories so old
-    /// months are never descended into.
+    /// Recursive variant (Codex's dated tree). Only metadata is listed; the
+    /// tracker limits actual reads to the newest 64 logs and a shared byte budget.
     private func logs(recursivelyUnder root: URL, suffix: String, now: Date) -> [URL] {
         let fm = FileManager.default
+        guard Self.realDirectory(root), Self.realDirectory(root.deletingLastPathComponent()) else { return [] }
         var out: [URL] = []
         var stack = [root]
         while let dir = stack.popLast() {
+            guard AgentLogCollectionPolicy.isEnabled else { break }
             guard let entries = try? fm.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey])
+                at: dir, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey])
             else { continue }
             for entry in entries {
-                let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                if isDir {
-                    if let d = mtime(entry), now.timeIntervalSince(d) <= staleDirWindow {
-                        stack.append(entry)
-                    }
-                } else if entry.lastPathComponent.hasSuffix(suffix) {
+                guard let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]),
+                      values.isSymbolicLink != true else { continue }
+                if values.isDirectory == true {
+                    stack.append(entry)
+                } else if values.isRegularFile == true, entry.lastPathComponent.hasPrefix("rollout-"), entry.lastPathComponent.hasSuffix(suffix) {
                     out.append(entry)
                 }
             }
         }
         return out
+    }
+
+    private static func realDirectory(_ url: URL) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType) == .typeDirectory
     }
 
     /// The modification date prefetched with a directory listing.

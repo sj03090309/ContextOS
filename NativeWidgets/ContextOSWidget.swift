@@ -16,8 +16,9 @@ struct UsageTimelineProvider: TimelineProvider {
     private func entry(at date: Date, context: Context, request: String) -> UsageEntry {
         let loaded = WidgetSnapshotStore.container().flatMap { WidgetSnapshotStore.read(from: $0, channel: Bundle.main.bundleIdentifier == "com.contextos.review.widgets" ? .review : .production) }
         let source = loaded.map { $0.isSample ? "sample" : "production" } ?? "unavailable"
-        // Aggregate freshness only; never log counters, project labels or source paths.
-        logger.notice("request=\(request, privacy: .public) family=\(String(describing: context.family), privacy: .public) preview=\(context.isPreview) source=\(source, privacy: .public) generated=\(loaded?.generatedAt.timeIntervalSince1970 ?? 0)")
+        // Freshness and display choices only; never log usage counters, project
+        // labels or source paths. This also verifies which preference a reload read.
+        logger.notice("request=\(request, privacy: .public) family=\(String(describing: context.family), privacy: .public) preview=\(context.isPreview) source=\(source, privacy: .public) generated=\(loaded?.generatedAt.timeIntervalSince1970 ?? 0) metric=\(loaded?.smallMetric?.rawValue ?? "tokens", privacy: .public) mascot=\(loaded?.showMascot != false)")
         return .init(date: date, snapshot: loaded ?? WidgetUsageSnapshot(generatedAt: date))
     }
     func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
@@ -44,6 +45,9 @@ struct WidgetBody: View {
             now: entry.date)
             .containerBackground(for: .widget) { UsageWidgetBackground() }
             .widgetURL(WidgetSnapshotStore.detailURL())
+            // WidgetKit archives this outer view. Apply the display-change
+            // policy here too, so old labels/values do not linger in a blur.
+            .contentTransition(.identity)
     }
 }
 

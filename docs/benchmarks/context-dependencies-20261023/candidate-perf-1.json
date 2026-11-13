@@ -1,0 +1,38 @@
+{
+  "architecture" : "64-bit",
+  "bundle_estimated_tokens" : 7994,
+  "configuration" : "release",
+  "correctness_digest" : "3e9c09c35c92b5a62b460bb4b2cfca7236fec8b719704cf98007434369555922",
+  "fixture" : {
+    "files" : 500,
+    "source_bytes" : 1985720,
+    "symbols" : 12000,
+    "terms" : [
+      "login",
+      "session",
+      "token",
+      "cache",
+      "validation",
+      "service"
+    ]
+  },
+  "indexed_files" : 500,
+  "measurements_ms" : {
+    "cold_index" : 286.39937500000002,
+    "query_median_5" : 90.294666000000007,
+    "rank_median_7" : 39.971125000000001,
+    "scan_median_9" : 14.557499999999999,
+    "warm_index_median_9" : 16.121375
+  },
+  "os" : "Version 27.0.1 (Build 26A434)",
+  "peak_rss_bytes" : 26312704,
+  "processor_count" : 8,
+  "selected_files" : 7,
+  "watcher" : {
+    "classifier_median_ms_3" : 58.080666999999998,
+    "events" : 10000,
+    "new_accepted" : 4000,
+    "old_accepted" : 7000,
+    "old_classifier_median_ms_3" : 79.114541000000003
+  }
+}

@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import ContextOSUsage
 
 /// A single "optimized a query" event.
 public struct UsageEvent: Sendable, Equatable {
@@ -85,6 +86,38 @@ public struct SessionProjectUsage: Sendable, Codable, Equatable {
 /// The transcripts are large and append-only; re-parsing every one on each
 /// dashboard refresh (and again on every app launch) is the single most
 /// expensive thing the app does. `mtime` + `size` identify a parse result.
+public struct CodexSessionAccounting: Codable, Sendable {
+    public var version = 1
+    public var session = ""
+    public var inherited = false
+    public var usesRequests = false
+    public var legacyCounter: Int?
+    public var requests: [String: Request] = [:]
+    public struct Request: Codable, Sendable {
+        public var tokens: Int
+        public var timestamp: Double
+        public var project: String
+    }
+}
+
+public struct ClaudeSessionAccounting: Codable, Sendable {
+    public var version = 1
+    public var messages: [String: Message] = [:]
+    public struct Message: Codable, Sendable {
+        public var tokens: Int
+        public var timestamp: Double?
+        public var project: String
+    }
+}
+
+private struct CachedSessionAccounting: Codable {
+    var mtime: Double
+    var size: Int
+    var fileIdentity: UInt64?
+    var accounting: CodexSessionAccounting?
+    var claude: ClaudeSessionAccounting?
+}
+
 public struct SessionCacheRow: Sendable {
     public var path: String
     public var agent: String
@@ -94,6 +127,9 @@ public struct SessionCacheRow: Sendable {
     /// only parses what was appended. A partial trailing line is left unread
     /// until the writer finishes it.
     public var size: Int
+    /// File identity prevents an atomically replaced, larger log from being
+    /// mistaken for appended bytes of the previous transcript.
+    public var fileIdentity: UInt64?
     /// Parser state carried across incremental reads. Codex reports a
     /// *cumulative* total per event, so resuming needs the previous value to
     /// turn the next one back into a delta. Unused (0) for Claude, whose usage
@@ -104,6 +140,8 @@ public struct SessionCacheRow: Sendable {
     public var lastProject: String
     /// Usage keyed by working directory.
     public var projects: [String: SessionProjectUsage]
+    public var codexAccounting: CodexSessionAccounting?
+    public var claudeAccounting: ClaudeSessionAccounting?
 
     public init(path: String, agent: String, mtime: Double, size: Int,
                 cursor: Double = 0, lastProject: String = "",
@@ -117,17 +155,18 @@ public struct SessionCacheRow: Sendable {
         self.projects = projects
     }
 
-    public var tokens: Int { projects.values.reduce(0) { $0 + $1.tokens } }
+    public var tokens: Int { projects.values.reduce(0) { Int(UsageNumbers.add(Int64($0), Int64($1.tokens))) } }
 
     /// Fold `tokens` spent at `timestamp` in `project` into the row.
     mutating func add(tokens: Int, at timestamp: Double?, project: String) {
         guard tokens > 0, !project.isEmpty else { return }
         var bucket = projects[project] ?? SessionProjectUsage()
-        bucket.tokens += tokens
+        bucket.tokens = Int(UsageNumbers.add(Int64(bucket.tokens), Int64(tokens)))
         if let timestamp {
             bucket.start = min(bucket.start, timestamp)
             bucket.end = max(bucket.end, timestamp)
-            bucket.days[TimeKeys.localDay(timestamp), default: 0] += tokens
+            let day = TimeKeys.localDay(timestamp)
+            bucket.days[day] = Int(UsageNumbers.add(Int64(bucket.days[day] ?? 0), Int64(tokens)))
         }
         projects[project] = bucket
     }
@@ -154,21 +193,19 @@ public final class UsageStore {
     }
 
     public init(path: String) throws {
-        if path != ":memory:" {
-            let dir = (path as NSString).deletingLastPathComponent
-            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        }
-        guard sqlite3_open(path, &db) == SQLITE_OK else {
+        let databasePath = path == ":memory:" ? path : try PrivateUsageDatabase.prepare(path: path)
+        guard sqlite3_open_v2(databasePath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK else {
             let message = String(cString: sqlite3_errmsg(db))
             sqlite3_close(db)
+            db = nil
             throw IndexStoreError.open(message)
         }
         // Every session's MCP server (plus the per-prompt hook, plus the menu-bar
         // app reading) writes/reads this one shared DB — wait for the lock rather
         // than failing instantly when they overlap.
         if path != ":memory:" {
-            try exec("PRAGMA journal_mode=WAL;")
             try exec("PRAGMA busy_timeout=5000;")
+            try exec("PRAGMA journal_mode=WAL;")
         }
         try exec("""
         CREATE TABLE IF NOT EXISTS usage (
@@ -196,6 +233,8 @@ public final class UsageStore {
             projects    TEXT NOT NULL
         );
         """)
+        try exec("CREATE TABLE IF NOT EXISTS session_accounting_cache (path TEXT PRIMARY KEY, state TEXT NOT NULL);")
+        try exec("CREATE TRIGGER IF NOT EXISTS session_cache_accounting_delete AFTER DELETE ON session_cache BEGIN DELETE FROM session_accounting_cache WHERE path = OLD.path; END;")
         // One row per project/day/kind. Debt is only measurable against itself
         // over time, and nothing else records history, so it accumulates here.
         try exec("""
@@ -365,7 +404,8 @@ public final class UsageStore {
     public func sessionCache() -> [String: SessionCacheRow] {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, """
-        SELECT path, agent, mtime, size, cursor, lastProject, projects FROM session_cache;
+        SELECT c.path, c.agent, c.mtime, c.size, c.cursor, c.lastProject, c.projects, a.state
+        FROM session_cache c LEFT JOIN session_accounting_cache a ON a.path = c.path;
         """, -1, &stmt, nil) == SQLITE_OK else { return [:] }
         defer { sqlite3_finalize(stmt) }
         var out: [String: SessionCacheRow] = [:]
@@ -379,6 +419,13 @@ public final class UsageStore {
                 cursor: sqlite3_column_double(stmt, 4),
                 lastProject: String(cString: sqlite3_column_text(stmt, 5)),
                 projects: Self.decodeProjects(String(cString: sqlite3_column_text(stmt, 6))))
+            if let raw = sqlite3_column_text(stmt, 7),
+               let cached = try? JSONDecoder().decode(CachedSessionAccounting.self, from: Data(String(cString: raw).utf8)),
+               cached.mtime == out[path]?.mtime, cached.size == out[path]?.size {
+                out[path]?.codexAccounting = cached.accounting
+                out[path]?.claudeAccounting = cached.claude
+                out[path]?.fileIdentity = cached.fileIdentity
+            }
         }
         return out
     }
@@ -401,6 +448,11 @@ public final class UsageStore {
                 throw IndexStoreError.prepare(String(cString: sqlite3_errmsg(db)))
             }
             defer { sqlite3_finalize(stmt) }
+            var accountingStmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "INSERT INTO session_accounting_cache(path, state) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET state=excluded.state;", -1, &accountingStmt, nil) == SQLITE_OK else {
+                throw IndexStoreError.prepare(String(cString: sqlite3_errmsg(db)))
+            }
+            defer { sqlite3_finalize(accountingStmt) }
             for row in rows {
                 sqlite3_reset(stmt)
                 bindText(stmt, 1, row.path)
@@ -412,6 +464,14 @@ public final class UsageStore {
                 bindText(stmt, 7, Self.encodeProjects(row.projects))
                 guard sqlite3_step(stmt) == SQLITE_DONE else {
                     throw IndexStoreError.step(String(cString: sqlite3_errmsg(db)))
+                }
+                do {
+                    let data = try JSONEncoder().encode(CachedSessionAccounting(mtime: row.mtime, size: row.size,
+                        fileIdentity: row.fileIdentity, accounting: row.codexAccounting, claude: row.claudeAccounting))
+                    sqlite3_reset(accountingStmt)
+                    bindText(accountingStmt, 1, row.path)
+                    bindText(accountingStmt, 2, String(decoding: data, as: UTF8.self))
+                    guard sqlite3_step(accountingStmt) == SQLITE_DONE else { throw IndexStoreError.step(String(cString: sqlite3_errmsg(db))) }
                 }
             }
             try exec("COMMIT;")

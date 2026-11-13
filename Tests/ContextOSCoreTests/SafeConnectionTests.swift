@@ -100,6 +100,67 @@ final class SafeConnectionTests: XCTestCase {
         XCTAssertTrue(content.contains("\\\"quote\\\""))
     }
 
+    func testQuotedTOMLWhitespaceDoesNotAliasManagedTable() throws {
+        for header in ["[' mcp_servers '.contextos]", "[mcp_servers.\" contextos \"]"] {
+            let original = header + "\ncommand = \"/user/foreign\"\nargs = [\"keep\"]\n"
+            try write(".codex/config.toml", original)
+            let preview = try manager.previewConnect(.codex)
+            try manager.apply(preview)
+            XCTAssertTrue(try read(".codex/config.toml").hasPrefix(original))
+            XCTAssertTrue(try read(".codex/config.toml").contains("[mcp_servers.contextos]"))
+            try manager.apply(manager.previewDisconnect(.codex))
+            XCTAssertEqual(try read(".codex/config.toml"), original)
+        }
+    }
+
+    func testUnclosedUnrelatedTOMLStringFailsBeforeAnyWrite() throws {
+        for original in ["model = \"unfinished\n", "model = 'unfinished\n"] {
+            try write(".codex/config.toml", original)
+            XCTAssertThrowsError(try manager.previewConnect(.codex))
+            XCTAssertEqual(try read(".codex/config.toml"), original)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".contextos-backups").path))
+        }
+    }
+
+    func testLegacyMarkedCodexToolApprovalsSurviveConnectAndDisconnect() throws {
+        let original = "# ContextOS:begin\n[mcp_servers.contextos]\ncommand = \"/user/contextos-mcp\"\nargs = [\"--user\"]\n\n[mcp_servers.contextos.tools.read_optimized]\napproval_mode = \"prompt\"\ncommand = \"USER_TOOL\"\nargs = [\"keep\"]\n# ContextOS:end\n"
+        try write(".codex/config.toml", original)
+        let preview = try manager.previewConnect(.codex)
+        XCTAssertEqual(try read(".codex/config.toml"), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".contextos-backups").path))
+        try manager.apply(preview)
+        let connected = try read(".codex/config.toml")
+        XCTAssertTrue(connected.contains("command = \"/audit/contextos-mcp\"\nargs = []"))
+        XCTAssertTrue(connected.contains("approval_mode = \"prompt\"\ncommand = \"USER_TOOL\"\nargs = [\"keep\"]"))
+        XCTAssertFalse(try manager.previewConnect(.codex).hasChanges)
+        try manager.apply(manager.previewDisconnect(.codex))
+        XCTAssertEqual(try read(".codex/config.toml"), original)
+    }
+
+    func testNewChildTablesPreventRemovalOfAnOwnedCodexRegistration() throws {
+        for inside in [true, false] {
+            let temporary = home.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+            let custom = ConnectionManager(home: temporary, mcpBinaryPath: "/audit/contextos-mcp", cliBinaryPath: "/audit/contextos")
+            try custom.apply(custom.previewConnect(.codex))
+            let file = temporary.appendingPathComponent(".codex/config.toml")
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let child = "[mcp_servers.contextos.tools.read_optimized]\napproval_mode = \"prompt\"\n"
+            let extended = inside ? source.replacingOccurrences(of: "# ContextOS:end", with: child + "# ContextOS:end") : source + child
+            try extended.write(to: file, atomically: true, encoding: .utf8)
+            XCTAssertThrowsError(try custom.previewDisconnect(.codex))
+            XCTAssertThrowsError(try custom.previewConnect(.codex))
+            XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), extended)
+        }
+    }
+
+    func testForeignTablesInsideContextOSMarkersRemainRejected() throws {
+        let source = "# ContextOS:begin\n[mcp_servers.contextos]\ncommand = \"old\"\nargs = []\n[mcp_servers.other]\ncommand = \"USER_TOOL\"\n# ContextOS:end\n"
+        try write(".codex/config.toml", source)
+        XCTAssertThrowsError(try manager.previewConnect(.codex))
+        XCTAssertEqual(try read(".codex/config.toml"), source)
+    }
+
     func testDuplicateAndMalformedCodexTablesAreNotRewritten() throws {
         for content in ["[mcp_servers.contextos]\ncommand=\"a\"\n[mcp_servers.contextos]\ncommand=\"b\"\n", "# ContextOS:begin\n[mcp_servers.contextos]\ncommand=\"a\"\n", "[mcp_servers.contextos]\ncommand = \"unterminated\nargs=[]\n"] {
             try write(".codex/config.toml", content)
@@ -150,6 +211,31 @@ final class SafeConnectionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".codex/AGENTS.md").path))
     }
 
+    func testConcurrentEditWhilePreviewIsBuiltCannotBecomeItsBaseline() throws {
+        try write(".claude.json", #"{"keep":"original"}"#)
+        let transaction = SettingsTransaction(home: home)
+        var snapshot = SettingsSnapshot(transaction: transaction)
+        var editor = try JSONSettingsEditor(snapshot.read(".claude.json"), file: ".claude.json")
+        try editor.set(["contextos"], to: JSONSettingsEditor.encode(true))
+        // Another editor saves after parsing but before the preview is ready.
+        let concurrent = #"{"keep":"concurrent-user-edit"}"#
+        try write(".claude.json", concurrent)
+        let change = try snapshot.change(".claude.json", after: editor.data)
+        XCTAssertThrowsError(try transaction.apply([change], agent: "test", action: "connect"))
+        XCTAssertEqual(try read(".claude.json"), concurrent)
+    }
+
+    func testPreviewSnapshotRemembersInitiallyMissingFile() throws {
+        let transaction = SettingsTransaction(home: home)
+        var snapshot = SettingsSnapshot(transaction: transaction)
+        XCTAssertNil(try snapshot.read(".codex/AGENTS.md"))
+        try write(".codex/AGENTS.md", "Concurrent new user rules\n")
+        let change = try snapshot.change(".codex/AGENTS.md", after: Data("ContextOS rules\n".utf8))
+        XCTAssertNil(change.before)
+        XCTAssertThrowsError(try transaction.apply([change], agent: "test", action: "connect"))
+        XCTAssertEqual(try read(".codex/AGENTS.md"), "Concurrent new user rules\n")
+    }
+
     func testPartialFailureRollsBackEarlierFiles() throws {
         try write("a.json", "old-a"); try write("b.json", "old-b")
         let transaction = SettingsTransaction(home: home)
@@ -182,6 +268,61 @@ final class SafeConnectionTests: XCTestCase {
         try write(".codex/config.toml", try read(".codex/config.toml") + "# user changed later\n")
         XCTAssertThrowsError(try manager.previewRestore(.codex))
         XCTAssertTrue(try read(".codex/config.toml").contains("# user changed later"))
+    }
+
+    func testInterruptedSettingsApplyCanBeExplicitlyRestored() throws {
+        try write(".claude.json", "{}\n")
+        try write(".claude/settings.json", "{}\n")
+        let preview = try manager.previewConnect(.claudeCode)
+        let backup = SettingsBackup(id: UUID(), agent: ManagedAgent.claudeCode.rawValue,
+                                    action: "connect", date: Date(), committed: false,
+                                    changes: preview.changes.filter { $0.before != $0.after })
+        let backupFile = ".contextos-backups/history/" + backup.id.uuidString + ".json"
+        try write(backupFile, String(data: JSONEncoder().encode(backup), encoding: .utf8)!)
+        // A stopped process completed the first setting but never the others
+        // or ownership receipt. Model that state without crashing the tests.
+        let first = try XCTUnwrap(backup.changes.first)
+        try write(first.relativePath, String(data: try XCTUnwrap(first.after), encoding: .utf8)!)
+        let restore = try manager.previewRestore(.claudeCode)
+        XCTAssertTrue(restore.hasChanges)
+        XCTAssertTrue(restore.warnings.joined().contains("중단"))
+        try manager.apply(restore)
+        XCTAssertEqual(try read(".claude.json"), "{}\n")
+        XCTAssertEqual(try read(".claude/settings.json"), "{}\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.appendingPathComponent(".contextos-backups/owners/claude.json").path))
+    }
+
+    func testInterruptedApplyRestoreRefusesConcurrentUserChanges() throws {
+        try write(".claude.json", "{}\n")
+        try write(".claude/settings.json", "{}\n")
+        let preview = try manager.previewConnect(.claudeCode)
+        let backup = SettingsBackup(id: UUID(), agent: ManagedAgent.claudeCode.rawValue,
+                                    action: "connect", date: Date(), committed: false,
+                                    changes: preview.changes.filter { $0.before != $0.after })
+        try write(".contextos-backups/history/" + backup.id.uuidString + ".json",
+                  String(data: JSONEncoder().encode(backup), encoding: .utf8)!)
+        let first = try XCTUnwrap(backup.changes.first)
+        try write(first.relativePath, String(data: try XCTUnwrap(first.after), encoding: .utf8)!)
+        let concurrent = #"{"user_key":"new-user-setting"}"#
+        try write(".claude/settings.json", concurrent)
+        XCTAssertThrowsError(try manager.previewRestore(.claudeCode))
+        XCTAssertEqual(try read(".claude/settings.json"), concurrent)
+        XCTAssertEqual(try read(first.relativePath), String(data: first.after!, encoding: .utf8)!)
+    }
+
+    func testRolledBackAttemptDoesNotHidePreviousRestorableBackup() throws {
+        let original = "model = \"user-model\"\n"
+        try write(".codex/config.toml", original)
+        try manager.apply(manager.previewConnect(.codex))
+        let rolledBack = try manager.previewDisconnect(.codex)
+        let backup = SettingsBackup(id: UUID(), agent: ManagedAgent.codex.rawValue,
+                                    action: "disconnect", date: Date().addingTimeInterval(1), committed: false,
+                                    changes: rolledBack.changes.filter { $0.before != $0.after })
+        try write(".contextos-backups/history/" + backup.id.uuidString + ".json",
+                  String(data: JSONEncoder().encode(backup), encoding: .utf8)!)
+        // All files still equal the interrupted attempt's 'before' bytes.
+        try manager.apply(manager.previewRestore(.codex))
+        XCTAssertEqual(try read(".codex/config.toml"), original)
     }
 
     func testBackupsArePrivateAndDoNotAppearInPreview() throws {

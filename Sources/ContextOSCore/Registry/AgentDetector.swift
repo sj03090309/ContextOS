@@ -61,6 +61,8 @@ public enum LocalUsageStatus: Sendable, Equatable {
     case reported(tokens: Int)
     /// The agent is supported, but no local token record exists yet.
     case noLocalRecord
+    /// Collection is disabled; existing records have not been inspected.
+    case paused
     /// This agent does not persist a stable local token total ContextOS can read.
     case unavailable
 
@@ -68,6 +70,7 @@ public enum LocalUsageStatus: Sendable, Equatable {
         switch self {
         case .reported(let tokens): return "로컬 기록 \(TokenEstimator.korean(tokens)) 토큰"
         case .noLocalRecord: return "로컬 사용 기록 없음"
+        case .paused: return "로그 집계 꺼짐"
         case .unavailable: return "로컬 토큰 기록 미제공"
         }
     }
@@ -81,6 +84,7 @@ public enum AgentDetector {
     }
 
     private static func countEntries(_ relativePath: String, home: URL) -> Int? {
+        guard AgentLogCollectionPolicy.isEnabled else { return nil }
         let url = home.appendingPathComponent(relativePath)
         guard let items = try? FileManager.default.contentsOfDirectory(atPath: url.path) else { return nil }
         return items.count
@@ -126,6 +130,7 @@ public enum AgentDetector {
     }
 
     private static func transcriptUsage(agent: String, snapshot: AgentUsageSnapshot?) -> LocalUsageStatus {
+        guard AgentLogCollectionPolicy.isEnabled else { return .paused }
         guard let snapshot else { return .noLocalRecord }
         guard snapshot.availableAgents.contains(agent) else { return .noLocalRecord }
         return .reported(tokens: snapshot.byAgent[agent, default: 0])

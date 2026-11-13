@@ -52,6 +52,32 @@ final class AgentActivityMonitorTests: XCTestCase {
         XCTAssertFalse(AgentActivityMonitor(home: home).isActive(within: 6))
     }
 
+    func testResumedLogsAreFoundBelowOldDirectories() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let paths = [".codex/sessions/2026/01/01/rollout-resumed.jsonl", ".claude/projects/old-project/resumed.jsonl"]
+        for path in paths { try write(home, path) }
+        for path in [".codex/sessions/2026/01/01", ".codex/sessions/2026/01", ".codex/sessions/2026", ".claude/projects/old-project"] {
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -90 * 86400)],
+                                                  ofItemAtPath: home.appendingPathComponent(path).path)
+        }
+        let monitor = AgentActivityMonitor(home: home)
+        monitor.rescan()
+        XCTAssertEqual(monitor.sessionLogs.count, 2)
+        XCTAssertTrue(monitor.isActive(within: 6))
+    }
+
+    func testLogDiscoveryDoesNotFollowDirectoryCyclesOrExternalLinks() throws {
+        let home = try makeHome()
+        defer { try? FileManager.default.removeItem(at: home) }
+        try write(home, ".codex/sessions/2026/01/01/rollout-real.jsonl")
+        let root = home.appendingPathComponent(".codex/sessions")
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("cycle"), withDestinationURL: root)
+        let monitor = AgentActivityMonitor(home: home)
+        monitor.rescan()
+        XCTAssertEqual(monitor.sessionLogs.count, 1)
+    }
+
     func testActivityAfterQuietIsCaughtOnRescan() throws {
         let home = try makeHome()
         defer { try? FileManager.default.removeItem(at: home) }

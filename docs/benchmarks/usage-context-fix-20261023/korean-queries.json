@@ -1,0 +1,130 @@
+[
+  {
+    "version": "before",
+    "server_instructions": false,
+    "queries": [
+      {
+        "case": "usage",
+        "query": "오늘 관측 토큰 사용량 수집 누락",
+        "expected": "Sources/ContextOSCore/Registry/ConcurrentUsageReader.swift",
+        "selected": [
+          "Sources/ContextOSCore/Tokenizer/TokenEstimator.swift",
+          "Sources/ContextOSCore/Registry/ProjectAITokenReader.swift",
+          "Sources/ContextOSCore/Registry/AgentSessionReader.swift"
+        ],
+        "essential_in_top_3": false,
+        "delivered": false,
+        "estimated_tokens": 6038,
+        "within_budget": true
+      },
+      {
+        "case": "context",
+        "query": "컨텍스트 최적화 토큰 예산",
+        "expected": "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift",
+        "selected": [
+          "Tests/ContextOSCoreTests/OptimizerTests.swift",
+          "Sources/ContextOSCore/Model/Models.swift",
+          "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift"
+        ],
+        "essential_in_top_3": true,
+        "delivered": true,
+        "estimated_tokens": 7998,
+        "within_budget": true
+      },
+      {
+        "case": "dedup",
+        "query": "컨텍스트 중복 전달 절감",
+        "expected": "Sources/ContextOSCore/Service/SessionMemory.swift",
+        "selected": [
+          "Sources/ContextOSCore/Platform/macOS/ContextOptimizerStoreAdapter.swift",
+          "Sources/ContextOSCore/Model/IndexSnapshot.swift",
+          "Sources/ContextOSCore/Optimizer/ContextSelection.swift"
+        ],
+        "essential_in_top_3": false,
+        "delivered": false,
+        "estimated_tokens": 7999,
+        "within_budget": true
+      },
+      {
+        "case": "dependencies",
+        "query": "의존성 코드 누락 본문 슬라이싱",
+        "expected": "Sources/ContextOSCore/Optimizer/CodeSlicer.swift",
+        "selected": [
+          "Sources/ContextOSCore/Service/ContextService.swift",
+          "Sources/ContextOSCore/Filter/SensitiveFilePolicy.swift",
+          "Sources/ContextOSCore/Git/GitAnalyzer.swift"
+        ],
+        "essential_in_top_3": false,
+        "delivered": true,
+        "estimated_tokens": 7995,
+        "within_budget": true
+      }
+    ],
+    "top3": 1,
+    "delivered": 2
+  },
+  {
+    "version": "after",
+    "server_instructions": true,
+    "queries": [
+      {
+        "case": "usage",
+        "query": "오늘 관측 토큰 사용량 수집 누락",
+        "expected": "Sources/ContextOSCore/Registry/ConcurrentUsageReader.swift",
+        "selected": [
+          "Sources/ContextOSUsage/UsageSnapshot.swift",
+          "Sources/ContextOSCore/Registry/ProjectAITokenReader.swift",
+          "Sources/ContextOSCore/Registry/AgentSessionReader.swift"
+        ],
+        "essential_in_top_3": false,
+        "delivered": true,
+        "estimated_tokens": 7994,
+        "within_budget": true
+      },
+      {
+        "case": "context",
+        "query": "컨텍스트 최적화 토큰 예산",
+        "expected": "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift",
+        "selected": [
+          "Tests/ContextOSCoreTests/OptimizerTests.swift",
+          "Sources/ContextOSCore/Model/Models.swift",
+          "Sources/ContextOSCore/Optimizer/ContextOptimizer.swift"
+        ],
+        "essential_in_top_3": true,
+        "delivered": true,
+        "estimated_tokens": 7188,
+        "within_budget": true
+      },
+      {
+        "case": "dedup",
+        "query": "컨텍스트 중복 전달 절감",
+        "expected": "Sources/ContextOSCore/Service/SessionMemory.swift",
+        "selected": [
+          "Tests/ContextOSUsageTests/ConcurrentUsageTests.swift",
+          "Sources/ContextOSCore/Registry/ConcurrentUsageReader.swift",
+          "Sources/ContextOSCore/Service/SessionMemory.swift"
+        ],
+        "essential_in_top_3": true,
+        "delivered": true,
+        "estimated_tokens": 7992,
+        "within_budget": true
+      },
+      {
+        "case": "dependencies",
+        "query": "의존성 코드 누락 본문 슬라이싱",
+        "expected": "Sources/ContextOSCore/Optimizer/CodeSlicer.swift",
+        "selected": [
+          "Sources/ContextOSCore/Service/ContextService.swift",
+          "Sources/ContextOSCore/Filter/SensitiveFilePolicy.swift",
+          "Sources/ContextOSCore/Git/GitAnalyzer.swift"
+        ],
+        "essential_in_top_3": false,
+        "delivered": true,
+        "estimated_tokens": 7995,
+        "within_budget": true
+      }
+    ],
+    "top3": 2,
+    "delivered": 4
+  }
+]

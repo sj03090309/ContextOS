@@ -57,6 +57,7 @@ PY
 codesign --force --sign - "$APP/Contents/PlugIns/ContextOSWidgets.appex"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
+if [ "$REVIEW" -eq 0 ]; then python3 scripts/verify_bundle.py "$APP"; fi
 [ ! -e "$OUTPUT/$NAME.app" ] || { echo "Refusing to overwrite an existing candidate; choose a new output directory" >&2; exit 2; }
 mv "$APP" "$OUTPUT/$NAME.app"
 echo "Created $OUTPUT/$NAME.app (ad-hoc local candidate). App Group is unconfigured. No installation or launch performed."

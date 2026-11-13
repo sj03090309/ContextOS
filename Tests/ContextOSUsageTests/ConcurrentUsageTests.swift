@@ -100,6 +100,40 @@ import ContextOSUsage
         let s = ConcurrentUsageReader().snapshot(home:h,now:now,timeZone:.gmt)
         #expect(s.widget.today == 138) // Cached input is already inside total_tokens.
     }
+    @Test func deferredAppendKeepsPreviouslyObservedTokens() throws {
+        let h = try home()
+        defer { try? FileManager.default.removeItem(at: h) }
+        let first = try write(meta("first") + [counter(100)], ".codex/sessions/rollout-first.jsonl", home: h)
+        let second = try write(meta("second") + [counter(200)], ".codex/sessions/rollout-second.jsonl", home: h)
+        let reader = ConcurrentUsageReader(maximumLineBytes: 512, maximumReadBytes: 1024)
+        #expect(reader.snapshot(home: h, now: now, timeZone: .gmt).widget.today == 300)
+
+        func append(_ records: [[String: Any]], to url: URL, modified: Date) throws {
+            let handle = try FileHandle(forWritingTo: url)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            for record in records {
+                try handle.write(contentsOf: JSONSerialization.data(withJSONObject: record))
+                try handle.write(contentsOf: Data([10]))
+            }
+            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+        }
+        let filler: [String: Any] = [
+            "type": "response_item", "timestamp": stamp(-1),
+            "padding": String(repeating: "x", count: 300)
+        ]
+        try append([counter(250, -8)], to: second, modified: now)
+        try append([counter(150, -8)] + Array(repeating: filler, count: 3),
+                   to: first, modified: now.addingTimeInterval(1))
+
+        let partial = reader.snapshot(home: h, now: now, timeZone: .gmt)
+        #expect(partial.widget.today == 350)
+        #expect(partial.widget.providers.first?.isCollecting == true)
+        let finished = reader.snapshot(home: h, now: now, timeZone: .gmt)
+        #expect(finished.widget.today == 400)
+        #expect(finished.widget.providers.first?.isCollecting == nil)
+        #expect(reader.snapshot(home: h, now: now, timeZone: .gmt).widget.today == 400)
+    }
     @Test func unorderedEqualTimestampFragmentsDoNotInventAReset() throws {
         let h=try home(); defer { try? FileManager.default.removeItem(at:h) }
         _=try write(meta("fragment")+[counter(999)],".codex/sessions/rollout-a.jsonl",home:h)
@@ -365,4 +399,30 @@ extension ConcurrentUsageTests {
         #expect(s.widget.today == 50)
         #expect(s.todayModels.count == 1 && s.todayModels.first?.tokens == 50)
     }
+    @Test func versionOneCollectionIssueVocabulariesRemainReadable() throws {
+        let rawValues = ["fileLimit", "scanLimit", "unreadable", "invalidRecord", "oversizedRecord", "recordLimit", "inheritedHistory", "ambiguousCounters",
+                         "entryLimit", "eventLimit", "readBudget", "malformedRecord", "excludedSubagent", "unreportedUsage", "unsupportedAccounting"]
+        #expect(Set(CollectionIssue.allCases.map(\.rawValue)) == Set(rawValues))
+        for rawValue in rawValues {
+            let json = Data("{\"name\":\"Codex\",\"state\":\"partial\",\"issues\":[\"\(rawValue)\"]}".utf8)
+            let provider = try JSONDecoder().decode(UsageProvider.self, from: json)
+            #expect(provider.issues?.first?.rawValue == rawValue)
+            #expect(try JSONDecoder().decode(UsageProvider.self, from: JSONEncoder().encode(provider)) == provider)
+        }
+    }
+
+    @Test func collectionProgressScopeAndFailuresKeepDistinctWarnings() throws {
+        func health(_ provider: UsageProvider) -> String { WidgetUsageSnapshot(providers: [provider]).health }
+        #expect(health(.init(name: "Codex", state: .partial, isCollecting: true)) == "기록 집계 중")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.readBudget])) == "기록 집계 중")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.entryLimit])) == "집계 범위 제한")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.recordLimit])) == "집계 범위 제한")
+        #expect(health(.init(name: "Codex", state: .partial, isCollecting: true, issues: [.invalidRecord])) == "일부 수집 불가")
+        #expect(health(.init(name: "Codex", state: .partial, issues: [.malformedRecord])) == "일부 수집 불가")
+        #expect(health(.init(name: "Codex", state: .unavailable)) == "일부 수집 불가")
+        let legacy = try JSONDecoder().decode(UsageProvider.self, from: Data(#"{"name":"Codex","state":"partial"}"#.utf8))
+        #expect(legacy.hasCollectionFailure)
+        #expect(health(legacy) == "일부 기록만 수집")
+    }
+
 }

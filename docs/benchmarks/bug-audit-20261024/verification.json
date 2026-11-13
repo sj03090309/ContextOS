@@ -1,0 +1,32 @@
+{
+  "build": 2127,
+  "tests": {
+    "discovered": 467,
+    "passed": 464,
+    "skipped": 3,
+    "failed": 0,
+    "new_regressions": 18
+  },
+  "mcp_input_cases": 14,
+  "cross_file_cases": 6,
+  "fixed_query_essential_delivered": 12,
+  "retention_probes_present": 4,
+  "bridge_unit_passed": 10,
+  "bridge_real_unix_integration_passed": 1,
+  "portable_preparation_passed": 15,
+  "portable_preparation_skipped": 5,
+  "connection_cli_smoke_passed": true,
+  "ui": {
+    "dashboard_opened": true,
+    "connection_cards_visible_from_collapsed_history": true,
+    "claude_preview_cancel": true,
+    "codex_preview_cancel": true,
+    "codex_actual_settings_unchanged": true,
+    "privacy_hidden_restored": true,
+    "connection_settings_repeat_navigation": true,
+    "manual_refresh_saved_new_snapshot": true,
+    "unlocked_widget_presentation": true
+  },
+  "remaining_required_work": [],
+  "timestamp": "2026-10-24T22:25:48.334433"
+}

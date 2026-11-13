@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 /// A commit summary from `git log`.
 public struct GitCommit: Sendable, Equatable {
@@ -26,26 +27,55 @@ public enum GitRunner {
 
     /// Run `git <args>` in `root`, returning stdout, or nil on failure.
     public static func run(_ args: [String], in root: URL) -> String? {
+        run(args, in: root, timeout: 10)
+    }
+
+    /// Repository metadata is optional; a stalled filesystem/config read must
+    /// not hold a context request or dashboard refresh indefinitely.
+    static func run(_ args: [String], in root: URL, timeout: TimeInterval) -> String? {
         let process = Process()
         process.executableURL = executable
-        process.arguments = args
+        // Metadata reads must not execute a repository's fsmonitor hook or
+        // fetch promisor objects through a configured remote helper. Disable
+        // optional index refreshes so a background status read stays read-only.
+        process.arguments = ["--no-optional-locks", "-c", "core.fsmonitor=false",
+                             "-c", "core.hooksPath=/dev/null", "-c", "protocol.allow=never"] + args
         process.currentDirectoryURL = root
+        // Git-specific launcher state can redirect even an explicit cwd to a
+        // different repository/index, or send diagnostics to an arbitrary file.
+        // Keep ordinary environment (HOME, locale, etc.), not a parent Git job's
+        // private repository selection, trace, or command configuration.
+        var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        environment["GIT_TERMINAL_PROMPT"] = "0"
+        environment["GIT_NO_LAZY_FETCH"] = "1"
+        process.environment = environment
 
         let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = stderr
+        // Discard diagnostics directly: an undrained second pipe can fill
+        // before stdout reaches EOF and deadlock this reader.
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
             return nil
         }
+        let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        watchdog.schedule(deadline: .now() + max(0, timeout))
+        watchdog.setEventHandler {
+            // Kill only the child we launched. Git metadata is read-only and
+            // has no transaction to preserve; SIGKILL also handles blocked I/O
+            // or a process that ignores SIGTERM. The reader still drains EOF
+            // and waitUntilExit reaps the child below.
+            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+        }
+        watchdog.resume()
+        defer { watchdog.cancel() }
         // Read before waiting: a commit-heavy `git log` can fill the pipe buffer,
         // and git would block on write while we block on exit.
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        // Drain stderr too, for the same reason.
-        _ = try? stderr.fileHandleForReading.readToEnd()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return String(data: data, encoding: .utf8)
@@ -85,17 +115,15 @@ public struct GitAnalyzer: Sendable {
 
     /// Files with uncommitted changes (staged or unstaged), project-relative.
     public func changedFiles(_ root: URL) -> Set<String> {
-        guard let out = run(["status", "--porcelain"], in: root) else { return [] }
+        guard let out = run(["status", "--porcelain=v1", "-z"], in: root) else { return [] }
         var paths: Set<String> = []
-        for line in out.split(separator: "\n") {
-            // Porcelain: "XY <path>" or "XY <old> -> <new>" for renames.
-            let entry = String(line.dropFirst(3))
-            let path: String
-            if let arrow = entry.range(of: " -> ") {
-                path = String(entry[arrow.upperBound...])
-            } else {
-                path = entry
-            }
+        var entries = out.split(separator: "\0").makeIterator()
+        while let entry = entries.next() {
+            guard entry.count >= 3 else { continue }
+            let status = entry.prefix(2)
+            let path = String(entry.dropFirst(3))
+            // NUL porcelain reports destination first, then source separately.
+            if status.contains("R") || status.contains("C") { _ = entries.next() }
             if !Self.isInternal(path) { paths.insert(path) }
         }
         return paths
@@ -108,11 +136,11 @@ public struct GitAnalyzer: Sendable {
 
     /// Files touched by the most recent commits, project-relative.
     public func recentlyModifiedFiles(_ root: URL, commitLimit: Int = 10) -> Set<String> {
-        guard let out = run(["log", "-n", "\(commitLimit)", "--name-only", "--pretty=format:"], in: root) else { return [] }
+        guard let out = run(["log", "-n", "\(commitLimit)", "--name-only", "--format=", "-z"], in: root) else { return [] }
         var paths: Set<String> = []
-        for line in out.split(separator: "\n") {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if !trimmed.isEmpty, !Self.isInternal(trimmed) { paths.insert(trimmed) }
+        for entry in out.split(separator: "\0") {
+            let path = String(entry)
+            if !Self.isInternal(path) { paths.insert(path) }
         }
         return paths
     }

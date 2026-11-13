@@ -45,6 +45,7 @@ public final class IndexStore {
         if sqlite3_open_v2(databasePath, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW, nil) != SQLITE_OK {
             let message = String(cString: sqlite3_errmsg(db)) + " (SQLite \(sqlite3_extended_errcode(db)), system \(sqlite3_system_errno(db)))"
             sqlite3_close(db)
+            db = nil
             throw IndexStoreError.open(message)
         }
         // The prompt hook (every prompt) and the MCP server (every tool call)
@@ -95,6 +96,44 @@ public final class IndexStore {
         try exec("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);")
         try exec("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);")
         try exec("CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module);")
+        try exec("CREATE TABLE IF NOT EXISTS index_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+    }
+
+    func parserRevision() throws -> String? {
+        let stmt = try prepare("SELECT value FROM index_metadata WHERE key = 'parser_revision';")
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW, let value = sqlite3_column_text(stmt, 0) else { return nil }
+        return String(cString: value)
+    }
+
+    func setParserRevision(_ value: String) throws {
+        let stmt = try prepare("INSERT INTO index_metadata(key, value) VALUES('parser_revision', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value;")
+        defer { sqlite3_finalize(stmt) }
+        bindText(stmt, 1, value)
+        try step(stmt)
+    }
+
+    /// Resolve only names actually referenced by the selected implementation.
+    /// Avoid retaining a second project-wide symbol map during bundle assembly.
+    func definitions(named names: Set<String>) throws -> [(path: String, name: String, kind: SymbolKind)] {
+        guard !names.isEmpty else { return [] }
+        let ordered = names.sorted()
+        var result: [(path: String, name: String, kind: SymbolKind)] = []
+        for start in stride(from: 0, to: ordered.count, by: 400) {
+            let chunk = Array(ordered[start..<min(start + 400, ordered.count)])
+            let placeholders = Array(repeating: "?", count: chunk.count).joined(separator: ",")
+            let stmt = try prepare("SELECT f.path, s.name, s.kind FROM symbols s JOIN files f ON f.id = s.file_id WHERE s.name IN (\(placeholders)) ORDER BY f.path, s.line;")
+            defer { sqlite3_finalize(stmt) }
+            for (index, name) in chunk.enumerated() { bindText(stmt, Int32(index + 1), name) }
+            var status = sqlite3_step(stmt)
+            while status == SQLITE_ROW {
+                result.append((String(cString: sqlite3_column_text(stmt, 0)), String(cString: sqlite3_column_text(stmt, 1)),
+                               SymbolKind(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .function))
+                status = sqlite3_step(stmt)
+            }
+            guard status == SQLITE_DONE else { throw IndexStoreError.step(String(cString: sqlite3_errmsg(db))) }
+        }
+        return result
     }
 
     /// Wipe all indexed data (used before a full re-index).

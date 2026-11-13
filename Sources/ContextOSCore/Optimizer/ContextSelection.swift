@@ -27,13 +27,16 @@ public struct ContextSelection: Sendable {
     /// Relevant files that did NOT fit the token budget (surfaced, not silently dropped).
     public var excluded: [ScoredFile]
     public var tokenBudget: Int
-    /// Planning: sum of whole-file estimates. Delivery: the complete rendered
-    /// response, including file headings, dedup markers and any outline.
+    /// The complete rendered response, including headings and any outline.
+    /// Pure optimizer callers still receive whole-file estimates.
     public var estimatedTokens: Int
     /// 0–100 quality score for the resulting context.
     public var contextScore: Int
     /// How the raw query was actively refined (dictionary/typo/index), if at all.
     public var refinement: RefinedQuery? = nil
+    /// Required implementation that could not be delivered/resolved. This is
+    /// separate from optional ranked files that simply did not fit.
+    public var omissions: [String] = []
 
     public var isEmpty: Bool { included.isEmpty && excluded.isEmpty }
 }
