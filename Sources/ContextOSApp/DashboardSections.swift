@@ -147,6 +147,7 @@ struct LiveHeader: View {
 
 struct CompactSavingsSummary: View {
     @EnvironmentObject var model: DashboardModel
+    let compact: Bool
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
@@ -156,10 +157,10 @@ struct CompactSavingsSummary: View {
                     .foregroundStyle(.secondary)
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(TokenEstimator.korean(model.todaySaved))
-                        .font(.system(size: 30, weight: .semibold, design: .rounded))
+                        .font(.system(size: compact ? 28 : 34, weight: .semibold, design: .rounded))
                         .monospacedDigit().tracking(-0.6)
                         .lineLimit(1).minimumScaleFactor(0.65)
-                    Text("토큰").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text("토큰").font(.system(size: 11)).foregroundStyle(.secondary).fixedSize()
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("오늘 추정 절감 토큰")
@@ -172,13 +173,148 @@ struct CompactSavingsSummary: View {
                     .lineLimit(1).minimumScaleFactor(0.75)
                     .accessibilityLabel("누적 추정 절감 토큰")
                     .accessibilityValue(String(model.totalSaved))
-                Text("절감 기록 \(model.queryCount)회")
-                    .font(.system(size: 9.5)).monospacedDigit()
+                Text("최적화 \(model.queryCount.formatted())회")
+                    .font(.system(size: 10)).monospacedDigit()
                     .foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                    .accessibilityLabel("누적 최적화 \(model.queryCount.formatted())회")
             }
             .padding(.bottom, 3)
         }
         .help("ContextOS가 선택한 컨텍스트와 전체 파일 크기를 비교한 추정치입니다. AI 제공자의 실제 청구 절감액이 아닙니다.")
+    }
+}
+
+// MARK: - Overview activity
+
+struct OverviewActivityCard: View {
+    @EnvironmentObject private var model: DashboardModel
+    @EnvironmentObject private var ui: DashboardUIState
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    let compact: Bool
+
+    var body: some View {
+        let recent = model.recent.prefix(3)
+        let tools = model.agents.filter { $0.connection.isConfigured || $0.connection.configPath != nil }
+        let configured = tools.filter { $0.connection.isConfigured }.count
+        let recentSummary = ui.overviewExpanded && !recent.isEmpty ? "최근 \(recent.count)건"
+            : recent.first.map(savingsLabel) ?? "아직 최적화 기록이 없어요"
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(ui.overviewExpanded ? "활동 상세" : "활동 요약")
+                    .font(.system(size: 13, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                Button {
+                    withAnimation(PanelMotion.feedback(reduced: reduced)) { ui.overviewExpanded.toggle() }
+                } label: {
+                    Label(ui.overviewExpanded ? "접기" : "자세히 보기",
+                          systemImage: ui.overviewExpanded ? "chevron.up" : "chevron.down")
+                        .labelStyle(OverviewDisclosureLabel())
+                        .padding(.horizontal, 9)
+                        .frame(minHeight: 26)
+                        .background(Brand.accent.opacity(0.08), in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(PanelPressStyle())
+                .accessibilityLabel(ui.overviewExpanded ? "활동 상세 접기" : "활동 요약 자세히 보기")
+                .accessibilityValue(ui.overviewExpanded ? "펼쳐짐" : "접힘")
+            }
+            .padding(.vertical, compact ? 3 : 8)
+            Divider().opacity(0.55)
+            summaryRow("최근 최적화", symbol: "bolt.horizontal", summary: recentSummary, action: "전체 기록") {
+                ui.navigate(to: .history)
+            }
+            if ui.overviewExpanded, !recent.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(recent.enumerated()), id: \.offset) { _, event in
+                        let date = Date(timeIntervalSince1970: event.timestamp)
+                        detailRow(savingsLabel(event), detail: date.formatted(
+                            date: Calendar.current.isDateInToday(date) ? .omitted : .abbreviated,
+                            time: .shortened))
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+            Divider().opacity(0.55)
+            summaryRow("AI 연결", symbol: "link",
+                       summary: configured == 0 ? "설정된 도구 없음" : "\(configured)개 도구 설정됨",
+                       action: configured == 0 ? "연결하기" : "연결 설정") {
+                ui.showConnections = true
+            }
+            if ui.overviewExpanded {
+                VStack(spacing: 0) {
+                    if tools.isEmpty {
+                        detailRow("연결 설정에서 사용할 도구를 확인할 수 있어요.")
+                    } else {
+                        ForEach(tools) { agent in
+                            detailRow(agent.name, detail: agent.connection.isConfigured ? "설정됨" : "설정 필요")
+                        }
+                    }
+                }
+                .padding(.bottom, 8)
+            }
+        }
+        .padding(.horizontal, 13)
+        .dashboardCard(radius: 15, padding: 0)
+    }
+
+    private func savingsLabel(_ event: UsageEvent) -> String {
+        TokenEstimator.korean(event.savedTokens) + " 토큰 절감"
+    }
+
+    private func summaryRow(_ title: String, symbol: String, summary: String,
+                            action: String, open: @escaping () -> Void) -> some View {
+        Button(action: open) {
+            HStack(spacing: 9) {
+                Image(systemName: symbol)
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 28, height: 28)
+                    .background(Brand.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.system(size: 11.5, weight: .semibold))
+                    Text(summary).font(.system(size: 10.5)).foregroundStyle(.secondary).monospacedDigit()
+                }
+                .lineLimit(1)
+                Spacer(minLength: 0)
+                Label(action, systemImage: "chevron.right")
+                    .labelStyle(OverviewDisclosureLabel())
+                    .fixedSize()
+                    .accessibilityHidden(true)
+            }
+            .frame(minHeight: compact ? 36 : 53)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PanelPressStyle())
+        .accessibilityLabel("\(title), \(action)")
+        .accessibilityValue(summary)
+    }
+
+    private func detailRow(_ title: String, detail: String? = nil) -> some View {
+        HStack(spacing: 6) {
+            Text(title).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 0)
+            if let detail {
+                Text(detail).lineLimit(1).minimumScaleFactor(0.8).fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .monospacedDigit()
+        .frame(minHeight: 23)
+        .padding(.leading, 37)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct OverviewDisclosureLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 5) {
+            configuration.title.font(.system(size: 10.5, weight: .medium))
+            configuration.icon.font(.system(size: 8, weight: .semibold)).accessibilityHidden(true)
+        }
+        .foregroundStyle(.secondary)
     }
 }
 

@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import ContextOSCore
 import ContextOSUsage
 
 /// The ContextOS brand palette — the ink + cream of the app icon (뭉치 in cream
@@ -78,7 +77,7 @@ enum DashboardTab: Hashable, CaseIterable {
 /// on the next open, which should come back exactly as it was left.
 @MainActor
 final class DashboardUIState: ObservableObject {
-    enum SettingsDestination: Hashable { case privacy }
+    enum SettingsDestination: Hashable { case privacy, time }
 
     enum Page: String, CaseIterable {
         case overview = "대시보드", usage = "AI 사용량", time = "개발 시간", history = "기록"
@@ -103,6 +102,7 @@ final class DashboardUIState: ObservableObject {
     // Updated with the selection, so every navigation entry (tabs, cards and
     // public menu commands) uses the same spatial relationship.
     private(set) var navigatingForward = true
+    @Published var overviewExpanded = false
     @Published var usageExpanded = false
     @Published var panelHeight: CGFloat = 520
     @Published var tab: DashboardTab = .files
@@ -188,7 +188,7 @@ struct DashboardView: View {
                 ConnectionSettingsOverlay()
                     .transition(PanelMotion.page(reduced: reduced, forward: true))
             } else if ui.showSettings {
-                SettingsOverlay()
+                SettingsOverlay(workTime: workTime)
                     .transition(PanelMotion.overlay(reduced: reduced))
             }
         }
@@ -296,32 +296,40 @@ struct DashboardView: View {
     }
 
     private var overviewPage: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                todaySummary
-                overviewDetails
-                if !model.agentLogCollectionEnabled { logConsent }
+        let compact = ui.panelHeight < 480
+        return ScrollView {
+            VStack(alignment: .leading, spacing: compact ? 6 : 12) {
+                if !ui.overviewExpanded { todaySummary(compact: compact) }
+                OverviewActivityCard(compact: compact)
+                if !ui.overviewExpanded, !model.agentLogCollectionEnabled {
+                    logConsent
+                }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .padding(.bottom, compact ? 8 : 16)
         }
     }
 
-    private var todaySummary: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            CompactSavingsSummary()
-            Divider().opacity(0.65)
-            HStack(alignment: .top, spacing: 12) {
-                usageMetric
-                Divider().frame(height: 48)
-                OverviewDevelopmentMetric(model: workTime)
+    private func todaySummary(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CompactSavingsSummary(compact: compact)
+                .padding(.horizontal, 14)
+                .padding(.vertical, compact ? 5 : 14)
+                .background { Rectangle().fill(Brand.accent.opacity(0.07)) }
+            Divider().opacity(0.5)
+            HStack(spacing: 0) {
+                OverviewMetricLink(page: .usage, compact: compact) { usageMetric(compact: compact) }
+                Divider().frame(height: compact ? 40 : 50)
+                OverviewMetricLink(page: .time, compact: compact) {
+                    OverviewDevelopmentMetric(model: workTime, compact: compact)
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .dashboardCard(radius: 15, padding: 12)
+        .dashboardCard(radius: 15, padding: 0)
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
     }
 
-    private var usageMetric: some View {
+    private func usageMetric(compact: Bool) -> some View {
         let data = model.concurrentUsage.widget
         let fresh = model.hasFreshConcurrentUsage()
         let value = model.agentLogCollectionEnabled && fresh ? data.today : nil
@@ -333,107 +341,12 @@ struct DashboardView: View {
         } else if !fresh {
             detail = "최신 집계 확인 중"
         } else {
-            detail = data.health
+            detail = data.health == "로컬 기록 집계" ? "토큰" : data.health
         }
-        return OverviewMetric(title: "오늘 AI 관측 토큰", value: value.map { UsageNumbers.compact($0) }, detail: detail,
-                              fullValue: value.map(String.init) ?? "확인 가능한 집계 없음")
-    }
-
-    private var overviewDetails: some View {
-        let roomy = ui.panelHeight >= 480
-        let layout = roomy ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: 8))
-        let recent = model.recent.prefix(roomy ? 3 : 1)
-        let connected = model.agents.filter { $0.connection.isConfigured }
-        let pending = model.agents.filter { !$0.connection.isConfigured && $0.connection.configPath != nil }
-        return layout {
-            Button { ui.navigate(to: .history) } label: {
-                overviewCard("최근 최적화", symbol: "calendar", roomy: roomy) {
-                    if recent.isEmpty {
-                        Text("기록 없음").foregroundStyle(.secondary)
-                    } else {
-                        ForEach(Array(recent.enumerated()), id: \.offset) { _, event in
-                            let date = Date(timeIntervalSince1970: event.timestamp)
-                            HStack(spacing: 4) {
-                                Text(TokenEstimator.korean(event.savedTokens) + " 토큰 절감")
-                                    .fontWeight(.medium)
-                                    .minimumScaleFactor(0.65)
-                                Spacer(minLength: 0)
-                                Text(Calendar.current.isDateInToday(date)
-                                     ? date.formatted(date: .omitted, time: .shortened)
-                                     : date.formatted(.dateTime.month().day()))
-                                    .foregroundStyle(.secondary)
-                                    .minimumScaleFactor(0.8)
-                            }
-                            .monospacedDigit()
-                            .accessibilityElement(children: .combine)
-                        }
-                    }
-                }
-            }
-            .buttonStyle(PanelPressStyle())
-            .help("전체 기록 보기")
-            .accessibilityHint("달력, 프로젝트 및 전체 최적화 기록 보기")
-            Button { ui.showConnections = true } label: {
-                overviewCard(connected.isEmpty ? "AI 연결하기" : "AI 연결", symbol: "link",
-                             roomy: roomy, emphasized: connected.isEmpty) {
-                    if roomy, !connected.isEmpty || !pending.isEmpty {
-                        ForEach((connected + pending).prefix(2)) { agent in
-                            HStack {
-                                Text(agent.name).fontWeight(.medium)
-                                Spacer(minLength: 4)
-                                if agent.connection.isConfigured {
-                                    Label("설정됨", systemImage: "checkmark.circle").foregroundStyle(Brand.positive)
-                                } else {
-                                    Text("설정 필요").foregroundStyle(connected.isEmpty ? Brand.onAccent.opacity(0.82) : .secondary)
-                                }
-                            }
-                            .accessibilityElement(children: .combine)
-                        }
-                    } else if connected.isEmpty {
-                        Text("연결된 도구 없음").foregroundStyle(Brand.onAccent.opacity(0.82))
-                    } else {
-                        Label {
-                            Text(connected.map(\.name).joined(separator: " · ")).minimumScaleFactor(0.8)
-                        } icon: {
-                            Image(systemName: "checkmark.circle").foregroundStyle(Brand.positive)
-                        }
-                        .accessibilityValue("설정됨")
-                    }
-                }
-            }
-            .buttonStyle(PanelPressStyle())
-            .help("AI 도구를 연결해 필요한 프로젝트 문맥을 전달하고 절감 기록을 확인할 수 있어요.")
-        }
-    }
-
-    private func overviewCard<Content: View>(_ title: String, symbol: String, roomy: Bool,
-                                             emphasized: Bool = false,
-                                             @ViewBuilder content: () -> Content) -> some View {
-        let tint: Color = emphasized ? Brand.onAccent : .primary
-        let muted: Color = emphasized ? Brand.onAccent.opacity(0.78) : .secondary
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .accessibilityHidden(true)
-                Text(title).font(.system(size: 11, weight: .semibold))
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(muted)
-                    .accessibilityHidden(true)
-            }
-            content().font(.system(size: 10))
-        }
-        .lineLimit(1)
-        .foregroundStyle(tint)
-        .frame(maxWidth: .infinity, minHeight: roomy ? nil : 30, alignment: .topLeading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(emphasized ? Brand.accent : Color.primary.opacity(0.045),
-                    in: RoundedRectangle(cornerRadius: 10))
-        .contentShape(Rectangle())
+        return OverviewMetric(title: "오늘 AI 사용량", value: value.map { UsageNumbers.compact($0) },
+                              detail: detail == "토큰" ? "" : detail,
+                              fullValue: value.map { "\($0) 토큰" } ?? "확인 가능한 집계 없음", compact: compact, unit: "토큰")
+            .help("Codex·Claude Code의 로컬 기록에 제공된 토큰 사용량이에요. 전체 계정 사용량이나 남은 한도가 아니에요.")
     }
 
     private var historyPage: some View {
@@ -488,12 +401,40 @@ struct DashboardView: View {
 /// Keeping the work clock in this small view avoids invalidating the whole overview.
 private struct OverviewDevelopmentMetric: View {
     @ObservedObject var model: WorkTimeController
+    let compact: Bool
 
     var body: some View {
         let activity = model.estimatedActivity
-        let value = activity.estimatedNanoseconds.map { _ in activity.formatted }
-        OverviewMetric(title: "오늘 개발 활동 추정", value: value, detail: activity.label,
-                       fullValue: value ?? "관측 없음")
+        let value = activity.estimatedNanoseconds.map { DashboardDuration.text($0) }
+        let status = model.developmentTimeStatus + (activity.partial ? " · 일부 기록" : "")
+        OverviewMetric(title: "오늘 개발 시간", value: value, detail: status,
+                       fullValue: value ?? "기록 없음", compact: compact)
+            .help("지원 IDE에서 활동한 시간의 추정치예요. 5분간 입력이 없거나 잠금·절전 중이면 기록을 쉬어요.")
+    }
+}
+
+private struct OverviewMetricLink<Content: View>: View {
+    @EnvironmentObject private var ui: DashboardUIState
+    let page: DashboardUIState.Page
+    let compact: Bool
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Button { ui.navigate(to: page) } label: {
+            content()
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, compact ? 3 : 12)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PanelPressStyle())
+        .accessibilityHint("\(page.label) 열기")
     }
 }
 
@@ -502,21 +443,28 @@ private struct OverviewMetric: View {
     let value: String?
     let detail: String
     let fullValue: String
+    let compact: Bool
+    var unit: String? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: compact ? 2 : 4) {
             Text(title)
-                .font(.system(size: 10.5, weight: .medium))
-            Text(value ?? "—")
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .foregroundStyle(value == nil ? Color.secondary : .primary)
-                .monospacedDigit()
+                .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(detail)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.trailing, 10)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value ?? "—")
+                    .font(.system(size: compact ? 19 : 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(value == nil ? Color.secondary : .primary)
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                if let unit {
+                    Text(unit).font(.system(size: 9)).foregroundStyle(.secondary).fixedSize()
+                }
+            }
+            if !detail.isEmpty {
+                Text(detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(detail)

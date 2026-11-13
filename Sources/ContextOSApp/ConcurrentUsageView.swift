@@ -10,24 +10,39 @@ struct UsageOverviewCard: View {
     private var working: Int { snapshot.sessions.filter { $0.state == .working }.count }
     private var waiting: Int { snapshot.sessions.filter { $0.state == .waiting }.count }
     private var hasSource: Bool { data.providers.contains { $0.state == .ready || $0.state == .partial || $0.state == .noRecords } }
+    private var collectionNotice: String? {
+        if data.isSample { return nil }
+        if data.providers.isEmpty { return "집계 준비 중" }
+        return data.health == "로컬 기록 집계" ? nil : data.health
+    }
+    private var scopeHelp: String {
+        "이 Mac의 Codex·Claude Code 기록에 남은 오늘의 토큰 사용량이에요. dot·클라우드의 전체 사용량은 포함하지 않아요. 모델별 사용량은 실제 토큰 이벤트 기준이며, 세션별 합계에는 모델을 바꾼 뒤의 사용량도 포함해요. —는 기록 없음, 0은 사용량 0을 뜻해요.\n사용량 반영 \(data.generatedAt.formatted(date: .omitted, time: .shortened)) · \(data.timeZoneID)"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("오늘 관측 토큰").font(.system(size: 11, weight: .medium))
+                Text("오늘 AI 사용량")
+                    .font(.system(size: 11, weight: .medium))
+                    .help(scopeHelp)
                 Spacer()
-                Text(data.providers.isEmpty ? "집계 준비 중" : data.health)
-                    .font(.system(size: 9)).foregroundStyle(data.providers.contains(where: \.hasCollectionFailure) ? Brand.caution : Color.secondary)
-                    .help(data.providers.filter { $0.hasCollectionFailure || $0.isCollecting == true || !($0.issues ?? []).isEmpty }
-                        .map { $0.name + ": " + $0.statusLabel }.joined(separator: "\n"))
+                if let collectionNotice {
+                    Text(collectionNotice)
+                        .font(.system(size: 9)).foregroundStyle(data.providers.contains(where: \.hasCollectionFailure) ? Brand.caution : Color.secondary)
+                        .help(data.providers.filter { $0.hasCollectionFailure || $0.isCollecting == true || !($0.issues ?? []).isEmpty }
+                            .map { $0.name + ": " + $0.statusLabel }.joined(separator: "\n"))
+                }
             }
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(UsageNumbers.compact(data.today))
                     .font(.system(size: 31, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
-                    .accessibilityLabel("오늘 관측 토큰")
+                    .accessibilityLabel("오늘 AI 사용량, 토큰")
                     .accessibilityValue(data.today.map(String.init) ?? "확인 가능한 집계 없음")
+                Text("토큰")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize().accessibilityHidden(true)
                 Spacer(minLength: 8)
                 Text(hasSource ? "작업 \(working) · 대기 \(waiting)" : "작업 — · 대기 —")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -111,12 +126,14 @@ struct ProviderSessionsCard: View {
                 }.contentShape(Rectangle())
             }.buttonStyle(PanelPressStyle()).accessibilityValue(expanded ? "펼쳐짐" : "접힘")
             if expanded {
-                Text(provider.isCollecting == true ? "기록 집계 중" : provider.state.label)
-                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                if provider.isCollecting == true || provider.state != .ready {
+                    Text(provider.isCollecting == true ? "기록 집계 중" : provider.state.label)
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                }
                 ForEach(provider.issues ?? [], id: \.rawValue) { issue in
                     Text(issue.label).font(.system(size: 9)).foregroundStyle(issue.isFailure ? Brand.caution : Color.secondary)
                 }
-                if groups.isEmpty { Text("관측된 세션이 없어요").font(.system(size: 10)).foregroundStyle(.secondary) }
+                if groups.isEmpty { Text("아직 세션 기록이 없어요").font(.system(size: 10)).foregroundStyle(.secondary) }
                 ForEach(showAll ? groups : Array(groups.prefix(3))) { ModelSessionsDisclosure(group: $0) }
                 if groups.count > 3 {
                     Button(showAll ? "모델 접기" : "추가 \(groups.count - 3)개 모델 상태 보기") { showAll.toggle() }
@@ -159,7 +176,6 @@ struct ModelSessionsDisclosure: View {
 struct PopoverUsageDetail: View {
     @EnvironmentObject var model: DashboardModel
     @EnvironmentObject private var ui: DashboardUIState
-    @State private var showScope = false
     private var data: WidgetUsageSnapshot { model.concurrentUsage.widget }
     var body: some View {
         ScrollView {
@@ -174,20 +190,6 @@ struct PopoverUsageDetail: View {
                     ForEach(data.providers.filter { $0.state != .unsupported }) { provider in
                         ProviderSessionsCard(provider: provider, groups: model.usageSessionGroups[provider.name] ?? [])
                     }
-                    DisclosureGroup("집계 범위", isExpanded: $showScope) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text("로컬 기록만 포함하며 dot·클라우드 전체 사용량은 아닙니다.")
-                            Text("모델별 토큰은 오늘의 실제 토큰 이벤트 기준입니다. 세션 상태의 모델명은 마지막 관측 모델이며, 모델 전환분은 세션 상세 합계에 포함돼요.")
-                            Text("— 확인 가능한 집계 없음 · 0은 명시된 사용량 0.")
-                            ForEach(data.providers) { provider in
-                                ForEach(provider.issues ?? [], id: \.rawValue) { issue in
-                                    Text(provider.name + " · " + issue.label)
-                                }
-                            }
-                            Text("사용량 반영 \(data.generatedAt.formatted(date: .omitted, time: .shortened)) · \(data.timeZoneID)")
-                        }.font(.system(size: 9.5)).foregroundStyle(.secondary).padding(.top, 5)
-                    }.font(.system(size: 10)).foregroundStyle(.secondary)
-                    Text("로컬 관측 범위 · dot 전체 사용량 아님").font(.system(size: 9)).foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, 16).padding(.bottom, 12)
         }

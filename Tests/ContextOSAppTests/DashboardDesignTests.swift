@@ -55,9 +55,33 @@ struct DashboardDesignTests {
         }
     }
 
+    @Test("Time reports distinguish missing, zero and positive time without overflowing")
+    func durationDisplayBoundaries() {
+        #expect(DashboardDuration.text(nil) == "—")
+        #expect(DashboardDuration.text(0) == "0분")
+        #expect(DashboardDuration.text(1) == "1분 미만")
+        #expect(DashboardDuration.text(59_999_999_999) == "1분 미만")
+        #expect(DashboardDuration.text(60_000_000_000) == "1분")
+        #expect(DashboardDuration.text(3_600_000_000_000) == "1시간")
+        #expect(DashboardDuration.text(12_240_000_000_000) == "3시간 24분")
+        #expect(DashboardDuration.text(.max) == "5124095시간 34분")
+    }
+
+    @Test("IDE ranking excludes unused tools and stays deterministic at extreme counters")
+    func editorUsageRanking() {
+        #expect(EditorUsageEntry.ranked([:]).isEmpty)
+        let values: [String: UInt64] = ["Unused": 0, "VS Code": 1, "Xcode": .max, "Cursor": .max]
+        let entries = EditorUsageEntry.ranked(values)
+        #expect(entries.map(\.name) == ["Cursor", "Xcode", "VS Code"])
+        #expect(entries.map(\.nanoseconds) == [UInt64.max, UInt64.max, 1])
+        #expect(values["Unused"] == 0) // Display filtering does not mutate recorded counters.
+    }
+
     @Test("rapid page changes preserve project disclosures and privacy")
     func navigationStateSurvives() {
         let ui = DashboardUIState()
+        #expect(!ui.overviewExpanded)
+        ui.overviewExpanded = true
         ui.expanded = ["one-project"]
         ui.usageExpanded = true
         ui.tab = .activity
@@ -70,6 +94,7 @@ struct DashboardDesignTests {
         let primary = DashboardUIState.Page.primary
         for index in 0..<90 { ui.page = primary[index % primary.count] }
         #expect(ui.expanded == ["one-project"])
+        #expect(ui.overviewExpanded)
         #expect(ui.usageExpanded)
         #expect(ui.tab == .activity)
         #expect(ui.hidePrivateDetails)
@@ -326,6 +351,12 @@ struct DashboardDesignTests {
                     let png = try renderNative(view, height: height, scheme: scheme)
                     let theme = scheme == .dark ? "dark" : "light"
                     try png.write(to: directory.appendingPathComponent("page-\(page)-\(theme)-\(Int(height)).png"))
+                    if page == .overview {
+                        ui.overviewExpanded = true
+                        defer { ui.overviewExpanded = false }
+                        try renderNative(view, height: height, scheme: scheme)
+                            .write(to: directory.appendingPathComponent("overview-expanded-\(theme)-\(Int(height)).png"))
+                    }
                     if page == .overview, height == 400, scheme == .dark {
                         model.mascot.completeOptimization()
                         defer { model.mascot.completeOptimization(at: .distantPast) }
@@ -349,6 +380,38 @@ struct DashboardDesignTests {
                 .environment(\.colorScheme, .dark).transaction { $0.animation = nil; $0.disablesAnimations = true }
             let png = try renderNative(view, height: 400, scheme: .dark)
             try png.write(to: directory.appendingPathComponent("state-\(state).png"))
+        }
+        // These are explicitly synthetic. IDE time has a separate process-run
+        // scope and intentionally does not sum to today's active time.
+        for state in ["populated", "empty", "disabled", "missing", "long", "extreme"] {
+            let duration: UInt64? = state == "missing" || state == "disabled" ? nil
+                : state == "empty" ? 0 : state == "extreme" ? .max : 12_240_000_000_000
+            let values: [String: UInt64]
+            switch state {
+            case "populated": values = ["VS Code": 5_100_000_000_000, "Xcode": 1_920_000_000_000, "Unused": 0]
+            case "long": values = [String(repeating: "Long IDE name ", count: 12): 5_100_000_000_000, "Cursor": 1]
+            case "extreme": values = ["Cursor": .max, "Xcode": .max, "VS Code": 1]
+            default: values = [:]
+            }
+            let activity = EstimatedActivitySnapshot(estimatedNanoseconds: duration,
+                phase: state == "populated" ? .active : duration == nil ? .notObserved : .paused,
+                partial: state == "missing")
+            let status = state == "disabled" ? "자동 기록 꺼짐" : state == "populated" ? "기록 중"
+                : state == "missing" ? "IDE에서 작업을 시작해 보세요" : "작업 대기 중"
+            for scheme in [ColorScheme.dark, .light] {
+                let view = VStack(spacing: 12) {
+                    DevelopmentTimeCard(snapshot: activity, status: status, recording: state == "populated")
+                    EditorUsageCard(entries: EditorUsageEntry.ranked(values))
+                    Spacer(minLength: 0)
+                    Text("디자인 검증 · 예시 데이터").font(.system(size: 8)).foregroundStyle(.secondary)
+                }
+                .padding(16).frame(width: 340, height: 440, alignment: .top)
+                .background(Brand.canvas).environment(\.colorScheme, scheme)
+                .transaction { $0.animation = nil; $0.disablesAnimations = true }
+                let theme = scheme == .dark ? "dark" : "light"
+                try renderNative(view, height: 440, scheme: scheme)
+                    .write(to: directory.appendingPathComponent("time-\(state)-\(theme).png"))
+            }
         }
         ui.page = .overview; ui.panelHeight = 440
         for state in ["setup", "settings", "connections"] {

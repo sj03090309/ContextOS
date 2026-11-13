@@ -228,6 +228,7 @@ struct SettingsOverlay: View {
     @EnvironmentObject private var model: DashboardModel
     @EnvironmentObject private var ui: DashboardUIState
     @ObservedObject private var settings = AppSettings.shared
+    let workTime: WorkTimeController
     @Namespace private var motionPill
 
     var body: some View {
@@ -251,6 +252,13 @@ struct SettingsOverlay: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
                             mascotSettings
+                            separator
+                            WorkTimeSettings(model: workTime)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .id(DashboardUIState.SettingsDestination.time)
+                            separator
+                            WidgetDisplaySettings(model: workTime)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
                             separator
                             privacySettings.id(DashboardUIState.SettingsDestination.privacy)
                             separator

@@ -12,10 +12,11 @@ struct EstimatedActivityTests {
     func tick(_ ledger: inout EstimatedActivityLedger, _ second: UInt64) {
         ledger.advance(tick:second*1_000_000_000,wall:base.addingTimeInterval(Double(second)),timeZone:.gmt)
     }
-    @Test func missingActivityRemainsMissingAndKeepsConnectionWarning() {
+    @Test func missingActivityWaitsForSignalWithoutClaimingConnectionFailure() {
         let value = EstimatedActivitySnapshot(now: base, estimatedNanoseconds: nil, partial: true)
         #expect(value.formatted == "—")
-        #expect(value.label.contains("연결 필요"))
+        #expect(value.label.contains("활동 신호 대기"))
+        #expect(!value.label.contains("연결 필요"))
         #expect(value.label.contains("일부 누락"))
     }
     @Test func focusAutomaticallyStartsButIsExplicitlyEstimated() {
@@ -40,6 +41,88 @@ struct EstimatedActivityTests {
         #expect(l.snapshot.estimatedNanoseconds == nil)
         input(&l,3,.activity(focused:true),30);tick(&l,31)
         #expect(l.snapshot.estimatedNanoseconds == 1_000_000_000)
+    }
+    @Test func nativePollingPreservesLastInputAgeAndNewInputResumes() {
+        var l = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&l, 1, .nativeObservation(focused: true, idleSeconds: 0), 0, id: "native")
+        for second in stride(from: UInt64(30), through: 390, by: 30) {
+            input(&l, Int64(second / 30 + 1),
+                  .nativeObservation(focused: true, idleSeconds: Double(second)), second, id: "native")
+        }
+        #expect(l.snapshot.estimatedNanoseconds == 300_000_000_000)
+        #expect(l.snapshot.phase == .paused)
+        input(&l, 15, .nativeObservation(focused: true, idleSeconds: 0), 400, id: "native")
+        tick(&l, 401)
+        #expect(l.snapshot.estimatedNanoseconds == 301_000_000_000)
+        #expect(l.snapshot.phase == .active)
+    }
+    @Test func nativeInvalidIdleAndUnsupportedForegroundNeverInventActivity() {
+        for age in [Double.nan, .infinity, -.infinity, -1, 300, 301, .greatestFiniteMagnitude] {
+            var l = EstimatedActivityLedger(now: base, timeZone: .gmt)
+            input(&l, 1, .nativeObservation(focused: true, idleSeconds: age), 0, id: "native")
+            tick(&l, 30)
+            #expect(l.snapshot.estimatedNanoseconds == nil)
+            #expect(l.snapshot.phase == .notObserved)
+        }
+        var l = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&l, 1, .nativeObservation(focused: false, idleSeconds: 0), 0, id: "native")
+        tick(&l, 10)
+        #expect(l.snapshot.estimatedNanoseconds == nil)
+        input(&l, 2, .nativeObservation(focused: true, idleSeconds: 0), 10, id: "native")
+        input(&l, 3, .nativeObservation(focused: true, idleSeconds: .nan), 15, id: "native")
+        tick(&l, 20)
+        #expect(l.snapshot.estimatedNanoseconds == 5_000_000_000)
+        #expect(l.snapshot.phase == .paused && l.snapshot.partial)
+        input(&l, 4, .nativeObservation(focused: true, idleSeconds: 0), 21, id: "native")
+        input(&l, 5, .nativeObservation(focused: false, idleSeconds: 0), 22, id: "native")
+        tick(&l, 30)
+        #expect(l.snapshot.estimatedNanoseconds == 6_000_000_000)
+        #expect(l.snapshot.phase == .paused)
+    }
+    @Test func nativeInputOlderThanUptimeCountsOnlyRemainingEligibility() {
+        var l = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&l, 1, .nativeObservation(focused: true, idleSeconds: 295), 0, id: "native")
+        tick(&l, 10)
+        #expect(l.snapshot.estimatedNanoseconds == 5_000_000_000)
+        #expect(l.snapshot.phase == .paused)
+    }
+    @Test func nativeLeaseExpiresWithoutMoreSamples() {
+        var l = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&l, 1, .nativeObservation(focused: true, idleSeconds: 0), 0, id: "native")
+        tick(&l, 60)
+        #expect(l.snapshot.estimatedNanoseconds == 45_000_000_000)
+        #expect(l.snapshot.phase == .paused && l.snapshot.partial)
+    }
+    @Test func nativeAndExtensionFocusFormOneUnionWithoutDeactivatingEachOther() {
+        var l = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&l, 1, .nativeObservation(focused: true, idleSeconds: 0), 0, id: "native")
+        input(&l, 1, .focus(true), 5, id: "extension")
+        input(&l, 2, .focus(false), 10, id: "extension")
+        tick(&l, 15)
+        #expect(l.snapshot.estimatedNanoseconds == 15_000_000_000)
+        #expect(l.snapshot.phase == .active)
+        input(&l, 2, .nativeObservation(focused: true, idleSeconds: 20), 20, id: "native")
+        input(&l, 3, .focus(true), 25, id: "extension")
+        input(&l, 3, .nativeObservation(focused: false, idleSeconds: 0), 30, id: "native")
+        tick(&l, 35)
+        #expect(l.snapshot.estimatedNanoseconds == 35_000_000_000)
+        #expect(l.snapshot.phase == .active)
+    }
+    @Test func nativeRestartPreservesAggregateWithoutBackfillingUnobservedGap() {
+        var old = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&old, 1, .nativeObservation(focused: true, idleSeconds: 0), 0, id: "native")
+        tick(&old, 10)
+        let restart = base.addingTimeInterval(3600)
+        var fresh = EstimatedActivityLedger(now: restart, timeZone: .gmt)
+        fresh.restore(old.snapshot, now: restart, timeZone: .gmt)
+        fresh.advance(tick: 0, wall: restart, timeZone: .gmt)
+        fresh.advance(tick: 30_000_000_000, wall: restart.addingTimeInterval(30), timeZone: .gmt)
+        #expect(fresh.snapshot.estimatedNanoseconds == 10_000_000_000)
+        fresh.receive(id: "native", sequence: 1, signal: .nativeObservation(focused: true, idleSeconds: 200),
+                      tick: 31_000_000_000, wall: restart.addingTimeInterval(31), timeZone: .gmt)
+        fresh.advance(tick: 41_000_000_000, wall: restart.addingTimeInterval(41), timeZone: .gmt)
+        #expect(fresh.snapshot.estimatedNanoseconds == 20_000_000_000)
+        #expect(fresh.snapshot.phase == .active && fresh.snapshot.partial)
     }
     @Test func multipleWindowsAndReplaysNeverDoubleCount() {
         var l=EstimatedActivityLedger(now:base,timeZone:.gmt);input(&l,1,.focus(true),0)
@@ -89,6 +172,62 @@ struct EstimatedActivityTests {
         fresh.advance(tick:0,wall:base.addingTimeInterval(3600),timeZone:.gmt)
         fresh.advance(tick:30_000_000_000,wall:base.addingTimeInterval(3630),timeZone:.gmt)
         #expect(fresh.snapshot.estimatedNanoseconds == 10_000_000_000 && fresh.snapshot.phase == .paused && fresh.snapshot.partial)
+    }
+    @Test func receiverRestorePreservesNewerMemoryAndNeverRestoresItsActiveWindow() {
+        var ledger = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&ledger, 1, .focus(true), 0)
+        tick(&ledger, 10)
+        let reopen = base.addingTimeInterval(3600)
+        let staleDisk = EstimatedActivitySnapshot(now: base, timeZone: .gmt,
+                                                  estimatedNanoseconds: 3_000_000_000, phase: .active)
+        ledger.restore(staleDisk, now: reopen, timeZone: .gmt, preservingCurrentAggregate: true)
+        #expect(ledger.snapshot.estimatedNanoseconds == 10_000_000_000)
+        #expect(ledger.snapshot.phase == .paused && ledger.snapshot.partial)
+        #expect(ledger.snapshot.generatedAt == reopen)
+        ledger.advance(tick: 0, wall: reopen, timeZone: .gmt)
+        ledger.advance(tick: 30_000_000_000, wall: reopen.addingTimeInterval(30), timeZone: .gmt)
+        #expect(ledger.snapshot.estimatedNanoseconds == 10_000_000_000)
+        ledger.receive(id: "a", sequence: 1, signal: .focus(true), tick: 31_000_000_000,
+                       wall: reopen.addingTimeInterval(31), timeZone: .gmt)
+        ledger.advance(tick: 36_000_000_000, wall: reopen.addingTimeInterval(36), timeZone: .gmt)
+        #expect(ledger.snapshot.estimatedNanoseconds == 15_000_000_000)
+    }
+    @Test func receiverRestorePrefersNewerDiskAndKeepsDefaultReplacementSemantics() {
+        var ledger = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&ledger, 1, .focus(true), 0)
+        tick(&ledger, 10)
+        let newerDisk = EstimatedActivitySnapshot(now: base, timeZone: .gmt,
+                                                  estimatedNanoseconds: 20_000_000_000, phase: .active)
+        ledger.restore(newerDisk, now: base.addingTimeInterval(15), timeZone: .gmt,
+                       preservingCurrentAggregate: true)
+        #expect(ledger.snapshot.estimatedNanoseconds == 20_000_000_000)
+        #expect(ledger.snapshot.phase == .paused && ledger.snapshot.partial)
+        let olderDisk = EstimatedActivitySnapshot(now: base, timeZone: .gmt,
+                                                  estimatedNanoseconds: 3_000_000_000, phase: .paused)
+        ledger.restore(olderDisk, now: base.addingTimeInterval(20), timeZone: .gmt)
+        #expect(ledger.snapshot.estimatedNanoseconds == 3_000_000_000)
+    }
+    @Test func receiverRestorePreservesObservedZeroOverMissingDiskAggregate() {
+        var ledger = EstimatedActivityLedger(now: base, timeZone: .gmt)
+        input(&ledger, 1, .focus(true), 0)
+        let missing = EstimatedActivitySnapshot(now: base, timeZone: .gmt)
+        ledger.restore(missing, now: base.addingTimeInterval(10), timeZone: .gmt,
+                       preservingCurrentAggregate: true)
+        #expect(ledger.snapshot.estimatedNanoseconds == 0)
+        #expect(ledger.snapshot.phase == .paused && ledger.snapshot.partial)
+    }
+    @Test func receiverRestoreNeverCarriesMemoryAcrossDayOrTimeZone() {
+        for (reopen, zone) in [(base.addingTimeInterval(86_400), TimeZone.gmt),
+                               (base.addingTimeInterval(3600), TimeZone(secondsFromGMT: 9 * 3600)!)] {
+            var ledger = EstimatedActivityLedger(now: base, timeZone: .gmt)
+            input(&ledger, 1, .focus(true), 0)
+            tick(&ledger, 10)
+            let disk = EstimatedActivitySnapshot(now: reopen, timeZone: zone,
+                                                   estimatedNanoseconds: 7_000_000_000, phase: .paused)
+            ledger.restore(disk, now: reopen, timeZone: zone, preservingCurrentAggregate: true)
+            #expect(ledger.snapshot.estimatedNanoseconds == 7_000_000_000)
+            #expect(ledger.snapshot.day == disk.day && ledger.snapshot.timeZoneID == zone.identifier)
+        }
     }
     @Test func aggregateStoreHasNoIdentifiersAndRejectsUnsafeFiles() throws {
         let dir=URL(fileURLWithPath:"/tmp/contextos-activity-"+UUID().uuidString,isDirectory:true)
